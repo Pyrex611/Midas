@@ -20,9 +20,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ROOT = Path(__file__).resolve().parents[2]
-frontend_dist = ROOT / "frontend" / "dist"
-templates = Jinja2Templates(directory=str(ROOT / "backend" / "templates"))
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = BACKEND_ROOT.parent
+frontend_dist = PROJECT_ROOT / "frontend" / "dist"
+templates = Jinja2Templates(directory=str(BACKEND_ROOT / "templates"))
 
 app.include_router(api_router)
 

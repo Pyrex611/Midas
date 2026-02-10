@@ -118,7 +118,11 @@ class OutreachService:
         threshold = datetime.utcnow() - timedelta(hours=hours_since_last_touch)
         leads = self.session.exec(
             select(Lead)
-            .where(Lead.stage == LeadStage.contacted, Lead.opted_out.is_(False), Lead.updated_at < threshold)
+            .where(
+                Lead.stage.in_([LeadStage.contacted, LeadStage.follow_up_due]),
+                Lead.opted_out.is_(False),
+                Lead.updated_at < threshold,
+            )
             .limit(100)
         ).all()
         sent = 0
