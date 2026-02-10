@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Midas</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Midas</h1>
+    <p>Email Outreach & Lead Intelligence</p>
+  </header>
+
+  <main class="grid">
+    <section class="card" id="stats"></section>
+
+    <section class="card">
+      <h2>Import Leads</h2>
+      <input type="file" id="leadFile" accept=".csv,.txt" />
+      <button id="importBtn">Upload</button>
+      <p id="importResult"></p>
+    </section>
+
+    <section class="card">
+      <h2>Campaign Actions</h2>
+      <label>Objective <input id="objective" value="Book discovery calls" /></label>
+      <div class="row">
+        <button id="bootstrapBtn">Generate Templates</button>
+        <button id="outreachBtn">Run Outreach</button>
+        <button id="followupBtn">Run Follow-ups</button>
+      </div>
+      <p id="campaignResult"></p>
+    </section>
+
+    <section class="card list">
+      <h2>Open Alerts</h2>
+      <ul id="alerts"></ul>
+    </section>
+
+    <section class="card list">
+      <h2>Leads</h2>
+      <ul id="leads"></ul>
+    </section>
+
+    <section class="card list">
+      <h2>Top Templates</h2>
+      <ul id="templates"></ul>
+    </section>
+  </main>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
