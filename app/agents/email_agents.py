@@ -85,10 +85,10 @@ class ReplyAgent:
     def analyze_and_draft(self, raw_reply: str, initial_email: str, objective: str) -> tuple[Sentiment, str, str]:
         lowered = raw_reply.lower()
         sentiment = Sentiment.neutral
-        if any(tok in lowered for tok in ["yes", "interested", "let's", "schedule"]):
-            sentiment = Sentiment.positive
-        elif any(tok in lowered for tok in ["stop", "unsubscribe", "not interested", "remove"]):
+        if any(tok in lowered for tok in ["stop", "unsubscribe", "not interested", "remove"]):
             sentiment = Sentiment.negative
+        elif any(tok in lowered for tok in ["yes", "interested", "let's", "schedule"]):
+            sentiment = Sentiment.positive
 
         prompt = (
             "Draft a concise top-tier sales follow-up reply based on lead sentiment and prior context."

@@ -71,6 +71,7 @@ class CampaignService:
         if usage is None:
             usage = MailboxUsage(sender_email=settings.sender_email, day=day, count_sent=0)
             self.db.add(usage)
+            self.db.flush()
         usage.count_sent += 1
 
     def send_outreach_batch(self, limit: int = 20) -> int:

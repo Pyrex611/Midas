@@ -1,6 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.core.config import settings
+from app.models.entities import Lead, LeadStatus
 from app.db.session import Base
 from app.services.campaign_service import CampaignService
 from app.services.lead_importer import LeadImporter
@@ -42,3 +44,42 @@ def test_unsubscribe():
     service = CampaignService(db)
     ok = service.unsubscribe("eve@org.com", "Not relevant")
     assert ok is True
+
+
+def test_negative_reply_marks_lead_opted_out():
+    db = _db()
+    importer = LeadImporter(db)
+    importer.import_rows([{"name": "Nora", "email": "nora@org.com"}])
+
+    service = CampaignService(db)
+    service.seed_templates("book calls", "SaaS")
+    service.send_outreach_batch(limit=1)
+
+    service.process_incoming_reply("nora@org.com", "Thanks, but I am not interested. Please remove me.")
+
+    lead = db.query(Lead).filter(Lead.email == "nora@org.com").one()
+    assert lead.opt_out is True
+    assert lead.status == LeadStatus.opted_out
+
+
+def test_send_batch_respects_daily_mailbox_limit_on_first_usage_day():
+    db = _db()
+    importer = LeadImporter(db)
+    importer.import_rows(
+        [
+            {"name": "A", "email": "a@org.com", "company": "Org"},
+            {"name": "B", "email": "b@org.com", "company": "Org"},
+            {"name": "C", "email": "c@org.com", "company": "Org"},
+        ]
+    )
+    service = CampaignService(db)
+    service.seed_templates("book calls", "SaaS")
+
+    original_limit = settings.daily_send_limit_per_mailbox
+    settings.daily_send_limit_per_mailbox = 2
+    try:
+        sent = service.send_outreach_batch(limit=3)
+    finally:
+        settings.daily_send_limit_per_mailbox = original_limit
+
+    assert sent == 2
