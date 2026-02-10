@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Midas Dashboard</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Midas</h1>
+    <p>Outreach, replies, follow-ups, and conversion intelligence.</p>
+  </header>
+
+  <main class="grid">
+    <section class="card metrics">
+      <h2>Core Metrics</h2>
+      <div class="metric-grid">
+        <div><span>Total Leads</span><strong>{{ metrics.total_leads }}</strong></div>
+        <div><span>Outreached</span><strong>{{ metrics.outreached }}</strong></div>
+        <div><span>Replied</span><strong>{{ metrics.replied }}</strong></div>
+        <div><span>Follow-up Stage</span><strong>{{ metrics.follow_up_due }}</strong></div>
+        <div><span>Conversion</span><strong>{{ metrics.conversion_rate }}%</strong></div>
+        <div><span>Templates</span><strong>{{ metrics.templates_total }}</strong></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Lead Import</h2>
+      <form action="/leads/import" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".csv,.txt,.json" required />
+        <button type="submit">Import Leads</button>
+      </form>
+
+      <h3>Generate Outreach Templates</h3>
+      <form action="/templates/generate" method="post" class="stack">
+        <input name="objective" placeholder="Campaign objective" required />
+        <input name="niche" placeholder="Niche (optional)" />
+        <button type="submit">Generate + Optimize Templates</button>
+      </form>
+
+      <div class="actions">
+        <form action="/campaign/send-outreach" method="post"><button type="submit">Send Outreach Batch</button></form>
+        <form action="/campaign/send-followups" method="post"><button type="submit">Send Follow-ups</button></form>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Recent Leads</h2>
+      <table>
+        <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for lead in leads %}
+          <tr>
+            <td>{{ lead.name }}</td><td>{{ lead.email }}</td><td>{{ lead.company or '-' }}</td><td>{{ lead.status.value }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Alerts & Reply Drafts</h2>
+      <ul>
+        {% for alert in alerts %}
+          <li>[{{ alert.severity|upper }}] {{ alert.message }}</li>
+        {% endfor %}
+      </ul>
+      <h3>Latest Replies</h3>
+      <ul>
+        {% for reply in replies %}
+          <li>
+            lead_id={{ reply.lead_id }} sentiment={{ reply.sentiment.value }}
+            <form action="/reply/{{ reply.lead_id }}/approve" method="post" style="display:inline;">
+              <button type="submit">Send Suggested Reply</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
