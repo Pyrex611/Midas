@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: midas
+      POSTGRES_USER: midas
+      POSTGRES_PASSWORD: midas
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://midas:midas@db:5432/midas
+      BASE_URL: http://localhost:8000
+    ports: ["8000:8000"]
+    depends_on: [db]
+
+volumes:
+  pgdata:

@@ -1,0 +1,29 @@
+[project]
+name = "midas-backend"
+version = "0.1.0"
+description = "Midas outreach and lead management backend"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "sqlmodel>=0.0.22",
+  "pydantic-settings>=2.5.2",
+  "alembic>=1.13.2",
+  "httpx>=0.27.0",
+  "python-multipart>=0.0.9",
+  "jinja2>=3.1.4",
+  "apscheduler>=3.10.4",
+  "tenacity>=9.0.0",
+  "google-adk>=0.1.0",
+  "email-validator>=2.2.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.2",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.6.2"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["app"]
