@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+midas.db
+.pytest_cache/
