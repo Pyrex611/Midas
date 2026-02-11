@@ -1,5 +1,14 @@
 const api = '/api';
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 async function fetchDash() {
   const r = await fetch(`${api}/dashboard`);
   const data = await r.json();
@@ -22,7 +31,9 @@ function render(data) {
   `;
 
   document.getElementById('alerts').innerHTML = data.alerts.map(a => `<li>[${a.level}] ${a.message}</li>`).join('') || '<li>All clear.</li>';
-  document.getElementById('leads').innerHTML = data.leads.map(l => `<li>${l.name} (${l.email}) — ${l.status}</li>`).join('') || '<li>No leads yet.</li>';
+  document.getElementById('leads').innerHTML = data.leads
+    .map(l => `<li>${escapeHtml(l.name)} (${escapeHtml(l.email)}) — ${escapeHtml(l.status)}</li>`)
+    .join('') || '<li>No leads yet.</li>';
   document.getElementById('templates').innerHTML = data.templates.map(t => `<li>${t.name} (${(t.score * 100).toFixed(0)}%) used ${t.usage_count}x</li>`).join('') || '<li>No templates yet.</li>';
 }
 
