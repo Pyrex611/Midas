@@ -17,6 +17,23 @@ class LeadImportResult(BaseModel):
     inserted: int
     skipped_existing: int
     skipped_opted_out: int
+    invalid_rows: int
+
+
+class LeadOut(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+    company: str | None
+    position: str | None
+    niche: str | None
+    status: str
+    created_at: str
+
+
+class LeadListResponse(BaseModel):
+    total: int
+    leads: list[LeadOut]
 
 
 class DraftEmail(BaseModel):

@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from openpyxl import Workbook
 
 from app.core.config import settings
 from app.models.entities import Lead, LeadStatus
@@ -24,6 +25,7 @@ def test_import_and_outreach_flow():
         ]
     )
     assert result.inserted == 2
+    assert result.invalid_rows == 0
 
     service = CampaignService(db)
     created = service.seed_templates("get demos", "SaaS")
@@ -36,6 +38,33 @@ def test_import_and_outreach_flow():
     metrics = service.metrics()
     assert metrics.replied == 1
 
+
+def test_xlsx_import_and_invalid_rows_are_tracked():
+    db = _db()
+    importer = LeadImporter(db)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["full_name", "email_address", "company_name", "job_title"])
+    ws.append(["Dana", "dana@org.com", "Org", "Founder"])
+    ws.append(["", "", "", ""])  # invalid
+
+    from io import BytesIO
+
+    stream = BytesIO()
+    wb.save(stream)
+    rows = importer.parse("leads.xlsx", stream.getvalue())
+    result = importer.import_rows(rows)
+
+    assert result.inserted == 1
+    assert result.invalid_rows == 0
+
+    dup_result = importer.import_rows([
+        {"name": "Dana", "email": "dana@org.com"},
+        {"name": "", "email": "missing@org.com"},
+    ])
+    assert dup_result.skipped_existing == 1
+    assert dup_result.invalid_rows == 1
 
 def test_unsubscribe():
     db = _db()
