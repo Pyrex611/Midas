@@ -1,12 +1,15 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Midas | Lead Foundation</title>
-  <link rel="stylesheet" href="/static/css/style.css" />
+  <title>Midas Leads Console</title>
+  <link rel="stylesheet" href="./assets/style.css" />
 </head>
 <body>
+  <script>
+    window.MIDAS_API_BASE = window.MIDAS_API_BASE || "http://127.0.0.1:8000";
+  </script>
   <div class="shell">
     <aside class="sidebar">
       <h1>Midas</h1>
@@ -72,6 +75,7 @@
       </section>
     </main>
   </div>
-  <script src="/static/js/app.js" defer></script>
+
+  <script src="./assets/app.js"></script>
 </body>
 </html>

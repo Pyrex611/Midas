@@ -25,6 +25,13 @@ class Settings:
     reply_auto_send_delay_minutes: int = int(
         os.getenv("MIDAS_REPLY_AUTO_SEND_DELAY_MINUTES", "60")
     )
+    cors_allowed_origins: list[str] = field(
+        default_factory=lambda: [
+            origin.strip()
+            for origin in os.getenv("MIDAS_CORS_ALLOWED_ORIGINS", "*").split(",")
+            if origin.strip()
+        ]
+    )
     model_config_raw: str = os.getenv(
         "MIDAS_MODEL_CONFIG",
         json.dumps(
