@@ -34,7 +34,9 @@ def test_import_and_outreach_flow():
     sent = service.send_outreach_batch(limit=10)
     assert sent == 2
 
-    service.process_incoming_reply("alice@acme.com", "Yes, interested. can we schedule?")
+    service.process_incoming_reply(
+        "alice@acme.com", "Yes, interested. can we schedule?"
+    )
     metrics = service.metrics()
     assert metrics.replied == 1
 
@@ -59,12 +61,78 @@ def test_xlsx_import_and_invalid_rows_are_tracked():
     assert result.inserted == 1
     assert result.invalid_rows == 0
 
-    dup_result = importer.import_rows([
-        {"name": "Dana", "email": "dana@org.com"},
-        {"name": "", "email": "missing@org.com"},
-    ])
+    dup_result = importer.import_rows(
+        [
+            {"name": "Dana", "email": "dana@org.com"},
+            {"name": "", "email": "missing@org.com"},
+        ]
+    )
     assert dup_result.skipped_existing == 1
     assert dup_result.invalid_rows == 1
+
+
+def test_import_uses_explicit_full_name_alias_with_whitespace_cleanup():
+    db = _db()
+    importer = LeadImporter(db)
+
+    result = importer.import_rows(
+        [
+            {
+                "contact_name": "   Mary    Jane   Watson   ",
+                "email_address": "mary@org.com",
+            }
+        ]
+    )
+
+    assert result.inserted == 1
+    lead = db.query(Lead).filter(Lead.email == "mary@org.com").one()
+    assert lead.name == "Mary Jane Watson"
+
+
+def test_import_builds_name_from_split_name_fields():
+    db = _db()
+    importer = LeadImporter(db)
+
+    result = importer.import_rows(
+        [
+            {
+                "firstname": "  John ",
+                "lastname": "  Doe  ",
+                "email": "john@org.com",
+            },
+            {
+                "given_name": "Ana",
+                "email": "ana@org.com",
+            },
+        ]
+    )
+
+    assert result.inserted == 2
+    john = db.query(Lead).filter(Lead.email == "john@org.com").one()
+    ana = db.query(Lead).filter(Lead.email == "ana@org.com").one()
+    assert john.name == "John Doe"
+    assert ana.name == "Ana"
+
+
+def test_import_prefers_explicit_name_over_split_name_fields():
+    db = _db()
+    importer = LeadImporter(db)
+
+    result = importer.import_rows(
+        [
+            {
+                "full_name": "Primary Name",
+                "first_name": "Secondary",
+                "last_name": "Person",
+                "email": "primary@org.com",
+            }
+        ]
+    )
+
+    assert result.inserted == 1
+    lead = db.query(Lead).filter(Lead.email == "primary@org.com").one()
+    assert lead.name == "Primary Name"
+
 
 def test_unsubscribe():
     db = _db()
@@ -84,7 +152,9 @@ def test_negative_reply_marks_lead_opted_out():
     service.seed_templates("book calls", "SaaS")
     service.send_outreach_batch(limit=1)
 
-    service.process_incoming_reply("nora@org.com", "Thanks, but I am not interested. Please remove me.")
+    service.process_incoming_reply(
+        "nora@org.com", "Thanks, but I am not interested. Please remove me."
+    )
 
     lead = db.query(Lead).filter(Lead.email == "nora@org.com").one()
     assert lead.opt_out is True

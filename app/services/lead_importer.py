@@ -14,6 +14,8 @@ from app.models.schemas import LeadImportResult
 
 _FIELD_ALIASES = {
     "name": {"name", "full_name", "lead_name", "contact_name"},
+    "first_name": {"first_name", "firstname", "given_name"},
+    "last_name": {"last_name", "lastname", "family_name"},
     "email": {"email", "email_address", "mail"},
     "company": {"company", "company_name", "organization", "org"},
     "position": {"position", "title", "job_title", "role"},
@@ -131,13 +133,29 @@ class LeadImporter:
         return records
 
     def _normalize_row(self, row: dict[str, str]) -> dict[str, str]:
-        lowered = {(k or "").strip().lower(): (v if isinstance(v, str) else str(v or "")) for k, v in row.items()}
+        lowered = {
+            (k or "").strip().lower(): (v if isinstance(v, str) else str(v or ""))
+            for k, v in row.items()
+        }
+
+        def _clean(value: str) -> str:
+            return " ".join(value.split())
+
         normalized: dict[str, str] = {}
         for target, aliases in _FIELD_ALIASES.items():
             value = ""
             for alias in aliases:
                 if alias in lowered and lowered[alias].strip():
-                    value = lowered[alias].strip()
+                    value = _clean(lowered[alias])
                     break
             normalized[target] = value
+
+        if not normalized["name"]:
+            first_name = normalized["first_name"]
+            last_name = normalized["last_name"]
+            if first_name and last_name:
+                normalized["name"] = _clean(f"{first_name} {last_name}")
+            elif first_name:
+                normalized["name"] = first_name
+
         return normalized
