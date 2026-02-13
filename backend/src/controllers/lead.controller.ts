@@ -28,7 +28,6 @@ const leadService = new LeadService();
 /**
  * POST /api/leads/upload
  * Upload and parse lead file, then save directly to database.
- * Stable Phase 1 implementation – no multi-email modal.
  */
 export const uploadLeads = [
   upload.single('file'),
@@ -65,12 +64,15 @@ export const uploadLeads = [
         });
       }
 
-      // 🔥 If no leads were created but we expected to, treat as error
+      // If no leads were created but we expected to, treat as error
       if (result.created === 0 && leads.length > 0 && result.failed === 0 && result.duplicates === 0) {
-        logger.error({
-          leads: leads.length,
-          result,
-        }, '❌ Zero leads created with no errors – possible schema mismatch');
+        logger.error(
+          {
+            leads: leads.length,
+            result,
+          },
+          '❌ Zero leads created with no errors – possible schema mismatch'
+        );
         return res.status(500).json({
           error: 'Database write succeeded but no records were created',
           hint: 'Run `npx prisma migrate dev` and `npx prisma generate`',
@@ -78,7 +80,7 @@ export const uploadLeads = [
       }
 
       logger.info({ result, parseErrors }, 'File upload processed successfully');
-      
+
       res.status(201).json({
         success: true,
         summary: {
@@ -90,6 +92,7 @@ export const uploadLeads = [
           parseErrors,
           dbErrors: result.errors,
         },
+        createdLeadIds: result.createdLeads.map((l) => l.id), // ✅ Return IDs
       });
     } catch (error) {
       next(error);
@@ -99,22 +102,19 @@ export const uploadLeads = [
 
 /**
  * GET /api/leads
- * List leads with pagination and optional status filter.
+ * List leads with pagination and optional status/campaign filter.
  */
-export const getLeads = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const getLeads = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { page, pageSize, status } = req.query;
+    const { page, pageSize, status, campaignId } = req.query;
     const pageNum = parseInt(page as string) || 1;
     const size = parseInt(pageSize as string) || 20;
 
     const result = await leadService.getLeads(
       pageNum,
       size,
-      status as any
+      status as any,
+      campaignId as string | undefined
     );
     res.json(result);
   } catch (error) {
@@ -126,11 +126,7 @@ export const getLeads = async (
  * GET /api/leads/:id
  * Retrieve a single lead by ID.
  */
-export const getLead = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const getLead = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const lead = await leadService.getLead(req.params.id);
     res.json(lead);
@@ -146,11 +142,7 @@ export const getLead = async (
  * PUT /api/leads/:id
  * Update a lead.
  */
-export const updateLead = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const updateLead = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const lead = await leadService.updateLead(req.params.id, req.body);
     res.json(lead);
@@ -166,11 +158,7 @@ export const updateLead = async (
  * DELETE /api/leads/:id
  * Delete a lead.
  */
-export const deleteLead = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const deleteLead = async (req: Request, res: Response, next: NextFunction) => {
   try {
     await leadService.deleteLead(req.params.id);
     res.status(204).send();

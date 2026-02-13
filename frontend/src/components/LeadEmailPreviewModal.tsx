@@ -9,7 +9,9 @@ interface Props {
     id: string;
     name: string;
     email: string;
+    outreachStatus?: string; // ✅ Pass current status
   } | null;
+  onSendSuccess?: () => void; // ✅ Callback to refresh parent data
 }
 
 export const LeadEmailPreviewModal: React.FC<Props> = ({
@@ -17,15 +19,21 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
   onClose,
   campaignId,
   lead,
+  onSendSuccess,
 }) => {
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState(false);
+
+  const isAlreadySent = lead?.outreachStatus === 'SENT' || sendSuccess;
 
   useEffect(() => {
     if (isOpen && lead) {
       setLoading(true);
       setError(null);
+      setSendSuccess(false);
       campaignAPI
         .getLeadEmailPreview(campaignId, lead.id)
         .then((res) => setPreview(res.data))
@@ -35,6 +43,21 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
         .finally(() => setLoading(false));
     }
   }, [isOpen, campaignId, lead]);
+
+  const handleSend = async () => {
+    if (!lead) return;
+    setSending(true);
+    setError(null);
+    try {
+      await campaignAPI.sendLeadEmail(campaignId, lead.id);
+      setSendSuccess(true);
+      if (onSendSuccess) onSendSuccess();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to send email');
+    } finally {
+      setSending(false);
+    }
+  };
 
   if (!isOpen || !lead) return null;
 
@@ -49,18 +72,8 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600"
           >
-            <svg
-              className="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
@@ -68,9 +81,7 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
         {loading && (
           <div className="flex justify-center items-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-3 text-gray-600">
-              Personalising email draft...
-            </span>
+            <span className="ml-3 text-gray-600">Personalising email draft...</span>
           </div>
         )}
 
@@ -83,29 +94,54 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
         {preview && (
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                To:
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
               <div className="bg-gray-50 p-2 rounded text-sm">{lead.email}</div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Subject:
-              </label>
-              <div className="bg-gray-50 p-2 rounded text-sm font-medium">
-                {preview.subject}
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Subject:</label>
+              <div className="bg-gray-50 p-2 rounded text-sm font-medium">{preview.subject}</div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Body:
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Body:</label>
               <div className="bg-gray-50 p-4 rounded text-sm whitespace-pre-wrap font-mono">
                 {preview.body}
               </div>
             </div>
-            <div className="bg-blue-50 p-3 rounded text-xs text-blue-700">
-              This is a preview of the personalised email that will be sent.
+
+            {/* ✅ Send Button Section */}
+            <div className="flex items-center justify-between pt-4 border-t">
+              <div className="text-xs text-gray-500">
+                {isAlreadySent ? (
+                  <span className="text-green-600 font-medium">✓ Sent</span>
+                ) : (
+                  <span>This email has not been sent yet.</span>
+                )}
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={sending || isAlreadySent}
+                className={`px-6 py-2 rounded-md text-white font-medium flex items-center ${
+                  sending || isAlreadySent
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700'
+                }`}
+              >
+                {sending ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Sending...
+                  </>
+                ) : isAlreadySent ? (
+                  '✓ Already Sent'
+                ) : (
+                  <>
+                    <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
+                    Send Email
+                  </>
+                )}
+              </button>
             </div>
           </div>
         )}

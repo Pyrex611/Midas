@@ -1,10 +1,10 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { leadAPI } from '../services/api';
-import { UploadSummary, Lead } from '../types/lead';
+import { UploadSummary, UploadPreviewResponse } from '../types/lead';
 
 interface Props {
-  onUploadComplete: (summary: UploadSummary, leads: Lead[]) => void;
+  onUploadComplete: (summary: UploadSummary, leadIds: string[]) => void;
 }
 
 interface SelectedFile {
@@ -56,7 +56,7 @@ export const UploadArea: React.FC<Props> = ({ onUploadComplete }) => {
 
     try {
       const res = await leadAPI.upload(fileItem.file, skipDuplicates);
-      const data = res.data;
+      const data: UploadPreviewResponse = res.data;
 
       setSelectedFiles(prev =>
         prev.map(f => f.id === fileItem.id ? { 
@@ -66,9 +66,13 @@ export const UploadArea: React.FC<Props> = ({ onUploadComplete }) => {
         } : f)
       );
 
-      // Fetch preview of recent leads
-      const leadsRes = await leadAPI.getAll(1, 10);
-      onUploadComplete(data.summary, leadsRes.data.data);
+      // Pass created lead IDs to parent
+      if (data.createdLeadIds) {
+        onUploadComplete(data.summary, data.createdLeadIds);
+      } else {
+        // Fallback (should not happen)
+        onUploadComplete(data.summary, []);
+      }
       return true;
     } catch (err: any) {
       const errorMessage = err.response?.data?.error || err.response?.data?.details || err.message;

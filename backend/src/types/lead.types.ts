@@ -11,6 +11,13 @@ export type LeadStatus =
   | 'UNSUBSCRIBED'
   | 'BOUNCED';
 
+export type OutreachStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'SENT'
+  | 'FAILED'
+  | 'SKIPPED';
+
 // ------------------------------------------------------------------
 // 2. Lead creation schema (for CSV/Excel uploads)
 // ------------------------------------------------------------------
@@ -30,6 +37,7 @@ export const LeadUpdateSchema = z.object({
   company: z.string().max(255).nullable().optional(),
   position: z.string().max(255).nullable().optional(),
   status: z.enum(['NEW', 'CONTACTED', 'FOLLOW_UP', 'REPLIED', 'UNSUBSCRIBED', 'BOUNCED']).optional(),
+  outreachStatus: z.enum(['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'SKIPPED']).optional(),
 });
 export type LeadUpdateInput = z.infer<typeof LeadUpdateSchema>;
 
@@ -44,23 +52,29 @@ export const ListQuerySchema = z.object({
   page: z.string().default('1'),
   pageSize: z.string().default('20'),
   status: z.enum(['NEW', 'CONTACTED', 'FOLLOW_UP', 'REPLIED', 'UNSUBSCRIBED', 'BOUNCED']).optional(),
+  campaignId: z.string().optional(),
 });
 
+// ------------------------------------------------------------------
+// 5. Email candidate interface (for future multi‑email modal)
+// ------------------------------------------------------------------
 export interface EmailCandidate {
   email: string;
   type: string; // 'work', 'personal', 'direct', 'other'
 }
 
-// Extend Upload response type (used by frontend)
+// ------------------------------------------------------------------
+// 6. Upload preview response (sent to frontend after file parse)
+// ------------------------------------------------------------------
 export interface UploadPreviewResponse {
   success: boolean;
   summary: {
     totalRows: number;
     valid: number;
-    created: number; // will be 0 until final confirmation
+    created: number;
     duplicates: number;
     failed: number;
-    parseErrors: any[];
+    parseErrors: { row: number; message: string }[];
     dbErrors: any[];
   };
   needsEmailSelection: boolean;
@@ -73,4 +87,5 @@ export interface UploadPreviewResponse {
       position: string | null;
     };
   }[];
+  createdLeadIds?: string[]; // ✅ Added – IDs of leads successfully created
 }

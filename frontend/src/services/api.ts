@@ -14,8 +14,8 @@ export const leadAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  getAll: (page = 1, pageSize = 20, status?: string) =>
-    api.get('/leads', { params: { page, pageSize, status } }),
+  getAll: (page = 1, pageSize = 20, status?: string, campaignId?: string) =>
+		api.get('/leads', { params: { page, pageSize, status, campaignId } }),
   get: (id: string) => api.get(`/leads/${id}`),
   update: (id: string, data: any) => api.put(`/leads/${id}`, data),
   delete: (id: string) => api.delete(`/leads/${id}`),
@@ -31,6 +31,12 @@ export const campaignAPI = {
     api.post(`/campaigns/${campaignId}/leads`, { leadIds }),
   getLeadEmailPreview: (campaignId: string, leadId: string) => // ✅ NEW
     api.get(`/campaigns/${campaignId}/leads/${leadId}/preview`),
+  getLeadEmailPreview: (campaignId: string, leadId: string) =>
+    api.get(`/campaigns/${campaignId}/leads/${leadId}/preview`),
+  
+  // ✅ NEW: Send email from preview
+  sendLeadEmail: (campaignId: string, leadId: string) =>
+    api.post(`/campaigns/${campaignId}/leads/${leadId}/send`),
 };
 
 // ===== DIAGNOSTICS API =====

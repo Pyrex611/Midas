@@ -7,28 +7,43 @@ export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [previewLead, setPreviewLead] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<'leads' | 'drafts'>('leads');
+  const [previewLead, setPreviewLead] = useState<{
+    id: string;
+    name: string;
+    email: string;
+    outreachStatus?: string;
+  } | null>(null);
+
+  const fetchCampaign = async () => {
+    try {
+      const res = await campaignAPI.get(id!);
+      setCampaign(res.data);
+    } catch (error) {
+      console.error('Failed to fetch campaign', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCampaign = async () => {
-      try {
-        const res = await campaignAPI.get(id!);
-        setCampaign(res.data);
-      } catch (error) {
-        console.error('Failed to fetch campaign', error);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchCampaign();
   }, [id]);
 
   if (loading) {
-    return <div className="text-center py-12">Loading campaign details...</div>;
+    return (
+      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
+        <div className="text-center py-12">Loading campaign details...</div>
+      </div>
+    );
   }
 
   if (!campaign) {
-    return <div className="text-center py-12">Campaign not found.</div>;
+    return (
+      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
+        <div className="text-center py-12">Campaign not found.</div>
+      </div>
+    );
   }
 
   const statusColors: Record<string, string> = {
@@ -50,9 +65,24 @@ export const CampaignDetail: React.FC = () => {
       case 'PROCESSING':
         return (
           <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800 flex items-center">
-            <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-blue-800" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            <svg
+              className="animate-spin -ml-1 mr-2 h-3 w-3 text-blue-800"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              ></circle>
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
             </svg>
             Optimising & personalising…
           </span>
@@ -142,33 +172,35 @@ export const CampaignDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Drafts */}
-        {campaign.drafts && campaign.drafts.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Email Drafts</h2>
-            <div className="space-y-4">
-              {campaign.drafts.map((draft: any) => (
-                <div key={draft.id} className="border rounded-lg p-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">Subject: {draft.subject}</div>
-                      <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">{draft.body}</div>
-                    </div>
-                    <div className="flex items-center space-x-3 text-xs text-gray-500">
-                      <span>Sent: {draft.sentCount}</span>
-                      <span>Replies: {draft.replyCount}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Tabs */}
+        <div className="border-b border-gray-200 mt-8">
+          <nav className="-mb-px flex space-x-8">
+            <button
+              onClick={() => setActiveTab('leads')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'leads'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Leads ({campaign.leads?.length || 0})
+            </button>
+            <button
+              onClick={() => setActiveTab('drafts')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'drafts'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Email Drafts ({campaign.drafts?.length || 0})
+            </button>
+          </nav>
+        </div>
 
-        {/* Leads Table – clickable rows */}
-        {campaign.leads && campaign.leads.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Leads in Campaign</h2>
+        {/* Leads Tab */}
+        {activeTab === 'leads' && campaign.leads && campaign.leads.length > 0 && (
+          <div className="mt-6">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -183,7 +215,14 @@ export const CampaignDetail: React.FC = () => {
                   {campaign.leads.map((lead: any) => (
                     <tr
                       key={lead.id}
-                      onClick={() => setPreviewLead({ id: lead.id, name: lead.name, email: lead.email })}
+                      onClick={() =>
+                        setPreviewLead({
+                          id: lead.id,
+                          name: lead.name,
+                          email: lead.email,
+                          outreachStatus: lead.outreachStatus,
+                        })
+                      }
                       className="hover:bg-gray-50 cursor-pointer"
                     >
                       <td className="px-4 py-3 text-sm text-gray-900">{lead.name}</td>
@@ -193,9 +232,7 @@ export const CampaignDetail: React.FC = () => {
                           {lead.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-sm">
-                        {getOutreachBadge(lead.outreachStatus)}
-                      </td>
+                      <td className="px-4 py-3 text-sm">{getOutreachBadge(lead.outreachStatus)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -203,14 +240,36 @@ export const CampaignDetail: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Drafts Tab */}
+        {activeTab === 'drafts' && campaign.drafts && campaign.drafts.length > 0 && (
+          <div className="mt-6 space-y-4">
+            {campaign.drafts.map((draft: any) => (
+              <div key={draft.id} className="border rounded-lg p-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">Subject: {draft.subject}</div>
+                    <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">{draft.body}</div>
+                  </div>
+                  <div className="ml-4 flex flex-col items-end text-xs text-gray-500">
+                    <span>Tone: {draft.tone}</span>
+                    <span>Use: {draft.useCase}</span>
+                    <span>Sent: {draft.sentCount}</span>
+                    <span>Replies: {draft.replyCount}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Email Preview Modal */}
       <LeadEmailPreviewModal
         isOpen={!!previewLead}
         onClose={() => setPreviewLead(null)}
         campaignId={campaign.id}
         lead={previewLead}
+        onSendSuccess={fetchCampaign}
       />
     </div>
   );

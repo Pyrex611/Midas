@@ -1,17 +1,33 @@
+import { Prisma, Lead } from '@prisma/client';
+import prisma from '../lib/prisma';
 import { LeadCreateInput, LeadUpdateInput, LeadStatus } from '../types/lead.types';
-import prisma from '../lib/prisma'; // ✅ MUST use singleton
 import { logger } from '../config/logger';
 
 export class LeadService {
+  /**
+   * Bulk insert leads with duplicate handling. Returns created leads.
+   */
   async createLeads(
     leads: LeadCreateInput[],
     skipDuplicates = true
-  ): Promise<{ created: number; duplicates: number; failed: number; errors: any[] }> {
-    const result = { created: 0, duplicates: 0, failed: 0, errors: [] };
+  ): Promise<{
+    created: number;
+    duplicates: number;
+    failed: number;
+    errors: any[];
+    createdLeads: Lead[];
+  }> {
+    const result = {
+      created: 0,
+      duplicates: 0,
+      failed: 0,
+      errors: [] as any[],
+      createdLeads: [] as Lead[],
+    };
 
     for (const lead of leads) {
       try {
-        // ✅ Defensive: ensure lead has required fields
+        // Defensive: ensure lead has required fields
         if (!lead.email || !lead.name) {
           throw new Error('Lead missing email or name');
         }
@@ -25,7 +41,8 @@ export class LeadService {
             result.duplicates++;
             continue;
           } else {
-            await prisma.lead.update({
+            // Update existing lead
+            const updated = await prisma.lead.update({
               where: { id: existing.id },
               data: {
                 name: lead.name,
@@ -34,17 +51,19 @@ export class LeadService {
               },
             });
             result.created++;
+            result.createdLeads.push(updated);
             continue;
           }
         }
 
-        await prisma.lead.create({ data: lead });
+        const created = await prisma.lead.create({ data: lead });
         result.created++;
+        result.createdLeads.push(created);
       } catch (error: any) {
         result.failed++;
         result.errors.push({ email: lead.email, error: error.message });
-        logger.error({ error, lead }, '❌ CRITICAL: Lead creation failed');
-        // 🔥 DO NOT SWALLOW – rethrow for controller to return 500
+        logger.error({ error, lead }, '❌ Lead creation failed');
+        // Rethrow to controller for 500 response
         throw new Error(`Lead creation failed for ${lead.email}: ${error.message}`);
       }
     }
@@ -52,8 +71,19 @@ export class LeadService {
     return result;
   }
 
-  async getLeads(page: number, pageSize: number, status?: LeadStatus) {
-    const where = status ? { status } : {};
+  /**
+   * Retrieve paginated leads, optionally filtered by status and campaign.
+   */
+  async getLeads(
+    page: number,
+    pageSize: number,
+    status?: LeadStatus,
+    campaignId?: string
+  ) {
+    const where: any = {};
+    if (status) where.status = status;
+    if (campaignId) where.campaignId = campaignId;
+
     const [leads, total] = await Promise.all([
       prisma.lead.findMany({
         where,
@@ -66,7 +96,12 @@ export class LeadService {
 
     return {
       data: leads,
-      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
     };
   }
 

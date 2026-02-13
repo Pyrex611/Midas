@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { campaignAPI } from '../services/api';
-import { CreateCampaignModal } from './CreateCampaignModal'; // 👈 import shared modal
+import { CreateCampaignModal } from './CreateCampaignModal';
 
 interface Props {
   isOpen: boolean;
@@ -8,6 +8,7 @@ interface Props {
   leadIds: string[];
   availableCampaigns: any[];
   onSuccess: (campaignId: string) => void;
+  onRefresh?: () => void; // Optional callback to refresh parent list
 }
 
 export const AddToCampaignModal: React.FC<Props> = ({
@@ -16,10 +17,17 @@ export const AddToCampaignModal: React.FC<Props> = ({
   leadIds,
   availableCampaigns,
   onSuccess,
+  onRefresh,
 }) => {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [adding, setAdding] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [localCampaigns, setLocalCampaigns] = useState(availableCampaigns);
+
+  // Sync with prop when it changes
+  React.useEffect(() => {
+    setLocalCampaigns(availableCampaigns);
+  }, [availableCampaigns]);
 
   const handleAddToExisting = async () => {
     if (!selectedCampaignId) return;
@@ -27,12 +35,30 @@ export const AddToCampaignModal: React.FC<Props> = ({
     try {
       await campaignAPI.addLeads(selectedCampaignId, leadIds);
       onSuccess(selectedCampaignId);
+      onClose();
     } catch (error) {
       console.error('Failed to add leads to campaign', error);
       alert('Could not add leads to campaign');
     } finally {
       setAdding(false);
     }
+  };
+
+  const refreshCampaigns = async () => {
+    try {
+      const res = await campaignAPI.getAll();
+      setLocalCampaigns(res.data);
+      if (onRefresh) onRefresh();
+    } catch (error) {
+      console.error('Failed to refresh campaigns', error);
+    }
+  };
+
+  const handleCreateSuccess = async () => {
+    setShowCreateModal(false);
+    await refreshCampaigns(); // ✅ Refresh dropdown with new campaign
+    // Optionally auto-select the newly created campaign?
+    // For now, just refresh; user can select manually.
   };
 
   if (!isOpen) return null;
@@ -46,7 +72,7 @@ export const AddToCampaignModal: React.FC<Props> = ({
             {leadIds.length} lead(s) selected. Choose a campaign or create a new one.
           </p>
 
-          {availableCampaigns.length > 0 ? (
+          {localCampaigns.length > 0 ? (
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Select existing campaign
@@ -57,7 +83,7 @@ export const AddToCampaignModal: React.FC<Props> = ({
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">-- Choose a campaign --</option>
-                {availableCampaigns.map((c) => (
+                {localCampaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({c.status}) – {c._count?.leads || 0} leads
                   </option>
@@ -65,11 +91,11 @@ export const AddToCampaignModal: React.FC<Props> = ({
               </select>
             </div>
           ) : (
-            <p className="text-sm text-yellow-600 mb-4">No active campaigns found.</p>
+            <p className="text-sm text-yellow-600 mb-4">No campaigns found. Create one below.</p>
           )}
 
           <div className="flex flex-col space-y-3">
-            {availableCampaigns.length > 0 && (
+            {localCampaigns.length > 0 && (
               <button
                 onClick={handleAddToExisting}
                 disabled={!selectedCampaignId || adding}
@@ -97,13 +123,7 @@ export const AddToCampaignModal: React.FC<Props> = ({
       <CreateCampaignModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
-          setShowCreateModal(false);
-          // Refresh campaign list
-          campaignAPI.getAll().then(res => {
-            setAvailableCampaigns(res.data);
-          });
-        }}
+        onSuccess={handleCreateSuccess}
         initialLeadIds={leadIds}
       />
     </>

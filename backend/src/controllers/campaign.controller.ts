@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { CampaignService } from '../services/campaign.service';
 import { personalisationService } from '../services/personalisation.service';
+import { emailService } from '../services/email.service';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
@@ -117,7 +118,6 @@ export const getLeadEmailPreview = async (
   try {
     const { campaignId, leadId } = req.params;
 
-    // Fetch campaign with its most recent active draft
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
       include: {
@@ -146,7 +146,6 @@ export const getLeadEmailPreview = async (
       return res.status(404).json({ error: 'No draft found for this campaign' });
     }
 
-    // Personalise the draft for this lead
     const { subject, body } = personalisationService.personalise(
       lead as any,
       draft.subject,
@@ -161,6 +160,117 @@ export const getLeadEmailPreview = async (
       draftId: draft.id,
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/campaigns/:campaignId/leads/:leadId/send
+ * Send the personalised email for a lead in a campaign immediately.
+ */
+export const sendLeadEmail = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { campaignId, leadId } = req.params;
+
+    const [lead, campaign] = await Promise.all([
+      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
+        include: {
+          drafts: {
+            where: { isActive: true },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      }),
+    ]);
+
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const draft = campaign.drafts[0];
+    if (!draft) {
+      return res.status(404).json({ error: 'No active draft found for this campaign' });
+    }
+
+    // Check if email already sent for this lead + campaign
+    const existing = await prisma.outboundEmail.findFirst({
+      where: {
+        leadId,
+        campaignId,
+        status: 'SENT',
+      },
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'Email already sent to this lead' });
+    }
+
+    // Personalise
+    const { subject, body } = personalisationService.personalise(
+      lead as any,
+      draft.subject,
+      draft.body
+    );
+
+    // Send email
+    const result = await emailService.sendEmail(
+      lead.email,
+      subject,
+      body.replace(/\n/g, '<br>'),
+      body
+    );
+
+    if (!result.success) {
+      throw new Error(result.error || 'Email sending failed');
+    }
+
+    // Record OutboundEmail
+    const outbound = await prisma.outboundEmail.create({
+      data: {
+        leadId,
+        campaignId,
+        draftId: draft.id,
+        subject,
+        body,
+        status: 'SENT',
+        sentAt: new Date(),
+      },
+    });
+
+    // Update lead outreach status
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: {
+        outreachStatus: 'SENT',
+        status: 'CONTACTED',
+      },
+    });
+
+    // Increment draft sent count
+    await prisma.draft.update({
+      where: { id: draft.id },
+      data: { sentCount: { increment: 1 } },
+    });
+
+    logger.info({ leadId, campaignId, messageId: result.messageId }, 'Email sent manually via preview');
+
+    res.json({
+      success: true,
+      message: 'Email sent successfully',
+      previewUrl: result.previewUrl,
+      outboundId: outbound.id,
+    });
+  } catch (error) {
+    logger.error({ error, leadId, campaignId }, 'Failed to send email from preview');
     next(error);
   }
 };

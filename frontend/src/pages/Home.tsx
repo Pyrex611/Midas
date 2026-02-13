@@ -4,7 +4,7 @@ import { UploadArea } from '../components/UploadArea';
 import { UploadSummaryCard } from '../components/UploadSummaryCard';
 import { UploadPreviewTable } from '../components/UploadPreviewTable';
 import { AddToCampaignModal } from '../components/AddToCampaignModal';
-import { campaignAPI, diagnosticsAPI } from '../services/api';
+import { campaignAPI, diagnosticsAPI, leadAPI } from '../services/api';
 import { UploadSummary, Lead } from '../types/lead';
 
 export const Home: React.FC = () => {
@@ -20,10 +20,18 @@ export const Home: React.FC = () => {
   const [showCampaignModal, setShowCampaignModal] = useState(false);
   const [availableCampaigns, setAvailableCampaigns] = useState<any[]>([]);
 
-  const handleUploadComplete = (summary: UploadSummary, leads: Lead[]) => {
+  const handleUploadComplete = async (summary: UploadSummary, leadIds: string[]) => {
     setUploadHistory(prev => [summary, ...prev].slice(0, 5));
-    setPreviewLeads(leads.slice(0, 10));
-    setLastUploadLeadIds(leads.map(l => l.id));
+    setLastUploadLeadIds(leadIds);
+
+    // Fetch first 10 leads for preview
+    const previewIds = leadIds.slice(0, 10);
+    if (previewIds.length > 0) {
+      const leads = await Promise.all(previewIds.map(id => leadAPI.get(id)));
+      setPreviewLeads(leads.map(res => res.data));
+    } else {
+      setPreviewLeads([]);
+    }
   };
 
   const openCampaignModal = async () => {
@@ -168,13 +176,16 @@ export const Home: React.FC = () => {
         </div>
       )}
 
-      {/* Campaign Selection Modal */}
       <AddToCampaignModal
         isOpen={showCampaignModal}
         onClose={() => setShowCampaignModal(false)}
         leadIds={lastUploadLeadIds}
         availableCampaigns={availableCampaigns}
         onSuccess={handleCampaignSuccess}
+        onRefresh={async () => {
+          const res = await campaignAPI.getAll();
+          setAvailableCampaigns(res.data);
+        }}
       />
     </div>
   );

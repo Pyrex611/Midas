@@ -3,7 +3,13 @@ import { env } from '../config/env';
 
 // ===== PROVIDER INTERFACE =====
 interface AIProvider {
-  generateDraft(tone: string, useCase: string, campaignContext?: string, companyContext?: string): Promise<{ subject: string; body: string }>;
+  generateDraft(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
+  ): Promise<{ subject: string; body: string }>;
   isAvailable(): Promise<boolean>;
 }
 
@@ -11,13 +17,24 @@ interface AIProvider {
 class MockProvider implements AIProvider {
   async isAvailable() { return true; }
 
-  async generateDraft(tone: string, useCase: string, campaignContext?: string, companyContext?: string) {
-    logger.debug({ tone, useCase, campaignContext }, 'MockProvider generating draft');
-    return this.generateMockDraft(tone, useCase, campaignContext);
+  async generateDraft(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
+  ) {
+    logger.debug({ tone, useCase, campaignContext, reference }, 'MockProvider generating draft');
+    return this.generateMockDraft(tone, useCase, campaignContext, reference);
   }
 
-  private generateMockDraft(tone: string, useCase: string, campaignContext?: string): { subject: string; body: string } {
-    // Base templates – campaign context is injected into the body
+  private generateMockDraft(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string
+  ): { subject: string; body: string } {
+    // Base templates
     const baseDrafts: Record<string, { subject: string; body: string }> = {
       'professional-initial': {
         subject: 'Quick question regarding {{company}}',
@@ -27,21 +44,45 @@ class MockProvider implements AIProvider {
         subject: 'Loved your recent post on {{topic}}',
         body: `Hi {{name}},\n\nI came across your post about {{topic}} and it really resonated. At {{senderCompany}}, we're working on something that aligns perfectly with that vision.\n\nIf you're open to it, I'd love to exchange ideas – no strings attached.\n\nCheers,\n[Your Name]`,
       },
-      'followup1': {
-        subject: 'Following up – {{company}}',
-        body: `Hi {{name}},\n\nJust wanted to gently follow up on my previous email. I know how busy things get.\n\nIf you're not the right person, could you point me to who handles {{valueProposition}} at {{company}}?\n\nThanks either way,\n[Your Name]`,
+      'urgent-initial': {
+        subject: 'Time‑sensitive opportunity for {{company}}',
+        body: `Hi {{name}},\n\nI'm reaching out because we have a limited window to help companies like {{company}} achieve {{valueProposition}}. Based on your role, I believe you could benefit from a quick conversation.\n\nWould you have 10 minutes this week?\n\nBest,\n[Your Name]`,
+      },
+      'data-driven-initial': {
+        subject: 'Data‑backed insights for {{company}}',
+        body: `Hi {{name}},\n\nI analyzed {{company}}'s recent performance and noticed an opportunity to improve {{valueProposition}}. Our data shows that companies in your sector typically see a 30% uplift after implementing our approach.\n\nWould you be open to reviewing the findings together?\n\nCheers,\n[Your Name]`,
+      },
+      'storytelling-initial': {
+        subject: 'The $10k Deal Story You Need',
+        body: `Hi {{name}},\n\nI remember a few years back, {{reference_company}} was struggling to close those big-ticket deals. Their sales team was great, but the final hurdle felt insurmountable. Then, we implemented a new approach – not just selling, but truly understanding and solving their core pain points.\n\nIt wasn't about pushing features; it was about uncovering the hidden 'why' behind their purchase. This led to a remarkable shift, with one client landing a $10k deal on the first call.\n\nMy expertise lies in that precise moment – transforming hesitation into commitment, and turning prospects into paying clients, exponentially raising revenue. {{valueProposition}} is designed to do just that.\n\nWould you be open to a brief chat to explore this?`,
       },
     };
 
     const key = `${tone}-${useCase}`;
     const draft = baseDrafts[key] || baseDrafts['professional-initial'];
     
-    // Inject campaign context if provided
+    // Inject campaign context and reference if provided
+    let finalBody = draft.body;
     if (campaignContext) {
-      draft.body = `[Campaign Goal: ${campaignContext}]\n\n${draft.body}`;
+      finalBody = `[Goal: ${campaignContext}]\n\n${finalBody}`;
+    }
+    if (reference) {
+      // Reference is already in the storytelling template, but we ensure placeholder exists
+      if (!finalBody.includes('{{reference_company}}')) {
+        finalBody = `[Reference: ${reference}]\n\n${finalBody}`;
+      }
+    } else {
+      // Remove any lines that contain {{reference_company}} if reference not provided
+      finalBody = finalBody
+        .split('\n')
+        .filter(line => !line.includes('{{reference_company}}'))
+        .join('\n');
     }
     
-    return draft;
+    return {
+      subject: draft.subject,
+      body: finalBody,
+    };
   }
 }
 
@@ -67,8 +108,14 @@ class OpenAIProvider implements AIProvider {
     }
   }
 
-  async generateDraft(tone: string, useCase: string, campaignContext?: string, companyContext?: string) {
-    const prompt = this.buildPrompt(tone, useCase, campaignContext, companyContext);
+  async generateDraft(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
+  ) {
+    const prompt = this.buildPrompt(tone, useCase, campaignContext, reference, companyContext);
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -85,7 +132,7 @@ class OpenAIProvider implements AIProvider {
           { role: 'user', content: prompt },
         ],
         temperature: 0.7,
-        max_tokens: 400,
+        max_tokens: 500,
       }),
     });
 
@@ -98,20 +145,38 @@ class OpenAIProvider implements AIProvider {
     return this.parseResponse(content);
   }
 
-  private buildPrompt(tone: string, useCase: string, campaignContext?: string, companyContext?: string): string {
-    return `You are an expert in B2B cold outreach with a 40%+ reply rate.
+  private buildPrompt(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
+  ): string {
+    let prompt = `You are an expert in B2B cold outreach with a 40%+ reply rate.
 Generate a ${tone} cold email for ${useCase} outreach.
 
-${campaignContext ? `CAMPAIGN OBJECTIVE: ${campaignContext}` : 'General outreach'}
+CAMPAIGN OBJECTIVE: ${campaignContext || 'General outreach'}
 
-IMPORTANT REQUIREMENTS:
+`;
+
+    if (reference) {
+      prompt += `REFERENCE STORY: ${reference}
+Use this story as a case study, mentioning the company name as {{reference_company}}. If the story includes a specific company name, you may incorporate it naturally.\n\n`;
+    } else {
+      prompt += `No reference story provided. Do not include any specific client story; instead focus on the value proposition.\n\n`;
+    }
+
+    prompt += `IMPORTANT REQUIREMENTS:
 - Subject line: compelling, under 60 characters, no placeholders.
 - Body: 3-4 short paragraphs, under 150 words, mobile‑friendly.
 - Use placeholders EXACTLY as: {{name}}, {{company}}, {{position}}, {{valueProposition}}.
+- ${reference ? 'If you used the reference story, ensure {{reference_company}} appears where the client company would be mentioned.' : 'Do NOT use {{reference_company}}.'}
 - No links, no attachments, no "click here".
 - End with a clear, low‑friction call‑to‑action (e.g., "Would you be open to a brief chat?").
 - Output ONLY valid JSON: {"subject": "...", "body": "..."}
 ${companyContext ? `Context about the sender's company: ${companyContext}` : ''}`;
+
+    return prompt;
   }
 
   private parseResponse(raw: string): { subject: string; body: string } {
@@ -134,7 +199,7 @@ class GeminiProvider implements AIProvider {
   private apiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model = 'gemini-2.5-flash-lite') {
+  constructor(apiKey: string, model = 'gemini-1.5-pro') {
     this.apiKey = apiKey;
     this.model = model;
   }
@@ -143,8 +208,14 @@ class GeminiProvider implements AIProvider {
     return !!this.apiKey;
   }
 
-  async generateDraft(tone: string, useCase: string, campaignContext?: string, companyContext?: string) {
-    const prompt = this.buildPrompt(tone, useCase, campaignContext, companyContext);
+  async generateDraft(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
+  ) {
+    const prompt = this.buildPrompt(tone, useCase, campaignContext, reference, companyContext);
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`,
       {
@@ -156,7 +227,7 @@ class GeminiProvider implements AIProvider {
           }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 400,
+            maxOutputTokens: 500,
           },
         }),
       }
@@ -196,9 +267,15 @@ class OllamaProvider implements AIProvider {
     }
   }
 
-  async generateDraft(tone: string, useCase: string, campaignContext?: string, companyContext?: string) {
+  async generateDraft(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
+  ) {
     const model = useCase === 'initial' ? this.powerfulModel : this.fastModel;
-    const prompt = this.buildPrompt(tone, useCase, campaignContext, companyContext);
+    const prompt = this.buildPrompt(tone, useCase, campaignContext, reference, companyContext);
 
     const response = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
@@ -249,14 +326,15 @@ export class AIService {
     tone: string = 'professional',
     useCase: string = 'initial',
     campaignContext?: string,
+    reference?: string,
     companyContext?: string
   ): Promise<{ subject: string; body: string }> {
     try {
-      return await this.provider.generateDraft(tone, useCase, campaignContext, companyContext);
+      return await this.provider.generateDraft(tone, useCase, campaignContext, reference, companyContext);
     } catch (error) {
       logger.error({ error, provider: env.AI_PROVIDER }, 'AI provider failed, falling back to mock');
       const mock = new MockProvider();
-      return mock.generateDraft(tone, useCase, campaignContext, companyContext);
+      return mock.generateDraft(tone, useCase, campaignContext, reference, companyContext);
     }
   }
 }

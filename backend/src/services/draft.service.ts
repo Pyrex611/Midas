@@ -4,13 +4,14 @@ import { logger } from '../config/logger';
 
 export class DraftService {
   /**
-   * Generate a new draft, optionally associated with a campaign.
+   * Generate a single draft and save it to the database.
    */
   async generateAndSaveDraft(
     tone: string = 'professional',
     useCase: string = 'initial',
     campaignId?: string,
     campaignContext?: string,
+    reference?: string,
     companyContext?: string
   ) {
     try {
@@ -18,6 +19,7 @@ export class DraftService {
         tone,
         useCase,
         campaignContext,
+        reference,
         companyContext
       );
 
@@ -29,7 +31,7 @@ export class DraftService {
           useCase,
           version: 1,
           isActive: true,
-          campaignId, // 👈 Associate with campaign if provided
+          campaignId,
         },
       });
 
@@ -42,15 +44,81 @@ export class DraftService {
   }
 
   /**
-   * Get the best active draft for a given campaign and use case.
-   * If no campaign‑specific draft exists, fall back to global best.
+   * Generate multiple drafts with varied tones.
    */
-  async getBestDraft(
-    useCase: string = 'initial',
+  async generateMultipleDrafts(
+    count: number,
     tone: string = 'professional',
-    campaignId?: string
+    useCase: string = 'initial',
+    campaignId?: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
   ) {
-    // Try campaign‑specific draft first
+    const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
+    const drafts = [];
+
+    for (let i = 0; i < count; i++) {
+      const variedTone = tones[i % tones.length];
+      const variedContext = campaignContext
+        ? `${campaignContext} (Version ${i + 1}: ${variedTone} approach)`
+        : undefined;
+
+      const draft = await this.generateAndSaveDraft(
+        variedTone,
+        useCase,
+        campaignId,
+        variedContext,
+        reference,
+        companyContext
+      );
+      drafts.push(draft);
+    }
+
+    logger.info({ campaignId, count }, 'Generated multiple drafts');
+    return drafts;
+  }
+
+  /**
+   * Get a random active draft for a given campaign and use case.
+   * Falls back to global drafts if none exist for the campaign.
+   */
+  async getRandomDraft(campaignId: string, useCase: string = 'initial') {
+    const campaignDrafts = await prisma.draft.findMany({
+      where: {
+        campaignId,
+        useCase,
+        isActive: true,
+      },
+    });
+
+    if (campaignDrafts.length > 0) {
+      const randomIndex = Math.floor(Math.random() * campaignDrafts.length);
+      return campaignDrafts[randomIndex];
+    }
+
+    // Fallback to global drafts
+    const globalDrafts = await prisma.draft.findMany({
+      where: {
+        campaignId: null,
+        useCase,
+        isActive: true,
+      },
+    });
+
+    if (globalDrafts.length > 0) {
+      const randomIndex = Math.floor(Math.random() * globalDrafts.length);
+      return globalDrafts[randomIndex];
+    }
+
+    // If no drafts exist, generate one on the fly
+    return this.generateAndSaveDraft('professional', useCase);
+  }
+
+  /**
+   * Get the best draft (by performance) – kept for compatibility but not used in random mode.
+   */
+  async getBestDraft(useCase: string = 'initial', tone: string = 'professional', campaignId?: string) {
     if (campaignId) {
       const campaignDraft = await prisma.draft.findFirst({
         where: {
@@ -67,8 +135,7 @@ export class DraftService {
       });
       if (campaignDraft) return campaignDraft;
     }
-
-    // Fallback to global draft
+		
     const globalDraft = await prisma.draft.findFirst({
       where: {
         campaignId: null,
@@ -85,9 +152,22 @@ export class DraftService {
 
     if (globalDraft) return globalDraft;
 
-    // No draft exists – generate a global one on‑the‑fly
     return this.generateAndSaveDraft(tone, useCase);
   }
+	
+  /**
+   * Get all active drafts for a campaign.
+   */
+  async getAllDraftsForCampaign(campaignId: string) {
+    return prisma.draft.findMany({
+      where: {
+        campaignId,
+        isActive: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
 
   /**
    * List drafts, optionally filtered by campaign.
