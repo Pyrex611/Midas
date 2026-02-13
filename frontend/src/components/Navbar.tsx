@@ -57,6 +57,14 @@ export const Navbar = () => {
             >
               📋 All Leads
             </Link>
+            {/* 🔥 NEW: Campaigns Link */}
+            <Link
+              to="/campaigns"
+              onClick={() => setIsOpen(false)}
+              className="block px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+            >
+              📊 Campaigns
+            </Link>
           </nav>
         </div>
       </div>

@@ -5,7 +5,7 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Lead API endpoints
+// ===== LEAD API =====
 export const leadAPI = {
   upload: (file: File, skipDuplicates = true) => {
     const formData = new FormData();
@@ -14,16 +14,29 @@ export const leadAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  confirmEmailSelection: (sessionId: string, selections: { rowIndex: number; selectedEmail: string }[]) => {
-    return api.post('/leads/confirm-email-selection', { selections }, {
-      headers: { 'X-Upload-Session': sessionId },
-    });
-  },
   getAll: (page = 1, pageSize = 20, status?: string) =>
     api.get('/leads', { params: { page, pageSize, status } }),
   get: (id: string) => api.get(`/leads/${id}`),
   update: (id: string, data: any) => api.put(`/leads/${id}`, data),
   delete: (id: string) => api.delete(`/leads/${id}`),
+};
+
+// ===== CAMPAIGN API =====
+export const campaignAPI = {
+  create: (data: { name: string; description?: string; context?: string; leadIds?: string[] }) =>
+    api.post('/campaigns', data),
+  getAll: () => api.get('/campaigns'),
+  get: (id: string) => api.get(`/campaigns/${id}`),
+  addLeads: (campaignId: string, leadIds: string[]) =>
+    api.post(`/campaigns/${campaignId}/leads`, { leadIds }),
+  getLeadEmailPreview: (campaignId: string, leadId: string) => // ✅ NEW
+    api.get(`/campaigns/${campaignId}/leads/${leadId}/preview`),
+};
+
+// ===== DIAGNOSTICS API =====
+export const diagnosticsAPI = {
+  health: () => api.get('/diagnostics/health/db'),
+  testLead: () => api.post('/diagnostics/test/lead'),
 };
 
 export default api;

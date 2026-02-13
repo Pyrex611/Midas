@@ -25,8 +25,7 @@ export const EmailSelectionModal: React.FC<Props> = ({
   const [selections, setSelections] = useState<Map<number, string>>(() => {
     const map = new Map();
     candidates.forEach(c => {
-      // Default to first candidate (usually highest priority)
-      map.set(c.rowIndex, c.candidates[0].email);
+      map.set(c.rowIndex, c.candidates[0]?.email || '');
     });
     return map;
   });
@@ -85,7 +84,6 @@ export const EmailSelectionModal: React.FC<Props> = ({
           {candidates.length} lead(s) have more than one email address. Please select which email to use for each lead.
         </p>
 
-        {/* Bulk action buttons */}
         <div className="flex space-x-3 mb-6 pb-4 border-b">
           <button
             onClick={handleSelectAllWork}
@@ -115,7 +113,6 @@ export const EmailSelectionModal: React.FC<Props> = ({
           </button>
         </div>
 
-        {/* Per-lead selection table */}
         <div className="max-h-96 overflow-y-auto mb-6">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50 sticky top-0">

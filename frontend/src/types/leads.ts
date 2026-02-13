@@ -6,6 +6,13 @@ export type LeadStatus =
   | 'UNSUBSCRIBED'
   | 'BOUNCED';
 
+export type OutreachStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'SENT'
+  | 'FAILED'
+  | 'SKIPPED';
+
 export interface Lead {
   id: string;
   name: string;
@@ -13,8 +20,15 @@ export interface Lead {
   company: string | null;
   position: string | null;
   status: LeadStatus;
+  outreachStatus?: OutreachStatus; // ✅ ADDED
+  campaignId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface EmailCandidate {
+  email: string;
+  type: string;
 }
 
 export interface UploadSummary {
@@ -27,22 +41,9 @@ export interface UploadSummary {
   dbErrors: any[];
 }
 
-export interface EmailCandidate {
-  email: string;
-  type: string;
-}
-
 export interface UploadPreviewResponse {
   success: boolean;
-  summary: {
-    totalRows: number;
-    valid: number;
-    created: number;
-    duplicates: number;
-    failed: number;
-    parseErrors: any[];
-    dbErrors: any[];
-  };
+  summary: UploadSummary;
   needsEmailSelection: boolean;
   emailCandidates?: {
     rowIndex: number;
