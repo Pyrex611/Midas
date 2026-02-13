@@ -14,6 +14,11 @@ export const leadAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  confirmEmailSelection: (sessionId: string, selections: { rowIndex: number; selectedEmail: string }[]) => {
+    return api.post('/leads/confirm-email-selection', { selections }, {
+      headers: { 'X-Upload-Session': sessionId },
+    });
+  },
   getAll: (page = 1, pageSize = 20, status?: string) =>
     api.get('/leads', { params: { page, pageSize, status } }),
   get: (id: string) => api.get(`/leads/${id}`),

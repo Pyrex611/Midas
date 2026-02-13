@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -13,19 +13,10 @@ model Lead {
   email     String   @unique
   company   String?
   position  String?
-  status    LeadStatus @default(NEW)
+  status    String   @default("NEW")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([email])
-}
-
-enum LeadStatus {
-  NEW              // initial outreach pending
-  CONTACTED        // first email sent
-  FOLLOW_UP        // follow‑up email sent
-  REPLIED          // lead replied
-  UNSUBSCRIBED     // opted out
-  BOUNCED          // invalid email
 }

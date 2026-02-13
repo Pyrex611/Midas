@@ -1,24 +1,48 @@
-import express from 'express';
-import cors from 'cors';
-import 'express-async-errors';
-import leadRoutes from './routes/lead.routes';
-import { errorHandler } from './middleware/error.middleware';
-import { env } from './config/env';
-import { logger } from './config/logger';
+import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
+import multer from 'multer';
+import { logger } from '../config/logger';
 
-const app = express();
+export function errorHandler(
+  err: Error,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  logger.error({ err, req: req.path }, 'Unhandled error');
 
-app.use(cors({ origin: env.CORS_ORIGIN }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  // Zod validation errors
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: err.errors,
+    });
+  }
 
-// Health check
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+  // Prisma known errors
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'Duplicate email' });
+    }
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+  }
 
-// API routes
-app.use('/api/leads', leadRoutes);
+  // Multer errors (file upload)
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'FILE_TOO_LARGE') {
+      return res.status(413).json({ error: 'File too large' });
+    }
+    return res.status(400).json({ error: err.message });
+  }
 
-// Global error handler
-app.use(errorHandler);
+  // Custom errors (e.g., from file parser)
+  if (err.message.includes('Unsupported file type')) {
+    return res.status(400).json({ error: err.message });
+  }
 
-export default app;
+  // Fallback – internal server error
+  res.status(500).json({ error: 'Internal server error' });
+}

@@ -12,13 +12,13 @@ app.use(cors({ origin: env.CORS_ORIGIN }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check
+// Health check endpoint
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // API routes
 app.use('/api/leads', leadRoutes);
 
-// Global error handler
+// Global error handler – must be last
 app.use(errorHandler);
 
 export default app;

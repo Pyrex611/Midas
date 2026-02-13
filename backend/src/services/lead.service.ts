@@ -1,10 +1,15 @@
-import { PrismaClient, LeadStatus } from '@prisma/client';
-import { LeadCreateInput, LeadUpdateInput } from '../types/lead.types';
+import { PrismaClient } from '@prisma/client';
+import { LeadCreateInput, LeadUpdateInput, LeadStatus } from '../types/lead.types';
 import { logger } from '../config/logger';
 
 const prisma = new PrismaClient();
 
 export class LeadService {
+  /**
+   * Bulk insert leads with duplicate handling.
+   * @param leads - Array of validated lead objects
+   * @param skipDuplicates - If true, skip existing emails; if false, update them
+   */
   async createLeads(
     leads: LeadCreateInput[],
     skipDuplicates = true
@@ -13,7 +18,6 @@ export class LeadService {
 
     for (const lead of leads) {
       try {
-        // Check existing email
         const existing = await prisma.lead.findUnique({
           where: { email: lead.email },
         });
@@ -23,7 +27,7 @@ export class LeadService {
             result.duplicates++;
             continue;
           } else {
-            // Update existing lead with new data (optional strategy)
+            // Update existing lead with new information
             await prisma.lead.update({
               where: { id: existing.id },
               data: {
@@ -39,7 +43,7 @@ export class LeadService {
 
         await prisma.lead.create({ data: lead });
         result.created++;
-      } catch (error) {
+      } catch (error: any) {
         result.failed++;
         result.errors.push({ email: lead.email, error: error.message });
         logger.error({ error, lead }, 'Failed to create lead');
@@ -49,12 +53,16 @@ export class LeadService {
     return result;
   }
 
+  /**
+   * Retrieve paginated leads, optionally filtered by status.
+   */
   async getLeads(
     page: number,
     pageSize: number,
     status?: LeadStatus
   ) {
     const where = status ? { status } : {};
+
     const [leads, total] = await Promise.all([
       prisma.lead.findMany({
         where,
@@ -76,16 +84,49 @@ export class LeadService {
     };
   }
 
+  /**
+   * Retrieve a single lead by ID.
+   */
   async getLead(id: string) {
-    return prisma.lead.findUniqueOrThrow({ where: { id } });
+    try {
+      return await prisma.lead.findUniqueOrThrow({ where: { id } });
+    } catch (error: any) {
+      if (error.code === 'P2025') {
+        throw new Error('Lead not found');
+      }
+      throw error;
+    }
   }
 
+  /**
+   * Update an existing lead.
+   */
   async updateLead(id: string, data: LeadUpdateInput) {
-    return prisma.lead.update({ where: { id }, data });
+    try {
+      return await prisma.lead.update({
+        where: { id },
+        data,
+      });
+    } catch (error: any) {
+      if (error.code === 'P2025') {
+        throw new Error('Lead not found');
+      }
+      throw error;
+    }
   }
 
+  /**
+   * Delete a lead by ID.
+   */
   async deleteLead(id: string) {
-    await prisma.lead.delete({ where: { id } });
-    return { success: true };
+    try {
+      await prisma.lead.delete({ where: { id } });
+      return { success: true };
+    } catch (error: any) {
+      if (error.code === 'P2025') {
+        throw new Error('Lead not found');
+      }
+      throw error;
+    }
   }
 }

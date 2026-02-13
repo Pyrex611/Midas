@@ -26,3 +26,31 @@ export interface UploadSummary {
   parseErrors: { row: number; message: string }[];
   dbErrors: any[];
 }
+
+export interface EmailCandidate {
+  email: string;
+  type: string;
+}
+
+export interface UploadPreviewResponse {
+  success: boolean;
+  summary: {
+    totalRows: number;
+    valid: number;
+    created: number;
+    duplicates: number;
+    failed: number;
+    parseErrors: any[];
+    dbErrors: any[];
+  };
+  needsEmailSelection: boolean;
+  emailCandidates?: {
+    rowIndex: number;
+    candidates: EmailCandidate[];
+    leadPreview: {
+      name: string;
+      company: string | null;
+      position: string | null;
+    };
+  }[];
+}
