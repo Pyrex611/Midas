@@ -38,6 +38,12 @@ export const campaignAPI = {
   getDrafts: (campaignId: string) => api.get(`/campaigns/${campaignId}/drafts`),
   previewLeadWithDraft: (campaignId: string, leadId: string, draftId: string) =>
     api.get(`/campaigns/${campaignId}/leads/${leadId}/preview/${draftId}`),
+  updateDraft: (campaignId: string, draftId: string, data: { subject?: string; body?: string; tone?: string }) =>
+    api.put(`/campaigns/${campaignId}/drafts/${draftId}`, data),
+  deleteDraft: (campaignId: string, draftId: string) =>
+    api.delete(`/campaigns/${campaignId}/drafts/${draftId}`),
+  createCustomDraft: (campaignId: string, data: { subject: string; body: string }) =>
+    api.post(`/campaigns/${campaignId}/drafts/custom`, data),
 };
 
 export const diagnosticsAPI = {

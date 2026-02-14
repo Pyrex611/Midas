@@ -11,6 +11,9 @@ import {
   getCampaignDrafts,           // ✅ NEW
   previewLeadWithDraft,         // ✅ NEW
   generateCampaignDraft,        // already exists
+  updateDraft,           // ✅
+  deleteDraft,           // ✅
+  createCustomDraft,     // ✅
 } from '../controllers/campaign.controller';
 
 const router = Router();
@@ -26,5 +29,10 @@ router.delete('/:id', deleteCampaign);
 router.get('/:campaignId/drafts', getCampaignDrafts);                     // ✅
 router.get('/:campaignId/leads/:leadId/preview/:draftId', previewLeadWithDraft); // ✅
 router.post('/:campaignId/drafts/generate', generateCampaignDraft);
+
+// New draft management routes
+router.put('/:campaignId/drafts/:draftId', updateDraft);
+router.delete('/:campaignId/drafts/:draftId', deleteDraft);
+router.post('/:campaignId/drafts/custom', createCustomDraft);
 
 export default router;

@@ -4,12 +4,15 @@ import { campaignAPI } from '../services/api';
 import { LeadEmailPreviewModal } from '../components/LeadEmailPreviewModal';
 import { RenameCampaignModal } from '../components/RenameCampaignModal';
 import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
+import { EditDraftModal } from '../components/EditDraftModal';
+import { CustomDraftModal } from '../components/CustomDraftModal';
 
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'leads' | 'drafts'>('leads');
   const [previewLead, setPreviewLead] = useState<{
     id: string;
@@ -23,15 +26,22 @@ export const CampaignDetail: React.FC = () => {
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  // Generate draft state
+  // Draft management state
+  const [editingDraft, setEditingDraft] = useState<any>(null);
+  const [showEditDraftModal, setShowEditDraftModal] = useState(false);
+  const [showCustomDraftModal, setShowCustomDraftModal] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
   const fetchCampaign = async () => {
+    if (!id) return;
+    setLoading(true);
+    setError(null);
     try {
-      const res = await campaignAPI.get(id!);
+      const res = await campaignAPI.get(id);
       setCampaign(res.data);
-    } catch (error) {
-      console.error('Failed to fetch campaign', error);
+    } catch (err: any) {
+      console.error('Failed to fetch campaign', err);
+      setError(err.response?.data?.error || 'Failed to load campaign');
     } finally {
       setLoading(false);
     }
@@ -47,8 +57,9 @@ export const CampaignDetail: React.FC = () => {
   };
 
   const handleDelete = async () => {
+    if (!id) return;
     try {
-      await campaignAPI.delete(id!);
+      await campaignAPI.delete(id);
       navigate('/campaigns');
     } catch (error) {
       console.error('Failed to delete campaign', error);
@@ -57,16 +68,41 @@ export const CampaignDetail: React.FC = () => {
   };
 
   const handleGenerateDraft = async () => {
+    if (!campaign?.id) return;
     setGeneratingDraft(true);
     try {
       await campaignAPI.generateDraft(campaign.id);
-      fetchCampaign(); // refresh to show new draft
+      fetchCampaign();
     } catch (error) {
       console.error('Failed to generate draft', error);
       alert('Could not generate new draft');
     } finally {
       setGeneratingDraft(false);
     }
+  };
+
+  const handleEditDraft = async (draftId: string, data: { subject: string; body: string }) => {
+    if (!campaign?.id) return;
+    await campaignAPI.updateDraft(campaign.id, draftId, data);
+    fetchCampaign();
+  };
+
+  const handleDeleteDraft = async (draftId: string) => {
+    if (!campaign?.id) return;
+    if (!confirm('Are you sure you want to delete this draft?')) return;
+    try {
+      await campaignAPI.deleteDraft(campaign.id, draftId);
+      fetchCampaign();
+    } catch (error) {
+      console.error('Failed to delete draft', error);
+      alert('Could not delete draft');
+    }
+  };
+
+  const handleCreateCustomDraft = async (data: { subject: string; body: string }) => {
+    if (!campaign?.id) return;
+    await campaignAPI.createCustomDraft(campaign.id, data);
+    fetchCampaign();
   };
 
   if (loading) {
@@ -77,10 +113,15 @@ export const CampaignDetail: React.FC = () => {
     );
   }
 
-  if (!campaign) {
+  if (error || !campaign) {
     return (
       <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-        <div className="text-center py-12">Campaign not found.</div>
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <p>{error || 'Campaign not found.'}</p>
+          <Link to="/campaigns" className="text-blue-600 hover:text-blue-800 mt-2 inline-block">
+            ← Back to Campaigns
+          </Link>
+        </div>
       </div>
     );
   }
@@ -104,24 +145,9 @@ export const CampaignDetail: React.FC = () => {
       case 'PROCESSING':
         return (
           <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800 flex items-center">
-            <svg
-              className="animate-spin -ml-1 mr-2 h-3 w-3 text-blue-800"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
+            <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-blue-800" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
             Optimising & personalising…
           </span>
@@ -156,7 +182,6 @@ export const CampaignDetail: React.FC = () => {
           ← Back to Campaigns
         </Link>
 
-        {/* Kebab menu (Rename & Delete only) */}
         <div className="relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
@@ -198,6 +223,17 @@ export const CampaignDetail: React.FC = () => {
         onConfirm={handleDelete}
         campaignName={campaign.name}
       />
+      <EditDraftModal
+        isOpen={showEditDraftModal}
+        onClose={() => setShowEditDraftModal(false)}
+        draft={editingDraft}
+        onSave={handleEditDraft}
+      />
+      <CustomDraftModal
+        isOpen={showCustomDraftModal}
+        onClose={() => setShowCustomDraftModal(false)}
+        onSubmit={handleCreateCustomDraft}
+      />
 
       {/* Campaign details */}
       <div className="bg-white shadow rounded-lg p-6">
@@ -205,7 +241,7 @@ export const CampaignDetail: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{campaign.name}</h1>
             <div className="mt-2 flex items-center space-x-3">
-              <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColors[campaign.status]}`}>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColors[campaign.status] || 'bg-gray-100'}`}>
                 {campaign.status}
               </span>
               <span className="text-sm text-gray-500">
@@ -245,7 +281,7 @@ export const CampaignDetail: React.FC = () => {
           </div>
           <div className="bg-gray-50 p-4 rounded-lg">
             <div className="text-2xl font-bold text-gray-900">
-              {campaign.leads?.filter((l: any) => l.outreachStatus === 'SENT').length || 0}
+              {campaign.leads?.filter((l: any) => l?.outreachStatus === 'SENT').length || 0}
             </div>
             <div className="text-sm text-gray-600">Delivered</div>
           </div>
@@ -326,18 +362,40 @@ export const CampaignDetail: React.FC = () => {
             {campaign.drafts && campaign.drafts.length > 0 ? (
               <div className="space-y-4">
                 {campaign.drafts.map((draft: any) => (
-                  <div key={draft.id} className="border rounded-lg p-4">
-                    <div className="flex justify-between items-start">
+                  <div key={draft.id} className="border rounded-lg p-4 relative">
+                    <div className="flex justify-between items-start pr-12">
                       <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900">Subject: {draft.subject}</div>
-                        <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">{draft.body}</div>
+                        <div className="text-sm font-medium text-gray-900">
+                          Subject: {draft.subject || '(no subject)'}
+                        </div>
+                        <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">
+                          {draft.body || '(empty)'}
+                        </div>
                       </div>
                       <div className="ml-4 flex flex-col items-end text-xs text-gray-500">
-                        <span>Tone: {draft.tone}</span>
-                        <span>Use: {draft.useCase}</span>
-                        <span>Sent: {draft.sentCount}</span>
-                        <span>Replies: {draft.replyCount}</span>
+                        <span>Tone: {draft.tone || 'custom'}</span>
+                        <span>Use: {draft.useCase || 'initial'}</span>
+                        <span>Sent: {draft.sentCount || 0}</span>
+                        <span>Replies: {draft.replyCount || 0}</span>
                       </div>
+                    </div>
+                    {/* Action buttons */}
+                    <div className="mt-2 flex justify-end space-x-2">
+                      <button
+                        onClick={() => {
+                          setEditingDraft(draft);
+                          setShowEditDraftModal(true);
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDraft(draft.id)}
+                        className="text-xs text-red-600 hover:text-red-800"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -346,8 +404,8 @@ export const CampaignDetail: React.FC = () => {
               <p className="text-gray-500 text-center py-8">No drafts yet.</p>
             )}
 
-            {/* Generate New Draft Button */}
-            <div className="mt-6 flex justify-center">
+            {/* Draft action buttons */}
+            <div className="mt-6 flex justify-center space-x-4">
               <button
                 onClick={handleGenerateDraft}
                 disabled={generatingDraft}
@@ -359,8 +417,14 @@ export const CampaignDetail: React.FC = () => {
                     Generating...
                   </>
                 ) : (
-                  '+ Generate New Draft'
+                  '+ Generate Draft'
                 )}
+              </button>
+              <button
+                onClick={() => setShowCustomDraftModal(true)}
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+              >
+                + Custom Draft
               </button>
             </div>
           </div>

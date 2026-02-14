@@ -279,3 +279,63 @@ export const generateCampaignDraft = async (req: Request, res: Response, next: N
     next(error);
   }
 };
+
+
+/**
+ * PUT /api/campaigns/:campaignId/drafts/:draftId
+ * Update a draft (subject, body, tone)
+ */
+export const updateDraft = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { draftId } = req.params;
+    const { subject, body, tone } = req.body;
+
+    const draft = await prisma.draft.findUnique({ where: { id: draftId } });
+    if (!draft) return res.status(404).json({ error: 'Draft not found' });
+
+    const updated = await draftService.updateDraft(draftId, { subject, body, tone });
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/campaigns/:campaignId/drafts/:draftId
+ * Delete a draft
+ */
+export const deleteDraft = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { draftId } = req.params;
+    await draftService.deleteDraft(draftId);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/campaigns/:campaignId/drafts/custom
+ * Create a custom draft (user-provided subject/body)
+ */
+export const createCustomDraft = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { campaignId } = req.params;
+    const { subject, body } = req.body;
+
+    if (!subject || !body) {
+      return res.status(400).json({ error: 'Subject and body are required' });
+    }
+
+    const draft = await draftService.createCustomDraft(
+      subject,
+      body,
+      campaignId,
+      'custom'
+    );
+
+    res.status(201).json(draft);
+  } catch (error) {
+    next(error);
+  }
+};

@@ -3,9 +3,6 @@ import { aiService } from './ai.service';
 import { logger } from '../config/logger';
 
 export class DraftService {
-  /**
-   * Generate a single draft and save it to the database.
-   */
   async generateAndSaveDraft(
     tone: string = 'professional',
     useCase: string = 'initial',
@@ -43,9 +40,6 @@ export class DraftService {
     }
   }
 
-  /**
-   * Generate multiple drafts with varied tones.
-   */
   async generateMultipleDrafts(
     count: number,
     tone: string = 'professional',
@@ -79,45 +73,6 @@ export class DraftService {
     return drafts;
   }
 
-  /**
-   * Get a random active draft for a given campaign and use case.
-   * Falls back to global drafts if none exist for the campaign.
-   */
-  async getRandomDraft(campaignId: string, useCase: string = 'initial') {
-    const campaignDrafts = await prisma.draft.findMany({
-      where: {
-        campaignId,
-        useCase,
-        isActive: true,
-      },
-    });
-
-    if (campaignDrafts.length > 0) {
-      const randomIndex = Math.floor(Math.random() * campaignDrafts.length);
-      return campaignDrafts[randomIndex];
-    }
-
-    // Fallback to global drafts
-    const globalDrafts = await prisma.draft.findMany({
-      where: {
-        campaignId: null,
-        useCase,
-        isActive: true,
-      },
-    });
-
-    if (globalDrafts.length > 0) {
-      const randomIndex = Math.floor(Math.random() * globalDrafts.length);
-      return globalDrafts[randomIndex];
-    }
-
-    // If no drafts exist, generate one on the fly
-    return this.generateAndSaveDraft('professional', useCase);
-  }
-
-  /**
-   * Get the best draft (by performance) – kept for compatibility but not used in random mode.
-   */
   async getBestDraft(useCase: string = 'initial', tone: string = 'professional', campaignId?: string) {
     if (campaignId) {
       const campaignDraft = await prisma.draft.findFirst({
@@ -135,7 +90,7 @@ export class DraftService {
       });
       if (campaignDraft) return campaignDraft;
     }
-		
+
     const globalDraft = await prisma.draft.findFirst({
       where: {
         campaignId: null,
@@ -154,24 +109,7 @@ export class DraftService {
 
     return this.generateAndSaveDraft(tone, useCase);
   }
-	
-  /**
-   * Get all active drafts for a campaign.
-   */
-  async getAllDraftsForCampaign(campaignId: string) {
-    return prisma.draft.findMany({
-      where: {
-        campaignId,
-        isActive: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
 
-
-  /**
-   * List drafts, optionally filtered by campaign.
-   */
   async listDrafts(campaignId?: string, activeOnly = true) {
     return prisma.draft.findMany({
       where: {
@@ -179,6 +117,40 @@ export class DraftService {
         ...(activeOnly && { isActive: true }),
       },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // ✅ NEW: Update draft
+  async updateDraft(id: string, data: { subject?: string; body?: string; tone?: string }) {
+    return prisma.draft.update({
+      where: { id },
+      data,
+    });
+  }
+
+  // ✅ NEW: Delete draft (soft delete by setting isActive false, or hard delete)
+  async deleteDraft(id: string) {
+    // Hard delete (can also soft delete by setting isActive: false)
+    return prisma.draft.delete({ where: { id } });
+  }
+
+  // ✅ NEW: Create a custom draft (user-provided subject/body)
+  async createCustomDraft(
+    subject: string,
+    body: string,
+    campaignId?: string,
+    tone: string = 'custom'
+  ) {
+    return prisma.draft.create({
+      data: {
+        subject,
+        body,
+        tone,
+        useCase: 'initial',
+        version: 1,
+        isActive: true,
+        campaignId,
+      },
     });
   }
 }
