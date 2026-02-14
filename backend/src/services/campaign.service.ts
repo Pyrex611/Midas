@@ -50,7 +50,6 @@ export class CampaignService {
       logger.info({ campaignId: campaign.id }, 'Campaign created with 5 drafts');
 
       if (leadIds?.length) {
-        // Process leads after drafts are guaranteed to exist
         await this.processCampaign(campaign.id);
       }
 
@@ -99,7 +98,6 @@ export class CampaignService {
       });
     }
 
-    // Process the newly added leads (non‑blocking but we await to ensure drafts exist)
     await this.processCampaign(campaignId, newLeadIds);
 
     return { added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length };
@@ -144,6 +142,7 @@ export class CampaignService {
     }
 
     logger.info({ campaignId, draftCount: drafts.length }, 'Drafts available for campaign');
+    logger.debug('Available draft IDs:', drafts.map(d => d.id).join(', '));
 
     // Determine which leads to process
     const whereClause: any = { campaignId };
@@ -163,7 +162,13 @@ export class CampaignService {
         const randomIndex = Math.floor(Math.random() * drafts.length);
         const draft = drafts[randomIndex];
 
-        logger.debug({ leadId: lead.id, draftId: draft.id }, 'Selected draft for lead');
+        // 🔥 LOGGING ADDED – confirm draft selection
+        logger.info({
+          leadId: lead.id,
+          selectedDraftId: draft.id,
+          draftIndex: randomIndex,
+          totalDrafts: drafts.length,
+        }, 'Random draft selected for lead');
 
         await prisma.lead.update({
           where: { id: lead.id },
@@ -242,9 +247,6 @@ export class CampaignService {
     }
   }
 
-  /**
-   * Get all campaigns (summary list).
-   */
   async getCampaigns() {
     return prisma.campaign.findMany({
       orderBy: { createdAt: 'desc' },
@@ -260,9 +262,6 @@ export class CampaignService {
     });
   }
 
-  /**
-   * Get detailed campaign information.
-   */
   async getCampaignDetails(campaignId: string) {
     return prisma.campaign.findUnique({
       where: { id: campaignId },
