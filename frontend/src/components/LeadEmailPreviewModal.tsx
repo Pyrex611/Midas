@@ -9,9 +9,17 @@ interface Props {
     id: string;
     name: string;
     email: string;
-    outreachStatus?: string; // ✅ Pass current status
+    outreachStatus?: string;
   } | null;
-  onSendSuccess?: () => void; // ✅ Callback to refresh parent data
+  onSendSuccess?: () => void;
+}
+
+interface Draft {
+  id: string;
+  subject: string;
+  body: string;
+  tone: string;
+  useCase: string;
 }
 
 export const LeadEmailPreviewModal: React.FC<Props> = ({
@@ -21,37 +29,53 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
   lead,
   onSendSuccess,
 }) => {
-  const [loading, setLoading] = useState(false);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [sendSuccess, setSendSuccess] = useState(false);
 
-  const isAlreadySent = lead?.outreachStatus === 'SENT' || sendSuccess;
+  const isAlreadySent = lead?.outreachStatus === 'SENT';
 
+  // Fetch all drafts for this campaign
   useEffect(() => {
     if (isOpen && lead) {
       setLoading(true);
       setError(null);
-      setSendSuccess(false);
-      campaignAPI
-        .getLeadEmailPreview(campaignId, lead.id)
-        .then((res) => setPreview(res.data))
-        .catch((err) =>
-          setError(err.response?.data?.error || 'Failed to load preview')
-        )
+      campaignAPI.getDrafts(campaignId)
+        .then(res => setDrafts(res.data))
+        .catch(err => setError('Failed to load drafts'))
         .finally(() => setLoading(false));
     }
   }, [isOpen, campaignId, lead]);
 
+  // Fetch preview for current draft index
+  useEffect(() => {
+    if (drafts.length > 0 && lead) {
+      const draftId = drafts[currentDraftIndex].id;
+      campaignAPI.previewLeadWithDraft(campaignId, lead.id, draftId)
+        .then(res => setPreview(res.data))
+        .catch(err => setError('Failed to load preview'));
+    }
+  }, [drafts, currentDraftIndex, campaignId, lead]);
+
+  const handlePrev = () => {
+    setCurrentDraftIndex(prev => (prev > 0 ? prev - 1 : drafts.length - 1));
+  };
+
+  const handleNext = () => {
+    setCurrentDraftIndex(prev => (prev < drafts.length - 1 ? prev + 1 : 0));
+  };
+
   const handleSend = async () => {
-    if (!lead) return;
+    if (!lead || drafts.length === 0) return;
     setSending(true);
     setError(null);
     try {
       await campaignAPI.sendLeadEmail(campaignId, lead.id);
-      setSendSuccess(true);
       if (onSendSuccess) onSendSuccess();
+      onClose();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to send email');
     } finally {
@@ -68,10 +92,7 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
           <h3 className="text-lg font-medium text-gray-900">
             Email Preview – {lead.name}
           </h3>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
-          >
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -81,18 +102,42 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
         {loading && (
           <div className="flex justify-center items-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-3 text-gray-600">Personalising email draft...</span>
+            <span className="ml-3 text-gray-600">Loading drafts...</span>
           </div>
         )}
 
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-            {error}
-          </div>
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">{error}</div>
         )}
 
-        {preview && (
+        {drafts.length > 0 && preview && (
           <div className="space-y-4">
+            {/* Draft selector with arrows */}
+            <div className="flex items-center justify-between bg-gray-50 p-3 rounded">
+              <button
+                onClick={handlePrev}
+                className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
+                disabled={drafts.length <= 1}
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <span className="text-sm font-medium">
+                Draft {currentDraftIndex + 1} of {drafts.length} ({drafts[currentDraftIndex].tone} tone)
+              </span>
+              <button
+                onClick={handleNext}
+                className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
+                disabled={drafts.length <= 1}
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Email preview */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
               <div className="bg-gray-50 p-2 rounded text-sm">{lead.email}</div>
@@ -108,11 +153,11 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* ✅ Send Button Section */}
+            {/* Send button */}
             <div className="flex items-center justify-between pt-4 border-t">
               <div className="text-xs text-gray-500">
                 {isAlreadySent ? (
-                  <span className="text-green-600 font-medium">✓ Sent</span>
+                  <span className="text-green-600 font-medium">✓ Outreach Already Sent</span>
                 ) : (
                   <span>This email has not been sent yet.</span>
                 )}
@@ -146,14 +191,9 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
           </div>
         )}
 
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Close
-          </button>
-        </div>
+        {!loading && drafts.length === 0 && (
+          <p className="text-center py-8 text-gray-500">No drafts available for this campaign.</p>
+        )}
       </div>
     </div>
   );

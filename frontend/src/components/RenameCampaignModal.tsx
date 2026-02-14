@@ -16,19 +16,18 @@ export const RenameCampaignModal: React.FC<Props> = ({
 }) => {
   const [name, setName] = useState(campaign.name);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
     setSubmitting(true);
-    setError(null);
     try {
       await campaignAPI.update(campaign.id, { name });
       onSuccess();
       onClose();
-    } catch (err: any) {
-      setError(err.response?.data?.error || err.message || 'Failed to rename campaign');
+    } catch (error) {
+      console.error('Failed to rename campaign', error);
+      alert('Could not rename campaign');
     } finally {
       setSubmitting(false);
     }
@@ -40,16 +39,9 @@ export const RenameCampaignModal: React.FC<Props> = ({
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
       <div className="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Rename Campaign</h3>
-        {error && (
-          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md">
-            {error}
-          </div>
-        )}
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Campaign Name
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Campaign Name</label>
             <input
               type="text"
               value={name}

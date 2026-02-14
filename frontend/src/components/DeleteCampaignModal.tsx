@@ -15,17 +15,15 @@ export const DeleteCampaignModal: React.FC<Props> = ({
 }) => {
   const [confirmText, setConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleDelete = async () => {
     if (confirmText !== campaignName) return;
     setDeleting(true);
-    setError(null);
     try {
       await onConfirm();
       onClose();
-    } catch (err: any) {
-      setError(err.message || 'Failed to delete campaign');
+    } catch (error) {
+      // Error handled in parent
     } finally {
       setDeleting(false);
     }
@@ -37,17 +35,10 @@ export const DeleteCampaignModal: React.FC<Props> = ({
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
       <div className="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Delete Campaign</h3>
-        {error && (
-          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-md">
-            {error}
-          </div>
-        )}
         <p className="text-sm text-gray-600 mb-4">
           Are you sure you want to delete <strong>{campaignName}</strong>? This action cannot be undone.
         </p>
-        <p className="text-sm text-gray-600 mb-4">
-          Type the campaign name to confirm:
-        </p>
+        <p className="text-sm text-gray-600 mb-4">Type the campaign name to confirm:</p>
         <input
           type="text"
           value={confirmText}

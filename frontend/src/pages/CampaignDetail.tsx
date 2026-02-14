@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { campaignAPI } from '../services/api';
 import { LeadEmailPreviewModal } from '../components/LeadEmailPreviewModal';
+import { RenameCampaignModal } from '../components/RenameCampaignModal';
+import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
 
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'leads' | 'drafts'>('leads');
@@ -14,6 +17,14 @@ export const CampaignDetail: React.FC = () => {
     email: string;
     outreachStatus?: string;
   } | null>(null);
+
+  // Menu state
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // Generate draft state
+  const [generatingDraft, setGeneratingDraft] = useState(false);
 
   const fetchCampaign = async () => {
     try {
@@ -29,6 +40,34 @@ export const CampaignDetail: React.FC = () => {
   useEffect(() => {
     fetchCampaign();
   }, [id]);
+
+  const handleUpdate = () => {
+    fetchCampaign();
+    setMenuOpen(false);
+  };
+
+  const handleDelete = async () => {
+    try {
+      await campaignAPI.delete(id!);
+      navigate('/campaigns');
+    } catch (error) {
+      console.error('Failed to delete campaign', error);
+      alert('Could not delete campaign');
+    }
+  };
+
+  const handleGenerateDraft = async () => {
+    setGeneratingDraft(true);
+    try {
+      await campaignAPI.generateDraft(campaign.id);
+      fetchCampaign(); // refresh to show new draft
+    } catch (error) {
+      console.error('Failed to generate draft', error);
+      alert('Could not generate new draft');
+    } finally {
+      setGeneratingDraft(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -77,12 +116,12 @@ export const CampaignDetail: React.FC = () => {
                 r="10"
                 stroke="currentColor"
                 strokeWidth="4"
-              ></circle>
+              />
               <path
                 className="opacity-75"
                 fill="currentColor"
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              ></path>
+              />
             </svg>
             Optimising & personalising…
           </span>
@@ -112,12 +151,55 @@ export const CampaignDetail: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-      <div className="mb-6">
+      <div className="mb-6 flex justify-between items-center">
         <Link to="/campaigns" className="text-blue-600 hover:text-blue-800 flex items-center">
           ← Back to Campaigns
         </Link>
+
+        {/* Kebab menu (Rename & Delete only) */}
+        <div className="relative">
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="p-2 rounded-full hover:bg-gray-200 focus:outline-none"
+          >
+            <svg className="h-6 w-6 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10 border border-gray-200">
+              <button
+                onClick={() => { setShowRenameModal(true); setMenuOpen(false); }}
+                className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                Rename Campaign
+              </button>
+              <button
+                onClick={() => { setShowDeleteModal(true); setMenuOpen(false); }}
+                className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+              >
+                Delete Campaign
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* Modals */}
+      <RenameCampaignModal
+        isOpen={showRenameModal}
+        onClose={() => setShowRenameModal(false)}
+        campaign={campaign}
+        onSuccess={handleUpdate}
+      />
+      <DeleteCampaignModal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleDelete}
+        campaignName={campaign.name}
+      />
+
+      {/* Campaign details */}
       <div className="bg-white shadow rounded-lg p-6">
         <div className="flex justify-between items-start">
           <div>
@@ -144,9 +226,6 @@ export const CampaignDetail: React.FC = () => {
           <div className="mt-4 p-4 bg-blue-50 rounded-md">
             <h3 className="text-sm font-medium text-blue-800">Campaign Goal / Context</h3>
             <p className="mt-1 text-blue-700">{campaign.context}</p>
-            <p className="mt-2 text-xs text-blue-600">
-              This context is used by the AI to tailor email drafts.
-            </p>
           </div>
         )}
 
@@ -242,24 +321,48 @@ export const CampaignDetail: React.FC = () => {
         )}
 
         {/* Drafts Tab */}
-        {activeTab === 'drafts' && campaign.drafts && campaign.drafts.length > 0 && (
-          <div className="mt-6 space-y-4">
-            {campaign.drafts.map((draft: any) => (
-              <div key={draft.id} className="border rounded-lg p-4">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900">Subject: {draft.subject}</div>
-                    <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">{draft.body}</div>
+        {activeTab === 'drafts' && (
+          <div className="mt-6">
+            {campaign.drafts && campaign.drafts.length > 0 ? (
+              <div className="space-y-4">
+                {campaign.drafts.map((draft: any) => (
+                  <div key={draft.id} className="border rounded-lg p-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-900">Subject: {draft.subject}</div>
+                        <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">{draft.body}</div>
+                      </div>
+                      <div className="ml-4 flex flex-col items-end text-xs text-gray-500">
+                        <span>Tone: {draft.tone}</span>
+                        <span>Use: {draft.useCase}</span>
+                        <span>Sent: {draft.sentCount}</span>
+                        <span>Replies: {draft.replyCount}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="ml-4 flex flex-col items-end text-xs text-gray-500">
-                    <span>Tone: {draft.tone}</span>
-                    <span>Use: {draft.useCase}</span>
-                    <span>Sent: {draft.sentCount}</span>
-                    <span>Replies: {draft.replyCount}</span>
-                  </div>
-                </div>
+                ))}
               </div>
-            ))}
+            ) : (
+              <p className="text-gray-500 text-center py-8">No drafts yet.</p>
+            )}
+
+            {/* Generate New Draft Button */}
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={handleGenerateDraft}
+                disabled={generatingDraft}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center"
+              >
+                {generatingDraft ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Generating...
+                  </>
+                ) : (
+                  '+ Generate New Draft'
+                )}
+              </button>
+            </div>
           </div>
         )}
       </div>
