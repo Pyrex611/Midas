@@ -44,6 +44,8 @@ export const campaignAPI = {
     api.delete(`/campaigns/${campaignId}/drafts/${draftId}`),
   createCustomDraft: (campaignId: string, data: { subject: string; body: string }) =>
     api.post(`/campaigns/${campaignId}/drafts/custom`, data),
+	getSentEmail: (campaignId: string, leadId: string) =>
+		api.get(`/campaigns/${campaignId}/leads/${leadId}/sent-email`),
 };
 
 export const diagnosticsAPI = {

@@ -339,3 +339,30 @@ export const createCustomDraft = async (req: Request, res: Response, next: NextF
     next(error);
   }
 };
+
+/**
+ * GET /api/campaigns/:campaignId/leads/:leadId/sent-email
+ * Get the most recent sent email for a lead in a campaign.
+ */
+export const getSentEmail = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { campaignId, leadId } = req.params;
+
+    const sentEmail = await prisma.outboundEmail.findFirst({
+      where: {
+        campaignId,
+        leadId,
+        status: 'SENT',
+      },
+      orderBy: { sentAt: 'desc' },
+    });
+
+    if (!sentEmail) {
+      return res.status(404).json({ error: 'No sent email found for this lead in this campaign' });
+    }
+
+    res.json(sentEmail);
+  } catch (error) {
+    next(error);
+  }
+};

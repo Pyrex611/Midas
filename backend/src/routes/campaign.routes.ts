@@ -14,6 +14,7 @@ import {
   updateDraft,           // ✅
   deleteDraft,           // ✅
   createCustomDraft,     // ✅
+	getSentEmail,
 } from '../controllers/campaign.controller';
 
 const router = Router();
@@ -29,6 +30,7 @@ router.delete('/:id', deleteCampaign);
 router.get('/:campaignId/drafts', getCampaignDrafts);                     // ✅
 router.get('/:campaignId/leads/:leadId/preview/:draftId', previewLeadWithDraft); // ✅
 router.post('/:campaignId/drafts/generate', generateCampaignDraft);
+router.get('/:campaignId/leads/:leadId/sent-email', getSentEmail);
 
 // New draft management routes
 router.put('/:campaignId/drafts/:draftId', updateDraft);

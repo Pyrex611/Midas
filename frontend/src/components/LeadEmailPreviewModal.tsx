@@ -22,6 +22,13 @@ interface Draft {
   useCase: string;
 }
 
+interface SentEmail {
+  id: string;
+  subject: string;
+  body: string;
+  sentAt: string;
+}
+
 export const LeadEmailPreviewModal: React.FC<Props> = ({
   isOpen,
   onClose,
@@ -32,7 +39,9 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
+  const [sentEmail, setSentEmail] = useState<SentEmail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingSent, setLoadingSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
@@ -50,7 +59,20 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
     }
   }, [isOpen, campaignId, lead]);
 
-  // Fetch preview for current draft index
+  // Fetch sent email if already sent
+  useEffect(() => {
+    if (isOpen && lead && isAlreadySent) {
+      setLoadingSent(true);
+      campaignAPI.getSentEmail(campaignId, lead.id)
+        .then(res => setSentEmail(res.data))
+        .catch(err => console.error('Failed to fetch sent email', err))
+        .finally(() => setLoadingSent(false));
+    } else {
+      setSentEmail(null);
+    }
+  }, [isOpen, campaignId, lead, isAlreadySent]);
+
+  // Fetch preview for current draft index (only if not already sent? No, still allow preview)
   useEffect(() => {
     if (drafts.length > 0 && lead) {
       const draftId = drafts[currentDraftIndex].id;
@@ -88,6 +110,7 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
       <div className="relative top-20 mx-auto p-5 border w-full max-w-3xl shadow-lg rounded-md bg-white">
+        {/* Header */}
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-medium text-gray-900">
             Email Preview – {lead.name}
@@ -107,12 +130,28 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
         )}
 
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">{error}</div>
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">{error}</div>
         )}
 
         {drafts.length > 0 && preview && (
           <div className="space-y-4">
-            {/* Draft selector with arrows */}
+            {/* To / Subject / Body */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
+              <div className="bg-gray-50 p-2 rounded text-sm">{lead.email}</div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Subject:</label>
+              <div className="bg-gray-50 p-2 rounded text-sm font-medium">{preview.subject}</div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Body:</label>
+              <div className="bg-gray-50 p-4 rounded text-sm whitespace-pre-wrap font-mono">
+                {preview.body}
+              </div>
+            </div>
+
+            {/* Draft selector */}
             <div className="flex items-center justify-between bg-gray-50 p-3 rounded">
               <button
                 onClick={handlePrev}
@@ -137,19 +176,31 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
               </button>
             </div>
 
-            {/* Email preview */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
-              <div className="bg-gray-50 p-2 rounded text-sm">{lead.email}</div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Subject:</label>
-              <div className="bg-gray-50 p-2 rounded text-sm font-medium">{preview.subject}</div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Body:</label>
-              <div className="bg-gray-50 p-4 rounded text-sm whitespace-pre-wrap font-mono">
-                {preview.body}
+            {/* Lead Interactions section */}
+            <div className="border-t pt-4">
+              <h4 className="text-md font-medium text-gray-800 mb-2">Lead Interactions</h4>
+              <div className="bg-gray-50 p-4 rounded text-sm text-gray-600">
+                {loadingSent ? (
+                  <div className="flex items-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                    Loading sent email...
+                  </div>
+                ) : isAlreadySent && sentEmail ? (
+                  <div>
+                    <p className="font-medium text-green-700 mb-2">📧 Outreach Email Sent</p>
+                    <p><span className="font-medium">Subject:</span> {sentEmail.subject}</p>
+                    <p className="mt-2 whitespace-pre-wrap font-mono text-xs">{sentEmail.body}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Sent at {new Date(sentEmail.sentAt).toLocaleString()}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="italic">
+                    {isAlreadySent
+                      ? 'No sent email record found (unexpected).'
+                      : '⏳ No interactions yet. After sending, replies and history will be displayed here.'}
+                  </p>
+                )}
               </div>
             </div>
 
