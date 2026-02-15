@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Lead {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  company   String?
+  position  String?
+  status    String   @default("NEW")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  outreachStatus String? // PENDING, PROCESSING, SENT, FAILED, SKIPPED
+  campaignId     String?
+  campaign       Campaign?       @relation(fields: [campaignId], references: [id])
+  sentEmails     OutboundEmail[]
+
+  @@index([status])
+  @@index([email])
+  @@index([campaignId])
+}
+
+model Campaign {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  context     String?  // 👈 User‑provided goal / context for AI drafting
+  status      String   @default("DRAFT") // DRAFT, ACTIVE, PAUSED, COMPLETED, FAILED
+  createdAt   DateTime @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  leads  Lead[]
+  emails OutboundEmail[]
+  drafts Draft[]       // 👈 Campaign‑specific drafts
+
+  @@index([status])
+}
+
+model Draft {
+  id        String   @id @default(cuid())
+  subject   String
+  body      String
+  tone      String
+  useCase   String   // "initial", "followup1", etc.
+  version   Int      @default(1)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 👈 Optional association with a campaign
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id])
+
+  sentCount  Int @default(0)
+  replyCount Int @default(0)
+
+  emails OutboundEmail[]
+
+  @@index([isActive])
+  @@index([tone, useCase])
+  @@index([campaignId])
+}
+
+model OutboundEmail {
+  id         String   @id @default(cuid())
+  leadId     String
+  lead       Lead     @relation(fields: [leadId], references: [id])
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id])
+  draftId    String?
+  draft      Draft?    @relation(fields: [draftId], references: [id])
+  
+  subject    String
+  body       String
+  sentAt     DateTime @default(now())
+  status     String   @default("SENT")
+  error      String?
+
+  openedAt  DateTime?
+  repliedAt DateTime?
+  replyText String?
+
+  @@index([leadId])
+  @@index([campaignId])
+  @@index([sentAt])
+}
