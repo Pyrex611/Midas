@@ -41,37 +41,45 @@ export class DraftService {
   }
 
   async generateMultipleDrafts(
-    count: number,
-    tone: string = 'professional',
-    useCase: string = 'initial',
-    campaignId?: string,
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
-  ) {
-    const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
-    const drafts = [];
+		count: number,
+		tone: string = 'professional',
+		useCase: string = 'initial',
+		campaignId?: string,
+		campaignContext?: string,
+		reference?: string,
+		companyContext?: string,
+		senderName?: string
+	) {
+		const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
+		const drafts = [];
+		const delayMs = parseInt(env.AI_REQUEST_DELAY_MS || '500'); // configurable
 
-    for (let i = 0; i < count; i++) {
-      const variedTone = tones[i % tones.length];
-      const variedContext = campaignContext
-        ? `${campaignContext} (Version ${i + 1}: ${variedTone} approach)`
-        : undefined;
+		for (let i = 0; i < count; i++) {
+			const variedTone = tones[i % tones.length];
+			const variedContext = campaignContext
+				? `${campaignContext} (Version ${i + 1}: ${variedTone} approach)`
+				: undefined;
 
-      const draft = await this.generateAndSaveDraft(
-        variedTone,
-        useCase,
-        campaignId,
-        variedContext,
-        reference,
-        companyContext
-      );
-      drafts.push(draft);
-    }
+			const draft = await this.generateAndSaveDraft(
+				variedTone,
+				useCase,
+				campaignId,
+				variedContext,
+				reference,
+				companyContext,
+				senderName
+			);
+			drafts.push(draft);
 
-    logger.info({ campaignId, count }, 'Generated multiple drafts');
-    return drafts;
-  }
+			// Wait between requests (except after the last one)
+			if (i < count - 1) {
+				await new Promise(resolve => setTimeout(resolve, delayMs));
+			}
+		}
+
+		logger.info({ campaignId, count }, 'Generated multiple drafts');
+		return drafts;
+	}
 
   async getBestDraft(useCase: string = 'initial', tone: string = 'professional', campaignId?: string) {
     if (campaignId) {

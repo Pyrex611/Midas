@@ -22,15 +22,18 @@ interface Campaign {
 export const Campaigns: React.FC = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   const fetchCampaigns = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await campaignAPI.getAll();
       setCampaigns(res.data);
-    } catch (error) {
-      console.error('Failed to fetch campaigns', error);
+    } catch (err: any) {
+      console.error('Failed to fetch campaigns', err);
+      setError(err.response?.data?.error || err.message || 'Failed to load campaigns');
     } finally {
       setLoading(false);
     }
@@ -67,12 +70,27 @@ export const Campaigns: React.FC = () => {
         </button>
       </div>
 
-      {loading ? (
+      {loading && (
         <div className="bg-white shadow rounded-lg p-12 text-center">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           <p className="mt-2 text-gray-600">Loading campaigns...</p>
         </div>
-      ) : campaigns.length === 0 ? (
+      )}
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <p className="font-bold">Error loading campaigns</p>
+          <p className="text-sm">{error}</p>
+          <button
+            onClick={fetchCampaigns}
+            className="mt-2 text-sm bg-red-200 px-3 py-1 rounded hover:bg-red-300"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && campaigns.length === 0 && (
         <div className="bg-white shadow rounded-lg p-12 text-center">
           <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -86,7 +104,9 @@ export const Campaigns: React.FC = () => {
             Create Campaign
           </button>
         </div>
-      ) : (
+      )}
+
+      {!loading && !error && campaigns.length > 0 && (
         <div className="bg-white shadow overflow-hidden sm:rounded-md">
           <ul className="divide-y divide-gray-200">
             {campaigns.map((campaign) => (

@@ -10,7 +10,7 @@ export const Leads: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const campaignFilter = searchParams.get('campaign') || 'all';
-  const campaignIdParam = searchParams.get('campaign') || undefined; // for polling
+  const campaignIdParam = searchParams.get('campaign') || undefined;
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [pagination, setPagination] = useState({
@@ -20,21 +20,22 @@ export const Leads: React.FC = () => {
     totalPages: 0,
   });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [campaignStatus, setCampaignStatus] = useState<any>(null);
   const [campaigns, setCampaigns] = useState<any[]>([]);
 
-  // Campaign modal state
   const [showCampaignModal, setShowCampaignModal] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [availableCampaigns, setAvailableCampaigns] = useState<any[]>([]);
 
   // Fetch campaigns for dropdown
   useEffect(() => {
-    campaignAPI.getAll().then(res => setCampaigns(res.data));
+    campaignAPI.getAll().then(res => setCampaigns(res.data)).catch(err => console.error(err));
   }, []);
 
   const fetchLeads = async (page = pagination.page) => {
     setLoading(true);
+    setError(null);
     try {
       const res = await leadAPI.getAll(
         page,
@@ -44,8 +45,9 @@ export const Leads: React.FC = () => {
       );
       setLeads(res.data.data);
       setPagination(res.data.pagination);
-    } catch (error) {
-      console.error('Failed to fetch leads', error);
+    } catch (err: any) {
+      console.error('Failed to fetch leads', err);
+      setError(err.response?.data?.error || err.message || 'Failed to load leads');
     } finally {
       setLoading(false);
     }
@@ -58,7 +60,6 @@ export const Leads: React.FC = () => {
         try {
           const res = await campaignAPI.get(campaignIdParam);
           setCampaignStatus(res.data);
-          // Update only outreachStatus in leads
           setLeads(prevLeads =>
             prevLeads.map(lead => {
               const updated = res.data.leads?.find((l: any) => l.id === lead.id);
@@ -128,9 +129,7 @@ export const Leads: React.FC = () => {
         <h1 className="text-3xl font-bold text-gray-900">All Leads</h1>
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
-            <label htmlFor="campaign-filter" className="text-sm text-gray-600">
-              Filter:
-            </label>
+            <label htmlFor="campaign-filter" className="text-sm text-gray-600">Filter:</label>
             <select
               id="campaign-filter"
               value={campaignFilter}
@@ -149,30 +148,49 @@ export const Leads: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading leads...</p>
-          </div>
-        ) : (
-          <>
-            <LeadsTable
-              leads={leads}
-              onDelete={handleDelete}
-              onBulkDelete={handleBulkDelete}
-              onBulkCampaign={handleBulkCampaign}
-              showOutreachStatus={true}
-              campaignStatus={campaignStatus}
-            />
-            <Pagination
-              currentPage={pagination.page}
-              totalPages={pagination.totalPages}
-              onPageChange={(page) => fetchLeads(page)}
-            />
-          </>
-        )}
-      </div>
+      {loading && (
+        <div className="bg-white shadow rounded-lg p-12 text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <p className="mt-2 text-gray-600">Loading leads...</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          <p className="font-bold">Error loading leads</p>
+          <p className="text-sm">{error}</p>
+          <button
+            onClick={() => fetchLeads(1)}
+            className="mt-2 text-sm bg-red-200 px-3 py-1 rounded hover:bg-red-300"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && leads.length === 0 && (
+        <div className="bg-white shadow rounded-lg p-12 text-center">
+          <p className="text-gray-500">No leads found.</p>
+        </div>
+      )}
+
+      {!loading && !error && leads.length > 0 && (
+        <div className="bg-white shadow rounded-lg overflow-hidden">
+          <LeadsTable
+            leads={leads}
+            onDelete={handleDelete}
+            onBulkDelete={handleBulkDelete}
+            onBulkCampaign={handleBulkCampaign}
+            showOutreachStatus={true}
+            campaignStatus={campaignStatus}
+          />
+          <Pagination
+            currentPage={pagination.page}
+            totalPages={pagination.totalPages}
+            onPageChange={(page) => fetchLeads(page)}
+          />
+        </div>
+      )}
 
       <AddToCampaignModal
         isOpen={showCampaignModal}

@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { CampaignService } from '../services/campaign.service';
-import { DraftService } from '../services/draft.service'; // ✅ IMPORT FIX
 import { personalisationService } from '../services/personalisation.service';
 import { emailService } from '../services/email.service';
+import { DraftService } from '../services/draft.service';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
@@ -11,7 +11,7 @@ const draftService = new DraftService();
 
 export const createCampaign = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { name, description, context, reference, leadIds } = req.body;
+    const { name, description, context, reference, senderName, leadIds } = req.body;
     if (!name) return res.status(400).json({ error: 'Campaign name is required' });
 
     const campaign = await campaignService.createCampaign(
@@ -19,6 +19,7 @@ export const createCampaign = async (req: Request, res: Response, next: NextFunc
       description,
       context,
       reference,
+      senderName, // ✅ Now passed correctly
       leadIds
     );
 
@@ -166,14 +167,25 @@ export const sendLeadEmail = async (req: Request, res: Response, next: NextFunct
   }
 };
 
-// 🔹 NEW: Update campaign (rename only – but can also update description/context/reference if needed)
-export const updateCampaign = async (req: Request, res: Response, next: NextFunction) => {
+/**
+ * PUT /api/campaigns/:id
+ * Update campaign details (name, description, context, reference)
+ */
+export const updateCampaign = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const { id } = req.params;
     const { name, description, context, reference } = req.body;
 
-    const campaign = await prisma.campaign.findUnique({ where: { id } });
-    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+    const campaign = await prisma.campaign.findUnique({
+      where: { id },
+    });
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
 
     const updated = await prisma.campaign.update({
       where: { id },
@@ -191,8 +203,15 @@ export const updateCampaign = async (req: Request, res: Response, next: NextFunc
   }
 };
 
-// 🔹 NEW: Delete campaign
-export const deleteCampaign = async (req: Request, res: Response, next: NextFunction) => {
+/**
+ * DELETE /api/campaigns/:id
+ * Delete a campaign and its associated drafts and email logs? (Cascade handled by Prisma if relations set)
+ */
+export const deleteCampaign = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const { id } = req.params;
     await prisma.campaign.delete({ where: { id } });
@@ -253,6 +272,7 @@ export const previewLeadWithDraft = async (req: Request, res: Response, next: Ne
   }
 };
 
+
 /**
  * POST /api/campaigns/:campaignId/drafts/generate
  * Generate a new draft for the campaign (already exists, but fix import).
@@ -279,7 +299,6 @@ export const generateCampaignDraft = async (req: Request, res: Response, next: N
     next(error);
   }
 };
-
 
 /**
  * PUT /api/campaigns/:campaignId/drafts/:draftId
@@ -362,6 +381,28 @@ export const getSentEmail = async (req: Request, res: Response, next: NextFuncti
     }
 
     res.json(sentEmail);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/campaigns/:campaignId/leads/:leadId/thread
+ * Get full email thread for a lead in a campaign (both sent and received)
+ */
+export const getLeadEmailThread = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { campaignId, leadId } = req.params;
+
+    const emails = await prisma.outboundEmail.findMany({
+      where: {
+        campaignId,
+        leadId,
+      },
+      orderBy: { sentAt: 'asc' },
+    });
+
+    res.json(emails);
   } catch (error) {
     next(error);
   }

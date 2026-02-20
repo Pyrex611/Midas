@@ -15,6 +15,7 @@ import {
   deleteDraft,           // ✅
   createCustomDraft,     // ✅
 	getSentEmail,
+	getLeadEmailThread,
 } from '../controllers/campaign.controller';
 
 const router = Router();
@@ -36,5 +37,6 @@ router.get('/:campaignId/leads/:leadId/sent-email', getSentEmail);
 router.put('/:campaignId/drafts/:draftId', updateDraft);
 router.delete('/:campaignId/drafts/:draftId', deleteDraft);
 router.post('/:campaignId/drafts/custom', createCustomDraft);
+router.get('/:campaignId/leads/:leadId/thread', getLeadEmailThread);
 
 export default router;

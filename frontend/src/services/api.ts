@@ -46,11 +46,17 @@ export const campaignAPI = {
     api.post(`/campaigns/${campaignId}/drafts/custom`, data),
 	getSentEmail: (campaignId: string, leadId: string) =>
 		api.get(`/campaigns/${campaignId}/leads/${leadId}/sent-email`),
+  getLeadThread: (campaignId: string, leadId: string) =>
+    api.get(`/campaigns/${campaignId}/leads/${leadId}/thread`),
 };
 
 export const diagnosticsAPI = {
   health: () => api.get('/diagnostics/health/db'),
   testLead: () => api.post('/diagnostics/test/lead'),
+};
+
+export const imapAPI = {
+  poll: () => api.post('/imap/poll'),
 };
 
 export default api;
