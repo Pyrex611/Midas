@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { aiService } from './ai.service';
 import { logger } from '../config/logger';
+import { env } from '../config/env';
 
 export class DraftService {
   async generateAndSaveDraft(

@@ -22,13 +22,15 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
 
   // AI Provider
-  AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek']).default('mock'),
+  AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).default('mock'),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4-turbo-preview'),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash-lite'),
 	DEEPSEEK_API_KEY: z.string().optional(),
 	DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
+	OPENROUTER_API_KEY: z.string().optional(),
+	OPENROUTER_MODEL: z.string().default('deepseek/deepseek-r1:free'),
   OLLAMA_URL: z.string().default('http://localhost:11434'),
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),

@@ -108,7 +108,7 @@ class OpenAIProvider implements AIProvider {
     return this.parseResponse(content);
   }
 
-  private buildPrompt(
+  protected buildPrompt(
     tone: string,
     useCase: string,
     campaignContext?: string,
@@ -134,7 +134,7 @@ IMPORTANT REQUIREMENTS:
 ${companyContext ? `Context about the sender's company: ${companyContext}` : ''}`;
   }
 
-  private parseResponse(raw: string): { subject: string; body: string } {
+  protected parseResponse(raw: string): { subject: string; body: string } {
     try {
       return JSON.parse(raw);
     } catch {
@@ -258,7 +258,7 @@ class OllamaProvider implements AIProvider {
   private parseResponse = OpenAIProvider.prototype.parseResponse;
 }
 
-// ===== DEEPSEEK PROVIDER =====
+// ===== DEEPSEEK PROVIDER (direct) – kept for backward compatibility =====
 class DeepSeekProvider implements AIProvider {
   private apiKey: string;
   private model: string;
@@ -315,12 +315,131 @@ class DeepSeekProvider implements AIProvider {
   private parseResponse = OpenAIProvider.prototype.parseResponse;
 }
 
+// ===== OPENROUTER PROVIDER (extends OpenAIProvider for simplicity) =====
+// ===== OPENROUTER PROVIDER (with response logging and mock fallback) =====
+class OpenRouterProvider extends OpenAIProvider {
+  constructor(apiKey: string, model: string) {
+    super(apiKey, model);
+  }
+
+  async generateDraft(
+    tone: string,
+    useCase: string,
+    campaignContext?: string,
+    reference?: string,
+    companyContext?: string
+  ) {
+    const prompt = this.buildPrompt(tone, useCase, campaignContext, reference, companyContext);
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+        'HTTP-Referer': 'https://your-app.com',
+        'X-Title': 'Lead Management System',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are an expert B2B cold email copywriter. Output ONLY valid JSON with "subject" and "body". Do not include any reasoning, markdown, or additional text. The JSON must be parseable. Use placeholders {{name}}, {{company}}, {{position}}, {{valueProposition}}, {{senderName}} as needed. If a reference story is provided, you may use {{reference_company}} as a placeholder.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 5120, // Increased to give model room
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      // Log the error but fall back to mock
+      logger.error({ status: response.status, errorText }, 'OpenRouter API error, falling back to mock');
+      const mock = new MockProvider();
+      return mock.generateDraft(tone, useCase, campaignContext, reference, companyContext);
+    }
+
+    const data = await response.json();
+
+    // Log the full response for debugging (limit to 2000 chars)
+    logger.debug({ openRouterResponse: JSON.stringify(data).substring(0, 2000) }, 'OpenRouter raw response');
+
+    if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+      logger.error({ data }, 'OpenRouter API returned invalid structure, falling back to mock');
+      const mock = new MockProvider();
+      return mock.generateDraft(tone, useCase, campaignContext, reference, companyContext);
+    }
+
+    const choice = data.choices[0];
+    let rawContent = choice.message?.content || '';
+    if (!rawContent && choice.message?.reasoning) {
+      rawContent = choice.message.reasoning;
+    }
+    if (!rawContent) {
+      rawContent = JSON.stringify(choice.message);
+    }
+
+    // Attempt to extract JSON
+    const extracted = this.extractJSON(rawContent);
+    if (extracted) {
+      return extracted;
+    }
+
+    // If extraction fails, log the raw content and fall back to mock
+    logger.error({ rawContent: rawContent.substring(0, 1000) }, 'Failed to extract JSON from OpenRouter response, falling back to mock');
+    const mock = new MockProvider();
+    return mock.generateDraft(tone, useCase, campaignContext, reference, companyContext);
+  }
+
+  /**
+   * Extracts a JSON object containing "subject" and "body" from a possibly messy string.
+   */
+  private extractJSON(text: string): { subject: string; body: string } | null {
+    let start = 0;
+    while (true) {
+      const openIdx = text.indexOf('{', start);
+      if (openIdx === -1) break;
+
+      let depth = 0;
+      let closeIdx = -1;
+      for (let i = openIdx; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            closeIdx = i;
+            break;
+          }
+        }
+      }
+      if (closeIdx === -1) break;
+
+      const candidate = text.substring(openIdx, closeIdx + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        if (parsed.subject && parsed.body) {
+          return {
+            subject: parsed.subject.trim(),
+            body: parsed.body.trim(),
+          };
+        }
+      } catch (e) {
+        // Not valid JSON, continue
+      }
+      start = openIdx + 1;
+    }
+    return null;
+  }
+}
+
 // ===== AI SERVICE WITH REQUEST QUEUE =====
 export class AIService {
   private provider: AIProvider;
   private requestQueue: (() => Promise<any>)[] = [];
   private processing = false;
-  private readonly maxConcurrent = 1; // Could be made configurable via env
 
   constructor() {
     const providerType = env.AI_PROVIDER?.toLowerCase() || 'mock';
@@ -343,6 +462,14 @@ export class AIService {
       case 'deepseek':
         this.provider = new DeepSeekProvider(env.DEEPSEEK_API_KEY || '', env.DEEPSEEK_MODEL);
         break;
+      case 'openrouter':
+        if (!env.OPENROUTER_API_KEY) {
+          logger.warn('OPENROUTER_API_KEY not set, falling back to mock');
+          this.provider = new MockProvider();
+        } else {
+          this.provider = new OpenRouterProvider(env.OPENROUTER_API_KEY, env.OPENROUTER_MODEL);
+        }
+        break;
       case 'mock':
       default:
         this.provider = new MockProvider();
@@ -350,7 +477,6 @@ export class AIService {
     }
   }
 
-  // Queue method to ensure only one AI request runs at a time
   private async enqueue<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       this.requestQueue.push(async () => {
@@ -372,7 +498,6 @@ export class AIService {
       const next = this.requestQueue.shift();
       if (next) {
         await next();
-        // Small delay between requests to avoid overwhelming the API
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
