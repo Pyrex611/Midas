@@ -8,7 +8,6 @@ export class EmailService {
 
   constructor() {
     this.useEthereal = env.EMAIL_SERVICE === 'ethereal';
-    // Do not auto-init; init on first send
   }
 
   private async initTransporter() {
@@ -41,13 +40,19 @@ export class EmailService {
     }
   }
 
-  async sendEmail(to: string, subject: string, html: string, text: string, senderName?: string | null) {
+  async sendEmail(
+    to: string,
+    subject: string,
+    html: string,
+    text: string,
+    senderName?: string | null,
+    inReplyTo?: string | null // NEW: for threading
+  ) {
     try {
       if (!this.transporter) {
         await this.initTransporter();
       }
 
-      // Extract base email from env.EMAIL_FROM (e.g., "Your Name <you@example.com>")
       let fromEmail = env.EMAIL_FROM;
       const match = env.EMAIL_FROM.match(/<(.+)>/);
       if (match) {
@@ -56,13 +61,18 @@ export class EmailService {
 
       const from = senderName ? `"${senderName}" <${fromEmail}>` : env.EMAIL_FROM;
 
-      const mailOptions = {
+      const mailOptions: any = {
         from,
         to,
         subject,
         text,
         html,
       };
+
+      if (inReplyTo) {
+        mailOptions.inReplyTo = inReplyTo;
+        mailOptions.references = [inReplyTo];
+      }
 
       const info = await this.transporter!.sendMail(mailOptions);
       const messageId = info.messageId;
@@ -73,7 +83,6 @@ export class EmailService {
         return { success: true, previewUrl, messageId };
       } else {
         logger.info({ messageId, to, subject }, 'Email sent via SMTP');
-        // For SMTP, we require a messageId; if missing, treat as failure
         if (!messageId) {
           throw new Error('No messageId returned from SMTP server');
         }

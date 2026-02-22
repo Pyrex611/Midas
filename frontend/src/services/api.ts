@@ -48,6 +48,10 @@ export const campaignAPI = {
     api.post(`/campaigns/${campaignId}/drafts/custom`, data),
   generateDraft: (campaignId: string) =>
     api.post(`/campaigns/${campaignId}/drafts/generate`),
+  sendReplyDraft: (campaignId: string, leadId: string, data: { subject: string; body: string }) =>
+    api.post(`/campaigns/${campaignId}/leads/${leadId}/send-reply-draft`, data),
+  getReplyDraft: (campaignId: string, leadId: string) =>
+    api.get(`/campaigns/${campaignId}/leads/${leadId}/reply-draft`),
 };
 
 export const imapAPI = {

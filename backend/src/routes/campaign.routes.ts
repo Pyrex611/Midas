@@ -15,6 +15,8 @@ import {
   deleteDraft,
   createCustomDraft,
   generateCampaignDraft,
+  getReplyDraft,
+  sendReplyDraft,
 } from '../controllers/campaign.controller';
 
 const router = Router();
@@ -32,6 +34,8 @@ router.get('/:campaignId/leads/:leadId/thread', getLeadEmailThread);
 router.get('/:campaignId/leads/:leadId/preview/:draftId', previewLeadWithDraft);
 router.post('/:campaignId/leads/:leadId/send', sendLeadEmail);
 router.post('/:campaignId/leads/:leadId/generate-reply-draft', generateReplyDraft);
+router.get('/:campaignId/leads/:leadId/reply-draft', getReplyDraft);
+router.post('/:campaignId/leads/:leadId/send-reply-draft', sendReplyDraft);
 
 // Drafts management
 router.get('/:campaignId/drafts', getCampaignDrafts);
@@ -39,5 +43,6 @@ router.put('/:campaignId/drafts/:draftId', updateDraft);
 router.delete('/:campaignId/drafts/:draftId', deleteDraft);
 router.post('/:campaignId/drafts/custom', createCustomDraft);
 router.post('/:campaignId/drafts/generate', generateCampaignDraft);
+router.post('/:campaignId/leads/:leadId/send-reply-draft', sendReplyDraft);
 
 export default router;

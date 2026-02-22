@@ -253,7 +253,7 @@ export const sendLeadEmail = async (req: Request, res: Response, next: NextFunct
 
 /**
  * POST /api/campaigns/:campaignId/leads/:leadId/generate-reply-draft
- * Generate a reply draft based on the lead's latest reply analysis.
+ * Generate and persist a reply draft with proper threading.
  */
 export const generateReplyDraft = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -280,6 +280,7 @@ export const generateReplyDraft = async (req: Request, res: Response, next: Next
       reference: campaign?.reference,
       companyContext: null,
       originalEmail: latestReply.body,
+      originalSubject: latestReply.subject, // NEW
       recipientName: lead.name,
       recipientCompany: lead.company || undefined,
       sentiment: analysis.sentiment,
@@ -291,15 +292,24 @@ export const generateReplyDraft = async (req: Request, res: Response, next: Next
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON in response');
-    const draft = JSON.parse(jsonMatch[0]);
+    const draftData = JSON.parse(jsonMatch[0]);
+
+    // Save to database
+    const savedDraft = await draftService.createReplyDraft(
+      leadId,
+      campaignId,
+      draftData.subject,
+      draftData.body,
+      'professional'
+    );
 
     res.json({
-      id: `temp-${Date.now()}`,
-      subject: draft.subject,
-      body: draft.body,
+      id: savedDraft.id,
+      subject: savedDraft.subject,
+      body: savedDraft.body,
       isIncoming: false,
       isDraft: true,
-      sentAt: new Date().toISOString(),
+      sentAt: savedDraft.createdAt,
     });
   } catch (error) {
     next(error);
@@ -435,6 +445,106 @@ export const generateCampaignDraft = async (req: Request, res: Response, next: N
     );
 
     res.status(201).json(draft);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/campaigns/:campaignId/leads/:leadId/send-reply-draft
+ * Send the reply draft after personalising it.
+ */
+export const sendReplyDraft = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { campaignId, leadId } = req.params;
+    const { subject, body } = req.body;
+    if (!subject || !body) {
+      return res.status(400).json({ error: 'Subject and body are required' });
+    }
+
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+    const latestIncoming = await prisma.outboundEmail.findFirst({
+      where: { leadId, campaignId, isIncoming: true },
+      orderBy: { sentAt: 'desc' },
+    });
+    if (!latestIncoming) {
+      return res.status(400).json({ error: 'No original incoming email found to reply to' });
+    }
+
+    // PERSONALISE the reply draft using lead and campaign data
+    const { subject: personalisedSubject, body: personalisedBody } = personalisationService.personalise(
+      lead as any,
+      subject,
+      body,
+      campaign.reference,
+      campaign.senderName
+    );
+
+    // Send email with In-Reply-To header
+    const result = await emailService.sendEmail(
+      lead.email,
+      personalisedSubject,
+      personalisedBody.replace(/\n/g, '<br>'),
+      personalisedBody,
+      campaign.senderName,
+      latestIncoming.messageId // pass the original messageId as inReplyTo
+    );
+    if (!result.success) throw new Error(result.error || 'Email sending failed');
+
+    // Create outbound email record, linking to the original incoming
+    await prisma.outboundEmail.create({
+      data: {
+        leadId,
+        campaignId,
+        subject: personalisedSubject,
+        body: personalisedBody,
+        isIncoming: false,
+        messageId: result.messageId,
+        replyToId: latestIncoming.id,
+        sentAt: new Date(),
+        status: 'SENT',
+      },
+    });
+
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: { outreachStatus: 'SENT', status: 'CONTACTED' },
+    });
+
+    // Delete the reply draft
+    await draftService.deleteReplyDraft(leadId, campaignId);
+
+    logger.info({ leadId, campaignId, messageId: result.messageId }, 'Reply sent');
+    res.json({ success: true, message: 'Reply sent' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/campaigns/:campaignId/leads/:leadId/reply-draft
+ * Get the persisted reply draft for a lead.
+ */
+export const getReplyDraft = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { campaignId, leadId } = req.params;
+    const draft = await draftService.getReplyDraft(leadId, campaignId);
+    if (!draft) {
+      return res.status(404).json({ error: 'No reply draft found' });
+    }
+    res.json({
+      id: draft.id,
+      subject: draft.subject,
+      body: draft.body,
+      isIncoming: false,
+      isDraft: true,
+      sentAt: draft.createdAt,
+    });
   } catch (error) {
     next(error);
   }

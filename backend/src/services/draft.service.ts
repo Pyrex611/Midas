@@ -129,7 +129,7 @@ export class DraftService {
     });
   }
 
-  // ✅ NEW: Update draft
+  // Update draft
   async updateDraft(id: string, data: { subject?: string; body?: string; tone?: string }) {
     return prisma.draft.update({
       where: { id },
@@ -137,13 +137,13 @@ export class DraftService {
     });
   }
 
-  // ✅ NEW: Delete draft (soft delete by setting isActive false, or hard delete)
+  // Delete draft (soft delete by setting isActive false, or hard delete)
   async deleteDraft(id: string) {
     // Hard delete (can also soft delete by setting isActive: false)
     return prisma.draft.delete({ where: { id } });
   }
 
-  // ✅ NEW: Create a custom draft (user-provided subject/body)
+  // Create a custom draft (user-provided subject/body)
   async createCustomDraft(
     subject: string,
     body: string,
@@ -160,6 +160,54 @@ export class DraftService {
         isActive: true,
         campaignId,
       },
+    });
+  }
+	
+	
+  /**
+   * Get the reply draft for a specific lead (if exists).
+   */
+  async getReplyDraft(leadId: string, campaignId: string) {
+    return prisma.draft.findFirst({
+      where: {
+        leadId,
+        campaignId,
+        isReplyDraft: true,
+        isActive: true,
+      },
+    });
+  }
+
+  /**
+   * Create or update a reply draft for a lead.
+   */
+  async createReplyDraft(leadId: string, campaignId: string, subject: string, body: string, tone: string = 'professional') {
+    // Delete any existing reply draft for this lead
+    await prisma.draft.deleteMany({
+      where: { leadId, campaignId, isReplyDraft: true },
+    });
+
+    return prisma.draft.create({
+      data: {
+        subject,
+        body,
+        tone,
+        useCase: 'reply',
+        version: 1,
+        isActive: true,
+        campaignId,
+        leadId,
+        isReplyDraft: true,
+      },
+    });
+  }
+
+  /**
+   * Delete a reply draft after sending.
+   */
+  async deleteReplyDraft(leadId: string, campaignId: string) {
+    return prisma.draft.deleteMany({
+      where: { leadId, campaignId, isReplyDraft: true },
     });
   }
 }

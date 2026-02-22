@@ -8,9 +8,10 @@ export interface PromptParams {
   campaignContext?: string | null;
   reference?: string | null;
   companyContext?: string | null;
-  variationSeed?: string | number; // For diversity
+  variationSeed?: string | number;
   // For reply use case
   originalEmail?: string;
+  originalSubject?: string;
   recipientName?: string;
   recipientCompany?: string;
   sentiment?: string;
@@ -41,7 +42,7 @@ export class PromptManager {
     prompt += `    - {{senderName}} → the sender's name.\n`;
     prompt += `    - {{reference_company}} → **ONLY if a reference story is provided** – this represents a past client's company. Never use {{company}} for the reference client.\n`;
     prompt += `- **Reference Story Handling:**\n`;
-    prompt += `    - ${hasReference ? 'A reference story is provided. You MUST use the placeholder {{reference_company}} when mentioning that client. Do NOT use {{company}} for the reference.' : 'No reference story is provided. You MUST NOT mention any client story or use {{reference_company}}.'}\n`;
+    prompt += `    - ${hasReference ? 'A reference story is provided. You MUST use the placeholder {{reference_company}} when mentioning that client. Do NOT use {{company}} for the reference.' : 'No reference story is provided. You MUST NOT mention any client story at all – not even using {{company}} as a stand‑in. Absolutely avoid any reference to a past client.'}\n`;
     prompt += `- **Value Proposition:** Implicitly tie your offering to a specific business outcome the prospect likely cares about (based on the campaign objective).\n`;
     prompt += `- **Call‑to‑Action (CTA):** End with a single, low‑friction question that invites a reply (e.g., "Would you be open to a brief chat next week?"). Never use "click here" or links.\n`;
     prompt += `- **Persuasion Principles:** Where appropriate, subtly incorporate social proof (e.g., similar companies), reciprocity (e.g., an insight), or consistency (e.g., referencing a past action).\n`;
@@ -71,8 +72,14 @@ export class PromptManager {
       prompt += `\n## SENDER COMPANY CONTEXT\n${companyContext}\n`;
     }
 
-    prompt += `\n## SELF‑CRITIQUE (IMPORTANT)\n`;
-    prompt += `Before finalizing, review your email against the universal requirements. Ensure it is personalised, avoids clichés, and has a clear CTA. If any improvement is needed, make it now – output only the final, polished version.\n`;
+    // ===== STRENGTHENED SELF‑CRITIQUE =====
+    prompt += `\n## SELF‑CRITIQUE (CRITICAL – MUST FOLLOW)\n`;
+    prompt += `Before finalizing, review your email against these checks:\n`;
+    prompt += `1. If no reference story was provided (check above: reference story is ${hasReference ? 'PROVIDED' : 'NOT PROVIDED'}), ensure there is NO mention of any client story and that you NEVER used {{reference_company}} or implied a past client using {{company}}.\n`;
+    prompt += `2. Verify all placeholders are exactly as required and that the email is personalised to the prospect.\n`;
+    prompt += `3. Confirm the subject is under 60 characters and compelling.\n`;
+    prompt += `4. Ensure the body is under 150 words and has a low‑friction CTA.\n`;
+    prompt += `If any of these are not met, rewrite the email now – output only the final, corrected version.\n`;
 
     logger.debug({ prompt }, 'Built prompt');
     return prompt;
@@ -138,9 +145,14 @@ export class PromptManager {
   }
 
   private buildReplyPrompt(params: PromptParams): string {
-    const { originalEmail, sentiment, recipientName, recipientCompany } = params;
+    const { originalEmail, originalSubject, sentiment, recipientName, recipientCompany } = params;
     let section = `\n## REPLY TO LEAD RESPONSE TASK\n`;
     section += `You are replying to a lead who has responded to your previous email. Adapt to their sentiment and move the conversation forward.\n\n`;
+
+    if (originalSubject) {
+      section += `### Original Subject\n${originalSubject}\n`;
+      section += `- The subject should continue the thread. Typically you would use "Re: ${originalSubject}" or a more specific variant. However, if the original subject is generic, you may improve it while keeping the thread context.\n`;
+    }
 
     if (originalEmail) {
       section += `### Lead's Message\n${originalEmail}\n`;

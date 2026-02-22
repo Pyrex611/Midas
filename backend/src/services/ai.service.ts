@@ -4,7 +4,7 @@ import { promptManager, PromptParams } from './promptManager.service';
 
 // ===== ANALYSIS INTERFACE =====
 export interface ReplyAnalysis {
-  sentiment: 'positive' | 'neutral' | 'negative';
+  sentiment: 'very positive' | 'positive' | 'neutral' | 'negative' | 'very negative';
   intent: string;
   painPoints?: string[];
   objections?: string[];
@@ -329,7 +329,7 @@ export class AIService {
   }
 
   /**
-   * Public method for generic completions (used by reply drafting).
+   * Public method for generic completions.
    */
   async complete(prompt: string, system?: string): Promise<string> {
     return this.enqueue(() => this.provider.complete(prompt, system));
@@ -387,11 +387,11 @@ export class AIService {
   }
 
   /**
-   * Analyze a reply email.
+   * Analyze a reply email with expanded sentiment.
    */
   async analyzeReply(replyText: string): Promise<ReplyAnalysis> {
     const prompt = `You are an elite sales analyst and manager. Analyze the following email reply from a lead. Provide a detailed JSON analysis with the following fields:
-- sentiment: one of "positive", "neutral", "negative"
+- sentiment: one of "very positive", "positive", "neutral", "negative", "very negative"
 - intent: a short phrase describing the lead's primary intent (e.g., "interested", "not interested", "out of office", "asking for info", "objection", "scheduling")
 - painPoints: an array of specific pain points mentioned (if any)
 - objections: an array of specific objections raised (if any)

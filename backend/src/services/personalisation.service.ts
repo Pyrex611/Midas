@@ -8,6 +8,7 @@ export class PersonalisationService {
 			'{{position}}': lead.position || 'your role',
 			'{{firstName}}': lead.name.split(' ')[0],
 			'{{lastName}}': lead.name.split(' ').slice(1).join(' ') || '',
+			'{{senderName}}': senderName || 'Your Name',
 			'{{valueProposition}}': 'improving team productivity', // can be dynamic in future
 		};
 
