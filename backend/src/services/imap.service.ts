@@ -1,10 +1,11 @@
 import Imap from 'imap';
 import { simpleParser } from 'mailparser';
-import EmailReplyParser from 'email-reply-parser'; // ✅ Default import (class)
+import EmailReplyParser from 'email-reply-parser';
 import { env } from '../config/env';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import dns from 'dns';
+import { aiService } from './ai.service';
 
 export class ImapService {
   private isPolling = false;
@@ -159,7 +160,7 @@ export class ImapService {
     // Extract only the reply (strip quoted original)
     let replyText = text;
     try {
-      const parser = new EmailReplyParser(); // ✅ Instantiate class
+      const parser = new EmailReplyParser();
       replyText = parser.parseReply(text) || text;
     } catch (e) {
       logger.warn({ err: e }, 'Failed to parse reply, using full text');
@@ -190,12 +191,13 @@ export class ImapService {
     const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
     if (existing) return;
 
-    await prisma.outboundEmail.create({
+    // Create inbound email record
+    const newEmail = await prisma.outboundEmail.create({
       data: {
         leadId: originalEmail.leadId,
         campaignId: originalEmail.campaignId,
         subject,
-        body: replyText, // ✅ stripped reply
+        body: replyText,
         isIncoming: true,
         messageId,
         inReplyTo,
@@ -208,12 +210,36 @@ export class ImapService {
       },
     });
 
+    // Update original email's repliedAt
     await prisma.outboundEmail.update({
       where: { id: originalEmail.id },
       data: { repliedAt: new Date() },
     });
 
     logger.info({ messageId, originalId: originalEmail.id }, 'Stored inbound reply');
+
+    // Perform detailed reply analysis
+    try {
+      const analysis = await aiService.analyzeReply(replyText);
+      await prisma.outboundEmail.update({
+        where: { id: newEmail.id },
+        data: {
+          sentiment: analysis.sentiment,
+          intent: analysis.intent,
+          analysis: JSON.stringify(analysis), // store as JSON string
+        },
+      });
+      logger.info({
+        messageId,
+        sentiment: analysis.sentiment,
+        intent: analysis.intent,
+        painPoints: analysis.painPoints?.length,
+        objections: analysis.objections?.length,
+        interestLevel: analysis.interestLevel,
+      }, 'Reply analysis stored');
+    } catch (error) {
+      logger.error({ error, messageId }, 'Failed to analyze reply');
+    }
   }
 
   async manualPoll() {

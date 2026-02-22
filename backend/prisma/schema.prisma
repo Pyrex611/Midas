@@ -90,7 +90,7 @@ model OutboundEmail {
   repliedAt DateTime?
   replyText String?
 
-  // NEW FIELDS for threading
+  // Threading
   replyToId   String?       @map("reply_to_id")
   replyTo     OutboundEmail? @relation("Replies", fields: [replyToId], references: [id])
   replies     OutboundEmail[] @relation("Replies")
@@ -100,9 +100,11 @@ model OutboundEmail {
   inReplyTo   String?        // In-Reply-To header
   fromAddress String?        // sender email (for incoming)
   toAddress   String?        // recipient email (for incoming)
-  // For future sentiment analysis
-  sentiment   String?        // "positive", "neutral", "negative"
-  intent      String?        // e.g., "interested", "not interested", "out_of_office"
+  
+  // Analysis
+  sentiment   String? // kept for quick reference
+  intent      String?
+  analysis    String? 
 
   @@index([leadId])
   @@index([campaignId])
