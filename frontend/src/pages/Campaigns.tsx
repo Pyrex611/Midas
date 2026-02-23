@@ -59,9 +59,9 @@ export const Campaigns: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Campaigns</h1>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-20">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Campaigns</h1>
         <button
           onClick={() => setShowCreateModal(true)}
           className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
@@ -113,22 +113,22 @@ export const Campaigns: React.FC = () => {
               <li key={campaign.id}>
                 <Link to={`/campaigns/${campaign.id}`} className="block hover:bg-gray-50 transition-colors">
                   <div className="px-4 py-4 sm:px-6">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex-1 min-w-0">
                         <p className="text-lg font-medium text-blue-600 truncate">{campaign.name}</p>
                         <p className="mt-1 text-sm text-gray-600 line-clamp-2">
                           {campaign.context || campaign.description || 'No description provided'}
                         </p>
                       </div>
-                      <div className="ml-4 flex-shrink-0 flex items-center space-x-4">
+                      <div className="mt-2 sm:mt-0 flex flex-wrap items-center gap-2 sm:gap-4">
                         {getStatusBadge(campaign.status)}
                         <span className="text-sm text-gray-500">
                           {campaign._count.leads} lead{campaign._count.leads !== 1 ? 's' : ''}
                         </span>
                       </div>
                     </div>
-                    <div className="mt-2 sm:flex sm:justify-between">
-                      <div className="sm:flex text-xs text-gray-500 space-x-4">
+                    <div className="mt-2 flex flex-col sm:flex-row sm:justify-between text-xs text-gray-500">
+                      <div className="flex flex-wrap gap-2 sm:gap-4">
                         <span>Created {new Date(campaign.createdAt).toLocaleDateString()}</span>
                         {campaign.startedAt && (
                           <span>Started {new Date(campaign.startedAt).toLocaleDateString()}</span>
@@ -137,7 +137,7 @@ export const Campaigns: React.FC = () => {
                           <span>Completed {new Date(campaign.completedAt).toLocaleDateString()}</span>
                         )}
                       </div>
-                      <div className="mt-2 sm:mt-0 text-xs text-gray-500">
+                      <div className="mt-1 sm:mt-0">
                         {campaign._count.emails} email{campaign._count.emails !== 1 ? 's' : ''} sent
                       </div>
                     </div>

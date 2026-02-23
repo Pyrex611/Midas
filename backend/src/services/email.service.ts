@@ -46,7 +46,7 @@ export class EmailService {
     html: string,
     text: string,
     senderName?: string | null,
-    inReplyTo?: string | null // NEW: for threading
+    inReplyTo?: string | null
   ) {
     try {
       if (!this.transporter) {
@@ -82,10 +82,11 @@ export class EmailService {
         logger.info({ previewUrl, to, subject, messageId }, 'Email preview generated');
         return { success: true, previewUrl, messageId };
       } else {
-        logger.info({ messageId, to, subject }, 'Email sent via SMTP');
+        // SMTP: ensure we have a messageId
         if (!messageId) {
           throw new Error('No messageId returned from SMTP server');
         }
+        logger.info({ messageId, to, subject }, 'Email sent via SMTP');
         return { success: true, messageId };
       }
     } catch (error: any) {

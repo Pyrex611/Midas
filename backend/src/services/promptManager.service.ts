@@ -38,12 +38,11 @@ export class PromptManager {
     prompt += `    - {{name}} → the prospect's name.\n`;
     prompt += `    - {{company}} → the prospect's company (never use this for any other company).\n`;
     prompt += `    - {{position}} → the prospect's job title.\n`;
-    prompt += `    - {{valueProposition}} → a generic value phrase (e.g., "improving team productivity").\n`;
     prompt += `    - {{senderName}} → the sender's name.\n`;
     prompt += `    - {{reference_company}} → **ONLY if a reference story is provided** – this represents a past client's company. Never use {{company}} for the reference client.\n`;
     prompt += `- **Reference Story Handling:**\n`;
     prompt += `    - ${hasReference ? 'A reference story is provided. You MUST use the placeholder {{reference_company}} when mentioning that client. Do NOT use {{company}} for the reference.' : 'No reference story is provided. You MUST NOT mention any client story at all – not even using {{company}} as a stand‑in. Absolutely avoid any reference to a past client.'}\n`;
-    prompt += `- **Value Proposition:** Implicitly tie your offering to a specific business outcome the prospect likely cares about (based on the campaign objective).\n`;
+    prompt += `- **Value Proposition:** The email should contain a compelling value proposition tailored to the prospect's context and the campaign objective. Do not use a placeholder for this; instead, craft a specific benefit that would appeal to the prospect.\n`;
     prompt += `- **Call‑to‑Action (CTA):** End with a single, low‑friction question that invites a reply (e.g., "Would you be open to a brief chat next week?"). Never use "click here" or links.\n`;
     prompt += `- **Persuasion Principles:** Where appropriate, subtly incorporate social proof (e.g., similar companies), reciprocity (e.g., an insight), or consistency (e.g., referencing a past action).\n`;
     prompt += `- **Avoid:** Overused phrases like "I hope this email finds you well", "game‑changer", "revolutionary". Be specific and concrete.\n\n`;
@@ -108,7 +107,7 @@ export class PromptManager {
 
     section += `\n### Structure Guidelines for Initial Email\n`;
     section += `1. **Opening line:** Personalise by mentioning something specific about the prospect's company or role (e.g., "I saw that {{company}} recently expanded into..." or "Following your recent post on...").\n`;
-    section += `2. **Value hook:** Briefly state how you help companies like theirs achieve a specific result. Use numbers or concrete outcomes if possible.\n`;
+    section += `2. **Value hook:** Briefly state how you help companies like theirs achieve a specific result. Use numbers or concrete outcomes if possible. This should be tailored to the campaign objective.\n`;
     section += `3. **Social proof / reference (optional):** ${hasReference ? 'If a reference story exists and fits, add one sentence about a similar client\'s success, using {{reference_company}}.' : 'Do not mention any client stories.'}\n`;
     section += `4. **Low‑friction CTA:** Ask a simple, open‑ended question that invites a reply (e.g., "Would you be open to a 10‑minute call to explore if this could be relevant?").\n`;
 

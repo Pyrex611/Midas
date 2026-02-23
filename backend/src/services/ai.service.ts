@@ -44,9 +44,9 @@ class MockProvider implements AIProvider {
         'Following up – {{company}}',
       ];
       const bodies = [
-        `Hi {{name}},\n\nI've been following {{company}}'s recent work in the industry and was impressed by your team's achievements. At our company, we specialize in helping businesses like yours achieve {{valueProposition}}.\n\nWould you be open to a 10‑minute call next week? I'd love to share some insights that could be relevant.\n\nBest regards,\n{{senderName}}`,
+        `Hi {{name}},\n\nI've been following {{company}}'s recent work in the industry and was impressed by your team's achievements. We specialize in helping businesses like yours streamline operations and increase efficiency.\n\nWould you be open to a 10‑minute call next week to explore how we can help?\n\nBest regards,\n{{senderName}}`,
         `Hi {{name}},\n\nI came across your post about {{topic}} and it really resonated. At {{senderCompany}}, we're working on something that aligns perfectly with that vision.\n\nIf you're open to it, I'd love to exchange ideas – no strings attached.\n\nCheers,\n{{senderName}}`,
-        `Hi {{name}},\n\nJust wanted to gently follow up on my previous email. I know how busy things get.\n\nIf you're not the right person, could you point me to who handles {{valueProposition}} at {{company}}?\n\nThanks either way,\n{{senderName}}`,
+        `Hi {{name}},\n\nJust wanted to gently follow up on my previous email. I know how busy things get.\n\nIf you're not the right person, could you point me to who handles these initiatives at {{company}}?\n\nThanks either way,\n{{senderName}}`,
       ];
       const idx = Math.floor(Math.random() * subjects.length);
       return JSON.stringify({ subject: subjects[idx], body: bodies[idx] });
@@ -268,36 +268,49 @@ class OpenRouterProvider implements AIProvider {
   }
 }
 
-// ===== AI SERVICE WITH QUEUE =====
+// ===== AI SERVICE WITH QUEUE, FALLBACK, AND ROBUST JSON PARSING =====
 export class AIService {
-  private provider: AIProvider;
+  private primaryProvider: AIProvider;
+  private fallbackProvider: AIProvider | null = null;
+  private mockProvider = new MockProvider();
   private requestQueue: (() => Promise<any>)[] = [];
   private processing = false;
 
   constructor() {
-    const providerType = env.AI_PROVIDER?.toLowerCase() || 'mock';
-    logger.info({ provider: providerType }, 'Initializing AI service');
+    const primaryType = env.AI_PROVIDER?.toLowerCase() || 'mock';
+    const fallbackType = env.PRIMARY_FALLBACK_PROVIDER?.toLowerCase();
 
-    switch (providerType) {
+    logger.info({ primary: primaryType, fallback: fallbackType }, 'Initializing AI service');
+
+    // Initialize primary provider
+    this.primaryProvider = this.createProvider(primaryType);
+
+    // Initialize fallback provider if specified
+    if (fallbackType && fallbackType !== primaryType) {
+      try {
+        this.fallbackProvider = this.createProvider(fallbackType);
+        logger.info({ fallback: fallbackType }, 'Fallback provider initialized');
+      } catch (err) {
+        logger.error({ err, fallbackType }, 'Failed to initialize fallback provider');
+      }
+    }
+  }
+
+  private createProvider(type: string): AIProvider {
+    switch (type) {
       case 'openai':
-        this.provider = new OpenAIProvider(env.OPENAI_API_KEY || '', env.OPENAI_MODEL);
-        break;
+        return new OpenAIProvider(env.OPENAI_API_KEY || '', env.OPENAI_MODEL);
       case 'gemini':
-        this.provider = new GeminiProvider(env.GEMINI_API_KEY || '', env.GEMINI_MODEL);
-        break;
+        return new GeminiProvider(env.GEMINI_API_KEY || '', env.GEMINI_MODEL);
       case 'ollama':
-        this.provider = new OllamaProvider(env.OLLAMA_URL, env.OLLAMA_POWERFUL_MODEL);
-        break;
+        return new OllamaProvider(env.OLLAMA_URL, env.OLLAMA_POWERFUL_MODEL);
       case 'deepseek':
-        this.provider = new DeepSeekProvider(env.DEEPSEEK_API_KEY || '', env.DEEPSEEK_MODEL);
-        break;
+        return new DeepSeekProvider(env.DEEPSEEK_API_KEY || '', env.DEEPSEEK_MODEL);
       case 'openrouter':
-        this.provider = new OpenRouterProvider(env.OPENROUTER_API_KEY || '', env.OPENROUTER_MODEL);
-        break;
+        return new OpenRouterProvider(env.OPENROUTER_API_KEY || '', env.OPENROUTER_MODEL);
       case 'mock':
       default:
-        this.provider = new MockProvider();
-        break;
+        return new MockProvider();
     }
   }
 
@@ -329,10 +342,76 @@ export class AIService {
   }
 
   /**
-   * Public method for generic completions.
+   * Attempt to complete a prompt with fallback and mock.
+   */
+  private async attemptComplete(prompt: string, system?: string): Promise<string> {
+    // Try primary provider
+    try {
+      logger.debug('Attempting primary provider');
+      return await this.primaryProvider.complete(prompt, system);
+    } catch (primaryError) {
+      logger.error({ error: primaryError, provider: env.AI_PROVIDER }, 'Primary provider failed');
+
+      // Try fallback if available
+      if (this.fallbackProvider) {
+        try {
+          logger.debug('Attempting fallback provider');
+          return await this.fallbackProvider.complete(prompt, system);
+        } catch (fallbackError) {
+          logger.error({ error: fallbackError, provider: env.PRIMARY_FALLBACK_PROVIDER }, 'Fallback provider failed');
+        }
+      }
+
+      // Finally, use mock
+      logger.debug('Falling back to mock provider');
+      return await this.mockProvider.complete(prompt, system);
+    }
+  }
+
+  /**
+   * Robustly extract JSON from a string that may contain extra text.
+   */
+  private extractJSON(raw: string): any {
+    // First, try to find a JSON object using regex that matches from the first { to the last }
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) {
+      throw new Error(`No JSON object found in response: ${raw.substring(0, 500)}`);
+    }
+    const candidate = match[0];
+    try {
+      return JSON.parse(candidate);
+    } catch (err) {
+      // If that fails, attempt to find the last complete JSON object by counting braces
+      let depth = 0;
+      let start = -1;
+      let lastValidEnd = -1;
+      for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i];
+        if (ch === '{') {
+          if (depth === 0) start = i;
+          depth++;
+        } else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            lastValidEnd = i;
+            const candidate = raw.substring(start, i + 1);
+            try {
+              return JSON.parse(candidate);
+            } catch (e) {
+              // Continue searching for the next complete object
+            }
+          }
+        }
+      }
+      throw new Error(`Could not extract valid JSON from response: ${raw.substring(0, 500)}`);
+    }
+  }
+
+  /**
+   * Public method for generic completions with fallback.
    */
   async complete(prompt: string, system?: string): Promise<string> {
-    return this.enqueue(() => this.provider.complete(prompt, system));
+    return this.enqueue(() => this.attemptComplete(prompt, system));
   }
 
   /**
@@ -362,27 +441,12 @@ export class AIService {
     const system = 'You are an expert B2B cold email copywriter. Output only valid JSON with "subject" and "body".';
 
     return this.enqueue(async () => {
-      try {
-        const raw = await this.provider.complete(prompt, system);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error(`No JSON object found in response: ${raw.substring(0, 500)}`);
-        }
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (!parsed.subject || !parsed.body) {
-          throw new Error(`Parsed JSON missing subject/body: ${JSON.stringify(parsed)}`);
-        }
-        return { subject: parsed.subject, body: parsed.body };
-      } catch (error) {
-        logger.error({ error, provider: env.AI_PROVIDER }, 'AI provider failed, falling back to mock');
-        const mock = new MockProvider();
-        const raw = await mock.complete(prompt, system);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error('Mock provider returned invalid JSON');
-        }
-        return JSON.parse(jsonMatch[0]);
+      const raw = await this.attemptComplete(prompt, system);
+      const parsed = this.extractJSON(raw);
+      if (!parsed.subject || !parsed.body) {
+        throw new Error(`Parsed JSON missing subject/body: ${JSON.stringify(parsed)}`);
       }
+      return { subject: parsed.subject, body: parsed.body };
     });
   }
 
@@ -407,30 +471,12 @@ Output only valid JSON.`;
     const system = 'You are an expert sales analyst. Output only valid JSON.';
 
     return this.enqueue(async () => {
-      try {
-        const raw = await this.provider.complete(prompt, system);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error(`No JSON object found in response: ${raw.substring(0, 500)}`);
-        }
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (!parsed.sentiment || !parsed.intent) {
-          throw new Error(`Parsed JSON missing sentiment/intent: ${JSON.stringify(parsed)}`);
-        }
-        return parsed as ReplyAnalysis;
-      } catch (error) {
-        logger.error({ error, provider: env.AI_PROVIDER }, 'Reply analysis failed, using default');
-        return {
-          sentiment: 'neutral',
-          intent: 'unknown',
-          painPoints: [],
-          objections: [],
-          interestLevel: 5,
-          buyingSignals: [],
-          suggestedApproach: 'ask clarifying question',
-          keyPoints: [],
-        };
+      const raw = await this.attemptComplete(prompt, system);
+      const parsed = this.extractJSON(raw);
+      if (!parsed.sentiment || !parsed.intent) {
+        throw new Error(`Parsed JSON missing sentiment/intent: ${JSON.stringify(parsed)}`);
       }
+      return parsed as ReplyAnalysis;
     });
   }
 }

@@ -4,6 +4,9 @@ import { logger } from '../config/logger';
 import { env } from '../config/env';
 
 export class DraftService {
+  /**
+   * Generate a single draft. Returns null on failure.
+   */
   async generateAndSaveDraft(
     tone: string = 'professional',
     useCase: string = 'initial',
@@ -16,10 +19,12 @@ export class DraftService {
     try {
       const { subject, body } = await aiService.generateDraft(
         tone,
-        useCase as any,
+        useCase,
         campaignContext,
         reference,
-        companyContext
+        companyContext,
+        undefined,
+        undefined
       );
 
       const draft = await prisma.draft.create({
@@ -37,11 +42,14 @@ export class DraftService {
       logger.info({ draftId: draft.id, campaignId }, 'New draft generated and saved');
       return draft;
     } catch (error) {
-      logger.error({ error }, 'Failed to generate draft');
-      throw error;
+      logger.error({ error, tone, useCase, campaignId }, 'Failed to generate draft');
+      return null; // Return null instead of throwing
     }
   }
 
+  /**
+   * Generate multiple drafts, skipping any that fail.
+   */
   async generateMultipleDrafts(
     count: number,
     tone: string = 'professional',
@@ -71,14 +79,18 @@ export class DraftService {
         companyContext,
         senderName
       );
-      drafts.push(draft);
+      if (draft) {
+        drafts.push(draft);
+      } else {
+        logger.warn({ campaignId, index: i }, 'Skipping failed draft');
+      }
 
       if (i < count - 1) {
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }
 
-    logger.info({ campaignId, count }, 'Generated multiple drafts');
+    logger.info({ campaignId, generated: drafts.length, requested: count }, 'Generated multiple drafts');
     return drafts;
   }
 
@@ -129,7 +141,6 @@ export class DraftService {
     });
   }
 
-  // Update draft
   async updateDraft(id: string, data: { subject?: string; body?: string; tone?: string }) {
     return prisma.draft.update({
       where: { id },
@@ -137,13 +148,10 @@ export class DraftService {
     });
   }
 
-  // Delete draft (soft delete by setting isActive false, or hard delete)
   async deleteDraft(id: string) {
-    // Hard delete (can also soft delete by setting isActive: false)
     return prisma.draft.delete({ where: { id } });
   }
 
-  // Create a custom draft (user-provided subject/body)
   async createCustomDraft(
     subject: string,
     body: string,
@@ -162,11 +170,7 @@ export class DraftService {
       },
     });
   }
-	
-	
-  /**
-   * Get the reply draft for a specific lead (if exists).
-   */
+
   async getReplyDraft(leadId: string, campaignId: string) {
     return prisma.draft.findFirst({
       where: {
@@ -178,15 +182,10 @@ export class DraftService {
     });
   }
 
-  /**
-   * Create or update a reply draft for a lead.
-   */
   async createReplyDraft(leadId: string, campaignId: string, subject: string, body: string, tone: string = 'professional') {
-    // Delete any existing reply draft for this lead
     await prisma.draft.deleteMany({
       where: { leadId, campaignId, isReplyDraft: true },
     });
-
     return prisma.draft.create({
       data: {
         subject,
@@ -202,9 +201,6 @@ export class DraftService {
     });
   }
 
-  /**
-   * Delete a reply draft after sending.
-   */
   async deleteReplyDraft(leadId: string, campaignId: string) {
     return prisma.draft.deleteMany({
       where: { leadId, campaignId, isReplyDraft: true },

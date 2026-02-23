@@ -14,6 +14,14 @@ interface Props {
   onSendSuccess?: () => void;
 }
 
+interface Draft {
+  id: string;
+  subject: string;
+  body: string;
+  tone: string;
+  useCase: string;
+}
+
 interface EmailMessage {
   id: string;
   subject: string;
@@ -34,10 +42,13 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
   lead,
   onSendSuccess,
 }) => {
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
+  const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
   const [thread, setThread] = useState<EmailMessage[]>([]);
   const [replyDraft, setReplyDraft] = useState<EmailMessage | null>(null);
+  const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
-  const [loadingDraft, setLoadingDraft] = useState(false);
   const [generatingReply, setGeneratingReply] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,19 +57,34 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
   const [editedSubject, setEditedSubject] = useState('');
   const [editedBody, setEditedBody] = useState('');
 
-  // Find the most recent incoming reply
+  // Determine if any email has been successfully sent to this lead
+  const sentEmail = thread.find(msg => !msg.isIncoming && msg.status === 'SENT');
+  const hasSentEmail = !!sentEmail;
+
+  // Find the most recent incoming reply (for analysis and reply drafting)
   const latestReply = thread.filter(msg => msg.isIncoming).sort((a, b) =>
     new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()
   )[0];
 
-  // Load thread and reply draft
+  // Fetch drafts and thread
+  useEffect(() => {
+    if (isOpen && lead) {
+      setLoadingDrafts(true);
+      setError(null);
+      campaignAPI.getDrafts(campaignId)
+        .then(res => setDrafts(res.data))
+        .catch(err => setError('Failed to load drafts'))
+        .finally(() => setLoadingDrafts(false));
+    }
+  }, [isOpen, campaignId, lead]);
+
   const loadThread = async () => {
     if (!isOpen || !lead) return;
     setLoadingThread(true);
     try {
       const [threadRes, draftRes] = await Promise.all([
         campaignAPI.getLeadThread(campaignId, lead.id),
-        campaignAPI.getReplyDraft(campaignId, lead.id).catch(() => null) // 404 means no draft
+        campaignAPI.getReplyDraft(campaignId, lead.id).catch(() => null)
       ]);
       setThread(threadRes.data);
       if (draftRes && draftRes.data) {
@@ -80,6 +106,39 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
       loadThread();
     }
   }, [isOpen, campaignId, lead]);
+
+  // Fetch preview for current draft index (only if needed)
+  useEffect(() => {
+    if (drafts.length > 0 && lead && !hasSentEmail) {
+      const draftId = drafts[currentDraftIndex].id;
+      campaignAPI.previewLeadWithDraft(campaignId, lead.id, draftId)
+        .then(res => setPreview(res.data))
+        .catch(err => setError('Failed to load preview'));
+    }
+  }, [drafts, currentDraftIndex, campaignId, lead, hasSentEmail]);
+
+  const handlePrev = () => {
+    setCurrentDraftIndex(prev => (prev > 0 ? prev - 1 : drafts.length - 1));
+  };
+
+  const handleNext = () => {
+    setCurrentDraftIndex(prev => (prev < drafts.length - 1 ? prev + 1 : 0));
+  };
+
+  const handleSend = async () => {
+    if (!lead || drafts.length === 0) return;
+    setSending(true);
+    setError(null);
+    try {
+      await campaignAPI.sendLeadEmail(campaignId, lead.id);
+      if (onSendSuccess) onSendSuccess();
+      await loadThread(); // refresh thread after send
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to send email');
+    } finally {
+      setSending(false);
+    }
+  };
 
   const handleGenerateReply = async () => {
     if (!lead || !latestReply) return;
@@ -115,7 +174,6 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
 
   const handleSaveEdit = () => {
     if (replyDraft) {
-      // Update local state (actual persistence would need an API call)
       setReplyDraft({
         ...replyDraft,
         subject: editedSubject,
@@ -134,7 +192,7 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
         subject: replyDraft.subject,
         body: replyDraft.body,
       });
-      await loadThread(); // refresh thread, draft will be cleared on server
+      await loadThread();
       setReplyDraft(null);
       if (onSendSuccess) onSendSuccess();
     } catch (err: any) {
@@ -241,7 +299,7 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
               </div>
             ))}
 
-            {/* Generate Reply Button (if no draft and there is a latest reply) */}
+            {/* Generate Reply Button (if no reply draft and there is a latest reply) */}
             {!replyDraft && latestReply && (
               <div className="flex justify-center mt-4">
                 <button
@@ -393,6 +451,88 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Campaign Drafts Section – only show if no sent email */}
+        {!hasSentEmail && (
+          <div className="border-t pt-4 mt-4">
+            <h4 className="text-md font-medium text-gray-800 mb-3">Campaign Drafts</h4>
+            {loadingDrafts ? (
+              <div className="flex items-center text-gray-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                Loading drafts...
+              </div>
+            ) : drafts.length > 0 && preview ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
+                  <div className="bg-gray-50 p-2 rounded text-sm">{lead.email}</div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject:</label>
+                  <div className="bg-gray-50 p-2 rounded text-sm font-medium">{preview.subject}</div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Body:</label>
+                  <div className="bg-gray-50 p-4 rounded text-sm whitespace-pre-wrap font-mono">
+                    {preview.body}
+                  </div>
+                </div>
+
+                {/* Draft selector */}
+                <div className="flex items-center justify-between bg-gray-50 p-3 rounded">
+                  <button
+                    onClick={handlePrev}
+                    className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
+                    disabled={drafts.length <= 1}
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <span className="text-sm font-medium">
+                    Draft {currentDraftIndex + 1} of {drafts.length} ({drafts[currentDraftIndex].tone} tone)
+                  </span>
+                  <button
+                    onClick={handleNext}
+                    className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
+                    disabled={drafts.length <= 1}
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Send button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSend}
+                    disabled={sending}
+                    className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
+                  >
+                    {sending ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Sending...
+                      </>
+                    ) : (
+                      'Send Email'
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-center py-4">No drafts available for this campaign.</p>
+            )}
+          </div>
+        )}
+
+        {/* If email already sent, show a message */}
+        {hasSentEmail && (
+          <div className="border-t pt-4 mt-4 text-center text-green-600">
+            <p>✅ Outreach email already sent. No further action needed.</p>
           </div>
         )}
       </div>
