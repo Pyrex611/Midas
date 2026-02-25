@@ -1,0 +1,39 @@
+steps:
+  # Build the Docker image with build arg for API URL
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/frontend:${SHORT_SHA}'
+      - '--build-arg'
+      - 'VITE_API_URL=${_API_URL}'
+      - '.'
+    dir: 'frontend'
+
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/frontend:${SHORT_SHA}']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'lead-frontend'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/frontend:${SHORT_SHA}'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=80'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--cpu-boost'
+      - '--concurrency=80'
+      - '--max-instances=5'
+    dir: 'frontend'
+substitutions:
+  _REGION: us-central1
+  _API_URL: https://lead-backend-xyz-uc.a.run.app/api   # replace with actual backend URL
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/frontend:${SHORT_SHA}'
