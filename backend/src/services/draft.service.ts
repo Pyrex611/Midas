@@ -8,6 +8,7 @@ export class DraftService {
    * Generate a single draft. Returns null on failure.
    */
   async generateAndSaveDraft(
+    userId: string,
     tone: string = 'professional',
     useCase: string = 'initial',
     campaignId?: string,
@@ -29,6 +30,7 @@ export class DraftService {
 
       const draft = await prisma.draft.create({
         data: {
+          userId,
           subject,
           body,
           tone,
@@ -43,7 +45,7 @@ export class DraftService {
       return draft;
     } catch (error) {
       logger.error({ error, tone, useCase, campaignId }, 'Failed to generate draft');
-      return null; // Return null instead of throwing
+      return null;
     }
   }
 
@@ -51,6 +53,7 @@ export class DraftService {
    * Generate multiple drafts, skipping any that fail.
    */
   async generateMultipleDrafts(
+    userId: string,
     count: number,
     tone: string = 'professional',
     useCase: string = 'initial',
@@ -71,6 +74,7 @@ export class DraftService {
         : undefined;
 
       const draft = await this.generateAndSaveDraft(
+        userId,
         variedTone,
         useCase,
         campaignId,
@@ -128,7 +132,7 @@ export class DraftService {
 
     if (globalDraft) return globalDraft;
 
-    return this.generateAndSaveDraft(tone, useCase);
+    return null;
   }
 
   async listDrafts(campaignId?: string, activeOnly = true) {
@@ -153,6 +157,7 @@ export class DraftService {
   }
 
   async createCustomDraft(
+    userId: string,
     subject: string,
     body: string,
     campaignId?: string,
@@ -160,6 +165,7 @@ export class DraftService {
   ) {
     return prisma.draft.create({
       data: {
+        userId,
         subject,
         body,
         tone,
@@ -182,21 +188,29 @@ export class DraftService {
     });
   }
 
-  async createReplyDraft(leadId: string, campaignId: string, subject: string, body: string, tone: string = 'professional') {
+  async createReplyDraft(
+    leadId: string,
+    campaignId: string,
+    subject: string,
+    body: string,
+    tone: string = 'professional'
+  ) {
+    // Delete any existing reply draft for this lead
     await prisma.draft.deleteMany({
       where: { leadId, campaignId, isReplyDraft: true },
     });
     return prisma.draft.create({
       data: {
+        leadId,
+        campaignId,
         subject,
         body,
         tone,
         useCase: 'reply',
         version: 1,
         isActive: true,
-        campaignId,
-        leadId,
         isReplyDraft: true,
+        // userId is derived via lead relation, no need to set explicitly
       },
     });
   }

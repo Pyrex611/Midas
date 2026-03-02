@@ -7,65 +7,88 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String    @unique
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  leads         Lead[]
+  campaigns     Campaign[]
+  drafts        Draft[]
+  outboundEmails OutboundEmail[]
+}
+
 model Lead {
   id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
   name      String
-  email     String   @unique
+  email     String
   company   String?
   position  String?
   status    String   @default("NEW")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  outreachStatus String?
-  campaignId     String?
-  campaign       Campaign?       @relation(fields: [campaignId], references: [id])
+  outreachStatus String?  @map("outreach_status")
+  campaignId     String?  @map("campaign_id")
+  campaign       Campaign? @relation(fields: [campaignId], references: [id])
   sentEmails     OutboundEmail[]
-  replyDrafts    Draft[]          @relation("LeadDrafts")  // 👈 relation name added
+  replyDrafts    Draft[]         @relation("LeadDrafts")
 
+  @@unique([userId, email])
   @@index([status])
-  @@index([email])
   @@index([campaignId])
+  @@index([userId])
 }
 
 model Campaign {
   id          String   @id @default(cuid())
+  userId      String   @map("user_id") @db.Uuid
+  user        User     @relation(fields: [userId], references: [id])
   name        String
   description String?
   context     String?
   reference   String?
-  senderName  String?
+  senderName  String?  @map("sender_name")
   status      String   @default("DRAFT")
-  createdAt   DateTime @default(now())
-  startedAt   DateTime?
-  completedAt DateTime?
+  createdAt   DateTime @default(now()) @map("created_at")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+
+  followUpEnabled Boolean @default(false) @map("follow_up_enabled")
+  followUpDelay   Int     @default(24) @map("follow_up_delay")
 
   leads  Lead[]
   emails OutboundEmail[]
   drafts Draft[]
+
+  @@index([userId])
+  @@index([status])
 }
 
 model Draft {
   id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
   subject   String
   body      String
   tone      String
-  useCase   String
+  useCase   String   @map("use_case")
   version   Int      @default(1)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  campaignId String?
+  campaignId String?  @map("campaign_id")
   campaign   Campaign? @relation(fields: [campaignId], references: [id])
 
-  // Reply Drafts Relation
   leadId       String?  @map("lead_id")
-  lead         Lead?    @relation("LeadDrafts", fields: [leadId], references: [id]) // named relation
-  isReplyDraft Boolean  @default(false)
+  lead         Lead?    @relation("LeadDrafts", fields: [leadId], references: [id])
+  isReplyDraft Boolean  @default(false) @map("is_reply_draft")
 
-  sentCount  Int @default(0)
-  replyCount Int @default(0)
+  sentCount  Int @default(0) @map("sent_count")
+  replyCount Int @default(0) @map("reply_count")
 
   emails OutboundEmail[]
 
@@ -73,39 +96,40 @@ model Draft {
   @@index([tone, useCase])
   @@index([campaignId])
   @@index([leadId])
+  @@index([userId])
 }
 
 model OutboundEmail {
   id         String   @id @default(cuid())
-  leadId     String
+  userId     String   @map("user_id") @db.Uuid
+  user       User     @relation(fields: [userId], references: [id])
+  leadId     String   @map("lead_id")
   lead       Lead     @relation(fields: [leadId], references: [id])
-  campaignId String?
+  campaignId String?  @map("campaign_id")
   campaign   Campaign? @relation(fields: [campaignId], references: [id])
-  draftId    String?
+  draftId    String?  @map("draft_id")
   draft      Draft?    @relation(fields: [draftId], references: [id])
   
   subject    String
   body       String
-  sentAt     DateTime @default(now())
+  sentAt     DateTime @default(now()) @map("sent_at")
   status     String   @default("SENT")
   error      String?
 
-  openedAt  DateTime?
-  repliedAt DateTime?
-  replyText String?
+  openedAt  DateTime? @map("opened_at")
+  repliedAt DateTime? @map("replied_at")
+  replyText String?   @map("reply_text")
 
-  // Threading
   replyToId   String?       @map("reply_to_id")
   replyTo     OutboundEmail? @relation("Replies", fields: [replyToId], references: [id])
   replies     OutboundEmail[] @relation("Replies")
-  isIncoming  Boolean        @default(false)
-  messageId   String?
+  isIncoming  Boolean        @default(false) @map("is_incoming")
+  messageId   String?        @map("message_id")
   references  String?
-  inReplyTo   String?
-  fromAddress String?
-  toAddress   String?
+  inReplyTo   String?        @map("in_reply_to")
+  fromAddress String?        @map("from_address")
+  toAddress   String?        @map("to_address")
 
-  // Analysis
   sentiment   String?
   intent      String?
   analysis    String?
@@ -114,4 +138,5 @@ model OutboundEmail {
   @@index([campaignId])
   @@index([sentAt])
   @@index([messageId])
+  @@index([userId])
 }

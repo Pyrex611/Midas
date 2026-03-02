@@ -1,0 +1,168 @@
+import prisma from '../lib/prisma';
+import { logger } from '../config/logger';
+import { DraftService } from './draft.service';
+import { personalisationService } from './personalisation.service';
+import { emailService } from './email.service';
+import { env } from '../config/env';
+
+const draftService = new DraftService();
+
+export class FollowUpService {
+  private interval: NodeJS.Timeout | null = null;
+  private isRunning = false;
+
+  /**
+   * Start the follow‑up scheduler.
+   */
+  start(intervalMs: number = 60 * 60 * 1000) { // default 1 hour
+    if (this.interval) return;
+    logger.info(`Follow‑up scheduler started (interval: ${intervalMs}ms)`);
+    this.interval = setInterval(() => this.checkFollowUps(), intervalMs);
+    // Run immediately on start
+    this.checkFollowUps();
+  }
+
+  /**
+   * Stop the scheduler.
+   */
+  stop() {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+      logger.info('Follow‑up scheduler stopped');
+    }
+  }
+
+  /**
+   * Main check: find leads that need a follow‑up and send one.
+   */
+  async checkFollowUps() {
+    if (this.isRunning) {
+      logger.debug('Follow‑up check already running, skipping');
+      return;
+    }
+    this.isRunning = true;
+    try {
+      logger.debug('Running follow‑up check');
+
+      // Find all campaigns with follow‑ups enabled and active
+      const campaigns = await prisma.campaign.findMany({
+        where: {
+          followUpEnabled: true,
+          status: 'ACTIVE',
+        },
+        include: {
+          leads: {
+            where: {
+              outreachStatus: 'SENT', // only leads that have been contacted
+            },
+            include: {
+              sentEmails: {
+                where: { isIncoming: false },
+                orderBy: { sentAt: 'desc' },
+                take: 1,
+              },
+            },
+          },
+        },
+      });
+
+      for (const campaign of campaigns) {
+        const delayHours = campaign.followUpDelay;
+        const now = new Date();
+
+        for (const lead of campaign.leads) {
+          const lastOutbound = lead.sentEmails[0];
+          if (!lastOutbound) continue;
+
+          // Check if lead has replied since the last outbound
+          const hasReplied = await prisma.outboundEmail.findFirst({
+            where: {
+              leadId: lead.id,
+              campaignId: campaign.id,
+              isIncoming: true,
+              sentAt: { gt: lastOutbound.sentAt },
+            },
+          });
+          if (hasReplied) continue; // already replied, no follow‑up needed
+
+          // Calculate time since last outbound
+          const hoursSince = (now.getTime() - lastOutbound.sentAt.getTime()) / (1000 * 60 * 60);
+          if (hoursSince >= delayHours) {
+            await this.sendFollowUp(lead.id, campaign.id, lastOutbound);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error({ error }, 'Follow‑up check failed');
+    } finally {
+      this.isRunning = false;
+    }
+  }
+
+  /**
+   * Send a follow‑up email to a specific lead.
+   */
+  private async sendFollowUp(leadId: string, campaignId: string, lastOutbound: any) {
+    try {
+      const [lead, campaign] = await Promise.all([
+        prisma.lead.findUnique({ where: { id: leadId } }),
+        prisma.campaign.findUnique({ where: { id: campaignId } }),
+      ]);
+      if (!lead || !campaign) return;
+
+      // Get a follow‑up draft (could be campaign‑specific or global)
+      const draft = await draftService.getBestDraft('followup', 'professional', campaignId);
+      if (!draft) {
+        logger.warn({ leadId, campaignId }, 'No follow‑up draft available');
+        return;
+      }
+
+      const { subject, body } = personalisationService.personalise(
+        lead as any,
+        draft.subject,
+        draft.body,
+        campaign.reference,
+        campaign.senderName
+      );
+
+      const result = await emailService.sendEmail(
+        lead.email,
+        subject,
+        body.replace(/\n/g, '<br>'),
+        body,
+        campaign.senderName,
+        lastOutbound.messageId // thread as reply to the last outbound
+      );
+
+      if (!result.success) throw new Error(result.error || 'Email sending failed');
+
+      // Record the sent follow‑up
+      await prisma.outboundEmail.create({
+        data: {
+          leadId,
+          campaignId,
+          draftId: draft.id,
+          subject,
+          body,
+          status: 'SENT',
+          sentAt: new Date(),
+          messageId: result.messageId,
+          replyToId: lastOutbound.id,
+        },
+      });
+
+      // Increment draft sent count
+      await prisma.draft.update({
+        where: { id: draft.id },
+        data: { sentCount: { increment: 1 } },
+      });
+
+      logger.info({ leadId, campaignId }, 'Follow‑up sent');
+    } catch (error) {
+      logger.error({ error, leadId, campaignId }, 'Failed to send follow‑up');
+    }
+  }
+}
+
+export const followUpService = new FollowUpService();

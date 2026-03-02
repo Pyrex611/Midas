@@ -1,13 +1,15 @@
 import express from 'express';
 import cors from 'cors';
 import 'express-async-errors';
+import authRoutes from './routes/auth.routes';
 import leadRoutes from './routes/lead.routes';
-import { errorHandler } from './middleware/error.middleware';
-import { env } from './config/env';
-import { logger } from './config/logger';
 import campaignRoutes from './routes/campaign.routes';
 import diagnosticRoutes from './routes/diagnostic.routes';
 import imapRoutes from './routes/imap.routes';
+import { errorHandler } from './middleware/error.middleware';
+import { requireAuth } from './middleware/auth.middleware';
+import { env } from './config/env';
+import { logger } from './config/logger';
 
 const app = express();
 
@@ -15,18 +17,17 @@ app.use(cors({ origin: env.CORS_ORIGIN }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check endpoint
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-// API routes
-app.use('/api/leads', leadRoutes);
+// Public auth routes
+app.use('/api/auth', authRoutes);
 
-app.use('/api/campaigns', campaignRoutes);
-app.use('/api/diagnostics', diagnosticRoutes);
+// Protected API routes
+app.use('/api/leads', requireAuth, leadRoutes);
+app.use('/api/campaigns', requireAuth, campaignRoutes);
+app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
+app.use('/api/imap', requireAuth, imapRoutes);
 
-app.use('/api/imap', imapRoutes);
-
-// Global error handler – must be last
 app.use(errorHandler);
 
 export default app;
