@@ -10,6 +10,7 @@ datasource db {
 model User {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email         String    @unique
+  name          String?
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
   leads         Lead[]
@@ -139,4 +140,22 @@ model OutboundEmail {
   @@index([sentAt])
   @@index([messageId])
   @@index([userId])
+}
+
+model UserSettings {
+  userId        String   @id @map("user_id")
+  user          User     @relation(fields: [userId], references: [id])
+  emailFrom     String?  @map("email_from")  // e.g., "Your Name <you@gmail.com>"
+  smtpHost      String?  @map("smtp_host")
+  smtpPort      Int?     @map("smtp_port")
+  smtpSecure    Boolean? @map("smtp_secure") // true for port 465
+  smtpUser      String?  @map("smtp_user")
+  smtpPass      String?  @map("smtp_pass")   // encrypted
+  imapHost      String?  @map("imap_host")
+  imapPort      Int?     @map("imap_port")
+  imapSecure    Boolean? @map("imap_secure")
+  imapUser      String?  @map("imap_user")
+  imapPass      String?  @map("imap_pass")   // encrypted
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 }

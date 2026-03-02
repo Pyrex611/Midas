@@ -329,7 +329,9 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
     if (!jsonMatch) throw new Error('No JSON in response');
     const draftData = JSON.parse(jsonMatch[0]);
 
+    // ✅ Pass userId to createReplyDraft
     const savedDraft = await draftService.createReplyDraft(
+      userId,
       leadId,
       campaignId,
       draftData.subject,

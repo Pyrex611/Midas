@@ -5,11 +5,11 @@ import prisma from '../lib/prisma';
 
 /**
  * POST /api/auth/signup
- * Create a new user in Supabase and add a corresponding record in our User table.
+ * Create a new user in Supabase and add a corresponding record in our User table with name.
  */
 export const signUp = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { email, password, username } = req.body;
+    const { email, password, name } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password required' });
     }
@@ -19,24 +19,24 @@ export const signUp = async (req: Request, res: Response, next: NextFunction) =>
       email,
       password,
       options: {
-        data: { username },
+        data: { name }, // store in Supabase metadata if desired
       },
     });
 
     if (error) throw error;
     if (!data.user) throw new Error('User creation failed');
 
-    // 2. Create corresponding user in our database
+    // 2. Create corresponding user in our database with name
     try {
       await prisma.user.create({
         data: {
           id: data.user.id,
           email: data.user.email!,
+          name: name || email.split('@')[0], // fallback
         },
       });
       logger.info({ userId: data.user.id }, 'User record created in local DB');
     } catch (dbError: any) {
-      // If user already exists (e.g., from a previous signup), ignore
       if (dbError.code === 'P2002') {
         logger.warn({ userId: data.user.id }, 'User already exists in local DB');
       } else {
@@ -57,7 +57,7 @@ export const signUp = async (req: Request, res: Response, next: NextFunction) =>
 
 /**
  * POST /api/auth/signin
- * Sign in an existing user and ensure they have a record in our User table.
+ * Sign in an existing user and ensure they have a record in our User table (with name).
  */
 export const signIn = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -70,20 +70,23 @@ export const signIn = async (req: Request, res: Response, next: NextFunction) =>
     if (error) throw error;
     if (!data.user) throw new Error('Signin failed');
 
-    // Ensure user exists in our database
+    // Ensure user exists in our database, update name if needed
     try {
       await prisma.user.upsert({
         where: { id: data.user.id },
-        update: {},
+        update: {
+          // optionally update name from metadata if available
+          name: data.user.user_metadata?.name || undefined,
+        },
         create: {
           id: data.user.id,
           email: data.user.email!,
+          name: data.user.user_metadata?.name || email.split('@')[0],
         },
       });
       logger.info({ userId: data.user.id }, 'User record ensured in local DB');
     } catch (dbError: any) {
       logger.error({ dbError }, 'Failed to ensure user record');
-      // Continue anyway – maybe they already exist
     }
 
     logger.info({ userId: data.user.id }, 'User signed in');

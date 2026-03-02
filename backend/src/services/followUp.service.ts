@@ -11,20 +11,13 @@ export class FollowUpService {
   private interval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
-  /**
-   * Start the follow‑up scheduler.
-   */
-  start(intervalMs: number = 60 * 60 * 1000) { // default 1 hour
+  start(intervalMs: number = 60 * 60 * 1000) {
     if (this.interval) return;
     logger.info(`Follow‑up scheduler started (interval: ${intervalMs}ms)`);
     this.interval = setInterval(() => this.checkFollowUps(), intervalMs);
-    // Run immediately on start
     this.checkFollowUps();
   }
 
-  /**
-   * Stop the scheduler.
-   */
   stop() {
     if (this.interval) {
       clearInterval(this.interval);
@@ -33,9 +26,6 @@ export class FollowUpService {
     }
   }
 
-  /**
-   * Main check: find leads that need a follow‑up and send one.
-   */
   async checkFollowUps() {
     if (this.isRunning) {
       logger.debug('Follow‑up check already running, skipping');
@@ -68,6 +58,7 @@ export class FollowUpService {
       });
 
       for (const campaign of campaigns) {
+        const userId = campaign.userId; // capture for later use
         const delayHours = campaign.followUpDelay;
         const now = new Date();
 
@@ -75,7 +66,6 @@ export class FollowUpService {
           const lastOutbound = lead.sentEmails[0];
           if (!lastOutbound) continue;
 
-          // Check if lead has replied since the last outbound
           const hasReplied = await prisma.outboundEmail.findFirst({
             where: {
               leadId: lead.id,
@@ -84,12 +74,11 @@ export class FollowUpService {
               sentAt: { gt: lastOutbound.sentAt },
             },
           });
-          if (hasReplied) continue; // already replied, no follow‑up needed
+          if (hasReplied) continue;
 
-          // Calculate time since last outbound
           const hoursSince = (now.getTime() - lastOutbound.sentAt.getTime()) / (1000 * 60 * 60);
           if (hoursSince >= delayHours) {
-            await this.sendFollowUp(lead.id, campaign.id, lastOutbound);
+            await this.sendFollowUp(userId, lead.id, campaign.id, lastOutbound);
           }
         }
       }
@@ -100,10 +89,7 @@ export class FollowUpService {
     }
   }
 
-  /**
-   * Send a follow‑up email to a specific lead.
-   */
-  private async sendFollowUp(leadId: string, campaignId: string, lastOutbound: any) {
+  private async sendFollowUp(userId: string, leadId: string, campaignId: string, lastOutbound: any) {
     try {
       const [lead, campaign] = await Promise.all([
         prisma.lead.findUnique({ where: { id: leadId } }),
@@ -111,8 +97,8 @@ export class FollowUpService {
       ]);
       if (!lead || !campaign) return;
 
-      // Get a follow‑up draft (could be campaign‑specific or global)
-      const draft = await draftService.getBestDraft('followup', 'professional', campaignId);
+      // Get a follow‑up draft scoped to user
+      const draft = await draftService.getBestDraft(userId, 'followup', 'professional', campaignId);
       if (!draft) {
         logger.warn({ leadId, campaignId }, 'No follow‑up draft available');
         return;
@@ -132,14 +118,15 @@ export class FollowUpService {
         body.replace(/\n/g, '<br>'),
         body,
         campaign.senderName,
-        lastOutbound.messageId // thread as reply to the last outbound
+        lastOutbound.messageId
       );
 
       if (!result.success) throw new Error(result.error || 'Email sending failed');
 
-      // Record the sent follow‑up
+      // Record the sent follow‑up with userId
       await prisma.outboundEmail.create({
         data: {
+          userId,
           leadId,
           campaignId,
           draftId: draft.id,
@@ -152,7 +139,6 @@ export class FollowUpService {
         },
       });
 
-      // Increment draft sent count
       await prisma.draft.update({
         where: { id: draft.id },
         data: { sentCount: { increment: 1 } },

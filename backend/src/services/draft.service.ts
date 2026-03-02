@@ -4,9 +4,6 @@ import { logger } from '../config/logger';
 import { env } from '../config/env';
 
 export class DraftService {
-  /**
-   * Generate a single draft. Returns null on failure.
-   */
   async generateAndSaveDraft(
     userId: string,
     tone: string = 'professional',
@@ -49,9 +46,6 @@ export class DraftService {
     }
   }
 
-  /**
-   * Generate multiple drafts, skipping any that fail.
-   */
   async generateMultipleDrafts(
     userId: string,
     count: number,
@@ -98,10 +92,16 @@ export class DraftService {
     return drafts;
   }
 
-  async getBestDraft(useCase: string = 'initial', tone: string = 'professional', campaignId?: string) {
+  async getBestDraft(
+    userId: string,
+    useCase: string = 'initial',
+    tone: string = 'professional',
+    campaignId?: string
+  ) {
     if (campaignId) {
       const campaignDraft = await prisma.draft.findFirst({
         where: {
+          userId,
           campaignId,
           useCase,
           tone,
@@ -118,6 +118,7 @@ export class DraftService {
 
     const globalDraft = await prisma.draft.findFirst({
       where: {
+        userId,
         campaignId: null,
         useCase,
         tone,
@@ -134,7 +135,7 @@ export class DraftService {
 
     return null;
   }
-
+	
   async listDrafts(campaignId?: string, activeOnly = true) {
     return prisma.draft.findMany({
       where: {
@@ -189,6 +190,7 @@ export class DraftService {
   }
 
   async createReplyDraft(
+    userId: string,
     leadId: string,
     campaignId: string,
     subject: string,
@@ -201,6 +203,7 @@ export class DraftService {
     });
     return prisma.draft.create({
       data: {
+        userId,
         leadId,
         campaignId,
         subject,
@@ -210,7 +213,6 @@ export class DraftService {
         version: 1,
         isActive: true,
         isReplyDraft: true,
-        // userId is derived via lead relation, no need to set explicitly
       },
     });
   }

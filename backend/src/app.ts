@@ -10,6 +10,7 @@ import { errorHandler } from './middleware/error.middleware';
 import { requireAuth } from './middleware/auth.middleware';
 import { env } from './config/env';
 import { logger } from './config/logger';
+import userRoutes from './routes/user.routes';
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.use('/api/leads', requireAuth, leadRoutes);
 app.use('/api/campaigns', requireAuth, campaignRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/imap', requireAuth, imapRoutes);
+app.use('/api/user', requireAuth, userRoutes);
 
 app.use(errorHandler);
 

@@ -8,22 +8,29 @@ export class EmailService {
 
   constructor() {
     this.useEthereal = env.EMAIL_SERVICE === 'ethereal';
+    // Do not auto-init; init on first send to allow env changes
   }
 
   private async initTransporter() {
     if (this.useEthereal) {
-      const testAccount = await nodemailer.createTestAccount();
-      this.transporter = nodemailer.createTransport({
-        host: 'smtp.ethereal.email',
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-      logger.info('Email service using Ethereal (preview mode)');
+      try {
+        const testAccount = await nodemailer.createTestAccount();
+        this.transporter = nodemailer.createTransport({
+          host: 'smtp.ethereal.email',
+          port: 587,
+          secure: false,
+          auth: {
+            user: testAccount.user,
+            pass: testAccount.pass,
+          },
+        });
+        logger.info('Email service using Ethereal (preview mode)');
+      } catch (error) {
+        logger.error({ error }, 'Failed to create Ethereal test account');
+        throw new Error('Could not initialize Ethereal email service');
+      }
     } else {
+      // SMTP mode
       if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
         throw new Error('SMTP configuration missing when EMAIL_SERVICE=smtp');
       }
@@ -48,32 +55,33 @@ export class EmailService {
     senderName?: string | null,
     inReplyTo?: string | null
   ) {
+    // Ensure transporter is ready
+    if (!this.transporter) {
+      await this.initTransporter();
+    }
+
+    // Build from address
+    let fromEmail = env.EMAIL_FROM;
+    const match = env.EMAIL_FROM.match(/<(.+)>/);
+    if (match) {
+      fromEmail = match[1];
+    }
+    const from = senderName ? `"${senderName}" <${fromEmail}>` : env.EMAIL_FROM;
+
+    const mailOptions: any = {
+      from,
+      to,
+      subject,
+      text,
+      html,
+    };
+
+    if (inReplyTo) {
+      mailOptions.inReplyTo = inReplyTo;
+      mailOptions.references = [inReplyTo];
+    }
+
     try {
-      if (!this.transporter) {
-        await this.initTransporter();
-      }
-
-      let fromEmail = env.EMAIL_FROM;
-      const match = env.EMAIL_FROM.match(/<(.+)>/);
-      if (match) {
-        fromEmail = match[1];
-      }
-
-      const from = senderName ? `"${senderName}" <${fromEmail}>` : env.EMAIL_FROM;
-
-      const mailOptions: any = {
-        from,
-        to,
-        subject,
-        text,
-        html,
-      };
-
-      if (inReplyTo) {
-        mailOptions.inReplyTo = inReplyTo;
-        mailOptions.references = [inReplyTo];
-      }
-
       const info = await this.transporter!.sendMail(mailOptions);
       const messageId = info.messageId;
 
@@ -82,7 +90,6 @@ export class EmailService {
         logger.info({ previewUrl, to, subject, messageId }, 'Email preview generated');
         return { success: true, previewUrl, messageId };
       } else {
-        // SMTP: ensure we have a messageId
         if (!messageId) {
           throw new Error('No messageId returned from SMTP server');
         }

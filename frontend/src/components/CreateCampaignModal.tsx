@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { campaignAPI } from '../services/api';
 
 interface Props {
@@ -6,6 +6,7 @@ interface Props {
   onClose: () => void;
   onSuccess: () => void;
   initialLeadIds?: string[];
+  defaultSenderName?: string;
 }
 
 export const CreateCampaignModal: React.FC<Props> = ({
@@ -13,13 +14,25 @@ export const CreateCampaignModal: React.FC<Props> = ({
   onClose,
   onSuccess,
   initialLeadIds,
+  defaultSenderName,
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [context, setContext] = useState('');
   const [reference, setReference] = useState('');
-  const [senderName, setSenderName] = useState('');
+  const [senderName, setSenderName] = useState(defaultSenderName || '');
   const [submitting, setSubmitting] = useState(false);
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setName('');
+      setDescription('');
+      setContext('');
+      setReference('');
+      setSenderName(defaultSenderName || '');
+    }
+  }, [isOpen, defaultSenderName]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,12 +49,7 @@ export const CreateCampaignModal: React.FC<Props> = ({
         leadIds: initialLeadIds,
       });
       onSuccess();
-      // Reset form
-      setName('');
-      setDescription('');
-      setContext('');
-      setReference('');
-      setSenderName('');
+      onClose();
     } catch (error) {
       console.error('Failed to create campaign', error);
       alert('Could not create campaign');
@@ -125,7 +133,7 @@ export const CreateCampaignModal: React.FC<Props> = ({
               placeholder="e.g., John Doe"
             />
             <p className="mt-1 text-xs text-gray-500">
-              This name will appear in the "From" field of sent emails. If not provided, a default will be used.
+              This name will appear in the "From" field of sent emails. Prefilled from your profile.
             </p>
           </div>
 

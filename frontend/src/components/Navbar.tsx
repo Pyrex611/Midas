@@ -30,7 +30,7 @@ export const Navbar = () => {
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="p-6">
+        <div className="p-6 flex flex-col h-full">
           <div className="flex justify-between items-center mb-8">
             <h2 className="text-xl font-semibold text-gray-800">Menu</h2>
             <button
@@ -42,7 +42,7 @@ export const Navbar = () => {
               </svg>
             </button>
           </div>
-          <nav className="space-y-4">
+          <nav className="space-y-4 flex-1">
             <Link
               to="/"
               onClick={() => setIsOpen(false)}
@@ -57,7 +57,6 @@ export const Navbar = () => {
             >
               📋 All Leads
             </Link>
-            {/* 🔥 NEW: Campaigns Link */}
             <Link
               to="/campaigns"
               onClick={() => setIsOpen(false)}
@@ -66,6 +65,15 @@ export const Navbar = () => {
               📊 Campaigns
             </Link>
           </nav>
+          <div className="border-t pt-4">
+            <Link
+              to="/profile"
+              onClick={() => setIsOpen(false)}
+              className="block px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+            >
+              👤 Profile
+            </Link>
+          </div>
         </div>
       </div>
     </>

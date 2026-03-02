@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { LeadsTable } from '../components/LeadsTable';
 import { Pagination } from '../components/Pagination';
 import { AddToCampaignModal } from '../components/AddToCampaignModal';
@@ -8,6 +9,7 @@ import { Lead } from '../types/lead';
 
 export const Leads: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const campaignFilter = searchParams.get('campaign') || 'all';
   const campaignIdParam = searchParams.get('campaign') || undefined;
@@ -124,14 +126,12 @@ export const Leads: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-20">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">All Leads</h1>
-        <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
-          <div className="flex items-center gap-2">
-            <label htmlFor="campaign-filter" className="text-sm text-gray-600 whitespace-nowrap">
-              Filter:
-            </label>
+    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-3xl font-bold text-gray-900">All Leads</h1>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <label htmlFor="campaign-filter" className="text-sm text-gray-600">Filter:</label>
             <select
               id="campaign-filter"
               value={campaignFilter}
@@ -178,16 +178,14 @@ export const Leads: React.FC = () => {
 
       {!loading && !error && leads.length > 0 && (
         <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="overflow-x-auto">
-            <LeadsTable
-              leads={leads}
-              onDelete={handleDelete}
-              onBulkDelete={handleBulkDelete}
-              onBulkCampaign={handleBulkCampaign}
-              showOutreachStatus={true}
-              campaignStatus={campaignStatus}
-            />
-          </div>
+          <LeadsTable
+            leads={leads}
+            onDelete={handleDelete}
+            onBulkDelete={handleBulkDelete}
+            onBulkCampaign={handleBulkCampaign}
+            showOutreachStatus={true}
+            campaignStatus={campaignStatus}
+          />
           <Pagination
             currentPage={pagination.page}
             totalPages={pagination.totalPages}

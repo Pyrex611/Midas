@@ -12,7 +12,8 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
-  // Email service selector
+  ENCRYPTION_KEY: z.string().length(64),
+	// Email service selector
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp']).default('ethereal'),
 
   // SMTP settings (required if EMAIL_SERVICE=smtp)
