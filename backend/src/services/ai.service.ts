@@ -1,88 +1,56 @@
 import { logger } from '../config/logger';
 import { env } from '../config/env';
+import { promptManager, PromptParams } from './promptManager.service';
+
+// ===== ANALYSIS INTERFACE =====
+export interface ReplyAnalysis {
+  sentiment: 'very positive' | 'positive' | 'neutral' | 'negative' | 'very negative';
+  intent: string;
+  painPoints?: string[];
+  objections?: string[];
+  interestLevel?: number; // 1-10
+  buyingSignals?: string[];
+  suggestedApproach?: string;
+  keyPoints?: string[];
+}
 
 // ===== PROVIDER INTERFACE =====
 interface AIProvider {
-  generateDraft(
-    tone: string,
-    useCase: string,
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
-  ): Promise<{ subject: string; body: string }>;
+  complete(prompt: string, system?: string): Promise<string>;
   isAvailable(): Promise<boolean>;
 }
 
-// ===== MOCK PROVIDER (always available, high‑quality templates) =====
+// ===== MOCK PROVIDER =====
 class MockProvider implements AIProvider {
   async isAvailable() { return true; }
 
-  async generateDraft(
-    tone: string,
-    useCase: string,
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
-  ) {
-    logger.debug({ tone, useCase, campaignContext, reference }, 'MockProvider generating draft');
-    return this.generateMockDraft(tone, useCase, campaignContext, reference);
-  }
-
-  private generateMockDraft(
-    tone: string,
-    useCase: string,
-    campaignContext?: string,
-    reference?: string
-  ): { subject: string; body: string } {
-    // Base templates
-    const baseDrafts: Record<string, { subject: string; body: string }> = {
-      'professional-initial': {
-        subject: 'Quick question regarding {{company}}',
-        body: `Hi {{name}},\n\nI've been following {{company}}'s recent work in the industry and was impressed by your team's achievements. At our company, we specialize in helping businesses like yours achieve {{valueProposition}}.\n\nWould you be open to a 10‑minute call next week? I'd love to share some insights that could be relevant.\n\nBest regards,\n[Your Name]`,
-      },
-      'friendly-initial': {
-        subject: 'Loved your recent post on {{topic}}',
-        body: `Hi {{name}},\n\nI came across your post about {{topic}} and it really resonated. At {{senderCompany}}, we're working on something that aligns perfectly with that vision.\n\nIf you're open to it, I'd love to exchange ideas – no strings attached.\n\nCheers,\n[Your Name]`,
-      },
-      'urgent-initial': {
-        subject: 'Time‑sensitive opportunity for {{company}}',
-        body: `Hi {{name}},\n\nI'm reaching out because we have a limited window to help companies like {{company}} achieve {{valueProposition}}. Based on your role, I believe you could benefit from a quick conversation.\n\nWould you have 10 minutes this week?\n\nBest,\n[Your Name]`,
-      },
-      'data-driven-initial': {
-        subject: 'Data‑backed insights for {{company}}',
-        body: `Hi {{name}},\n\nI analyzed {{company}}'s recent performance and noticed an opportunity to improve {{valueProposition}}. Our data shows that companies in your sector typically see a 30% uplift after implementing our approach.\n\nWould you be open to reviewing the findings together?\n\nCheers,\n[Your Name]`,
-      },
-      'storytelling-initial': {
-        subject: 'The $10k Deal Story You Need',
-        body: `Hi {{name}},\n\nI remember a few years back, {{reference_company}} was struggling to close those big-ticket deals. Their sales team was great, but the final hurdle felt insurmountable. Then, we implemented a new approach – not just selling, but truly understanding and solving their core pain points.\n\nIt wasn't about pushing features; it was about uncovering the hidden 'why' behind their purchase. This led to a remarkable shift, with one client landing a $10k deal on the first call.\n\nMy expertise lies in that precise moment – transforming hesitation into commitment, and turning prospects into paying clients, exponentially raising revenue. {{valueProposition}} is designed to do just that.\n\nWould you be open to a brief chat to explore this?`,
-      },
-    };
-
-    const key = `${tone}-${useCase}`;
-    const draft = baseDrafts[key] || baseDrafts['professional-initial'];
-    
-    // Inject campaign context and reference if provided
-    let finalBody = draft.body;
-    if (campaignContext) {
-      finalBody = `[Goal: ${campaignContext}]\n\n${finalBody}`;
-    }
-    if (reference) {
-      // Reference is already in the storytelling template, but we ensure placeholder exists
-      if (!finalBody.includes('{{reference_company}}')) {
-        finalBody = `[Reference: ${reference}]\n\n${finalBody}`;
-      }
+  async complete(prompt: string, system?: string): Promise<string> {
+    logger.debug('MockProvider generating response');
+    if (prompt.includes('sentiment')) {
+      return JSON.stringify({
+        sentiment: 'neutral',
+        intent: 'asking for info',
+        painPoints: [],
+        objections: [],
+        interestLevel: 5,
+        buyingSignals: [],
+        suggestedApproach: 'provide more information',
+        keyPoints: []
+      });
     } else {
-      // Remove any lines that contain {{reference_company}} if reference not provided
-      finalBody = finalBody
-        .split('\n')
-        .filter(line => !line.includes('{{reference_company}}'))
-        .join('\n');
+      const subjects = [
+        'Quick question regarding {{company}}',
+        'Loved your recent post on {{topic}}',
+        'Following up – {{company}}',
+      ];
+      const bodies = [
+        `Hi {{name}},\n\nI've been following {{company}}'s recent work in the industry and was impressed by your team's achievements. We specialize in helping businesses like yours streamline operations and increase efficiency.\n\nWould you be open to a 10‑minute call next week to explore how we can help?\n\nBest regards,\n{{senderName}}`,
+        `Hi {{name}},\n\nI came across your post about {{topic}} and it really resonated. At {{senderCompany}}, we're working on something that aligns perfectly with that vision.\n\nIf you're open to it, I'd love to exchange ideas – no strings attached.\n\nCheers,\n{{senderName}}`,
+        `Hi {{name}},\n\nJust wanted to gently follow up on my previous email. I know how busy things get.\n\nIf you're not the right person, could you point me to who handles these initiatives at {{company}}?\n\nThanks either way,\n{{senderName}}`,
+      ];
+      const idx = Math.floor(Math.random() * subjects.length);
+      return JSON.stringify({ subject: subjects[idx], body: bodies[idx] });
     }
-    
-    return {
-      subject: draft.subject,
-      body: finalBody,
-    };
   }
 }
 
@@ -91,31 +59,18 @@ class OpenAIProvider implements AIProvider {
   private apiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model = 'gpt-4-turbo-preview') {
+  constructor(apiKey: string, model = 'gpt-3.5-turbo') {
     this.apiKey = apiKey;
     this.model = model;
   }
 
-  async isAvailable() {
-    if (!this.apiKey) return false;
-    try {
-      const resp = await fetch('https://api.openai.com/v1/models', {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-      });
-      return resp.ok;
-    } catch {
-      return false;
-    }
-  }
+  async isAvailable() { return !!this.apiKey; }
 
-  async generateDraft(
-    tone: string,
-    useCase: string,
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
-  ) {
-    const prompt = this.buildPrompt(tone, useCase, campaignContext, reference, companyContext);
+  async complete(prompt: string, system?: string): Promise<string> {
+    const messages = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({ role: 'user', content: prompt });
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -124,77 +79,23 @@ class OpenAIProvider implements AIProvider {
       },
       body: JSON.stringify({
         model: this.model,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert B2B cold email copywriter. Output only valid JSON with "subject" and "body".',
-          },
-          { role: 'user', content: prompt },
-        ],
+        messages,
         temperature: 0.7,
-        max_tokens: 500,
+        max_tokens: 1200,
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
-    const content = data.choices[0].message.content;
-    return this.parseResponse(content);
-  }
-
-  private buildPrompt(
-    tone: string,
-    useCase: string,
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
-  ): string {
-    let prompt = `You are an expert in B2B cold outreach with a 40%+ reply rate.
-Generate a ${tone} cold email for ${useCase} outreach.
-
-CAMPAIGN OBJECTIVE: ${campaignContext || 'General outreach'}
-
-`;
-
-    if (reference) {
-      prompt += `REFERENCE STORY: ${reference}
-Use this story as a case study, mentioning the company name as {{reference_company}}. If the story includes a specific company name, you may incorporate it naturally.\n\n`;
-    } else {
-      prompt += `No reference story provided. Do not include any specific client story; instead focus on the value proposition.\n\n`;
-    }
-
-    prompt += `IMPORTANT REQUIREMENTS:
-- Subject line: compelling, under 60 characters, no placeholders.
-- Body: 3-4 short paragraphs, under 150 words, mobile‑friendly.
-- Use placeholders EXACTLY as: {{name}}, {{company}}, {{position}}, {{valueProposition}}.
-- ${reference ? 'If you used the reference story, ensure {{reference_company}} appears where the client company would be mentioned.' : 'Do NOT use {{reference_company}}.'}
-- No links, no attachments, no "click here".
-- End with a clear, low‑friction call‑to‑action (e.g., "Would you be open to a brief chat?").
-- Output ONLY valid JSON: {"subject": "...", "body": "..."}
-${companyContext ? `Context about the sender's company: ${companyContext}` : ''}`;
-
-    return prompt;
-  }
-
-  private parseResponse(raw: string): { subject: string; body: string } {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      // Fallback: extract using regex
-      const subjectMatch = raw.match(/"subject"\s*:\s*"([^"]+)"/);
-      const bodyMatch = raw.match(/"body"\s*:\s*"([^"]+)"/);
-      return {
-        subject: subjectMatch?.[1] || 'New opportunity',
-        body: bodyMatch?.[1]?.replace(/\\n/g, '\n') || 'Hi {{name}}...',
-      };
-    }
+    return data.choices[0].message.content;
   }
 }
 
-// ===== GOOGLE GEMINI PROVIDER =====
+// ===== GEMINI PROVIDER =====
 class GeminiProvider implements AIProvider {
   private apiKey: string;
   private model: string;
@@ -204,58 +105,40 @@ class GeminiProvider implements AIProvider {
     this.model = model;
   }
 
-  async isAvailable() {
-    return !!this.apiKey;
-  }
+  async isAvailable() { return !!this.apiKey; }
 
-  async generateDraft(
-    tone: string,
-    useCase: string,
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
-  ) {
-    const prompt = this.buildPrompt(tone, useCase, campaignContext, reference, companyContext);
+  async complete(prompt: string, system?: string): Promise<string> {
+    const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }],
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 500,
-          },
+          contents: [{ parts: [{ text: fullPrompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
         }),
       }
     );
 
     if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Gemini API error (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
-    const text = data.candidates[0].content.parts[0].text;
-    return this.parseResponse(text);
+    return data.candidates[0].content.parts[0].text;
   }
-
-  private buildPrompt = OpenAIProvider.prototype.buildPrompt;
-  private parseResponse = OpenAIProvider.prototype.parseResponse;
 }
 
 // ===== OLLAMA PROVIDER =====
 class OllamaProvider implements AIProvider {
   private baseUrl: string;
-  private fastModel: string;
-  private powerfulModel: string;
+  private model: string;
 
-  constructor(baseUrl = 'http://localhost:11434', fastModel = 'llama3.2:1b', powerfulModel = 'llama3.1:8b') {
+  constructor(baseUrl = 'http://localhost:11434', model = 'llama3.1:8b') {
     this.baseUrl = baseUrl;
-    this.fastModel = fastModel;
-    this.powerfulModel = powerfulModel;
+    this.model = model;
   }
 
   async isAvailable() {
@@ -267,75 +150,334 @@ class OllamaProvider implements AIProvider {
     }
   }
 
-  async generateDraft(
-    tone: string,
-    useCase: string,
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
-  ) {
-    const model = useCase === 'initial' ? this.powerfulModel : this.fastModel;
-    const prompt = this.buildPrompt(tone, useCase, campaignContext, reference, companyContext);
-
+  async complete(prompt: string, system?: string): Promise<string> {
+    const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
     const response = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model,
-        prompt,
+        model: this.model,
+        prompt: fullPrompt,
         stream: false,
-        options: { temperature: 0.7, top_p: 0.9 },
+        options: { temperature: 0.7 },
       }),
     });
 
     if (!response.ok) throw new Error('Ollama generation failed');
     const data = await response.json();
-    return this.parseResponse(data.response);
+    return data.response;
   }
-
-  private buildPrompt = OpenAIProvider.prototype.buildPrompt;
-  private parseResponse = OpenAIProvider.prototype.parseResponse;
 }
 
-// ===== FACTORY =====
+// ===== DEEPSEEK PROVIDER =====
+class DeepSeekProvider implements AIProvider {
+  private apiKey: string;
+  private model: string;
+
+  constructor(apiKey: string, model = 'deepseek-chat') {
+    this.apiKey = apiKey;
+    this.model = model;
+  }
+
+  async isAvailable() { return !!this.apiKey; }
+
+  async complete(prompt: string, system?: string): Promise<string> {
+    const messages = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({ role: 'user', content: prompt });
+
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 1200,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`DeepSeek API error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+}
+
+// ===== OPENROUTER PROVIDER =====
+class OpenRouterProvider implements AIProvider {
+  private apiKey: string;
+  private model: string;
+
+  constructor(apiKey: string, model: string) {
+    this.apiKey = apiKey;
+    this.model = model;
+  }
+
+  async isAvailable() { return !!this.apiKey; }
+
+  async complete(prompt: string, system?: string): Promise<string> {
+    const messages = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({ role: 'user', content: prompt });
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+        'HTTP-Referer': 'https://your-app.com',
+        'X-Title': 'Lead Management System',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 5120,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error({ status: response.status, errorText }, 'OpenRouter API error');
+      throw new Error(`OpenRouter API error (${response.status})`);
+    }
+
+    const data = await response.json();
+    logger.debug({ openRouterResponse: JSON.stringify(data).substring(0, 2000) }, 'OpenRouter raw response');
+
+    if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+      throw new Error('OpenRouter API returned invalid response structure');
+    }
+
+    const choice = data.choices[0];
+    let rawContent = choice.message?.content || '';
+    if (!rawContent && choice.message?.reasoning) {
+      rawContent = choice.message.reasoning;
+    }
+    if (!rawContent) {
+      rawContent = JSON.stringify(choice.message);
+    }
+    return rawContent;
+  }
+}
+
+// ===== AI SERVICE WITH QUEUE, FALLBACK, AND ROBUST JSON PARSING =====
 export class AIService {
-  private provider: AIProvider;
+  private primaryProvider: AIProvider;
+  private fallbackProvider: AIProvider | null = null;
+  private mockProvider = new MockProvider();
+  private requestQueue: (() => Promise<any>)[] = [];
+  private processing = false;
 
   constructor() {
-    const providerType = env.AI_PROVIDER?.toLowerCase() || 'mock';
-    logger.info({ provider: providerType }, 'Initializing AI service');
+    const primaryType = env.AI_PROVIDER?.toLowerCase() || 'mock';
+    const fallbackType = env.PRIMARY_FALLBACK_PROVIDER?.toLowerCase();
 
-    switch (providerType) {
-      case 'openai':
-        this.provider = new OpenAIProvider(env.OPENAI_API_KEY || '', env.OPENAI_MODEL);
-        break;
-      case 'gemini':
-        this.provider = new GeminiProvider(env.GEMINI_API_KEY || '', env.GEMINI_MODEL);
-        break;
-      case 'ollama':
-        this.provider = new OllamaProvider(env.OLLAMA_URL, env.OLLAMA_FAST_MODEL, env.OLLAMA_POWERFUL_MODEL);
-        break;
-      case 'mock':
-      default:
-        this.provider = new MockProvider();
-        break;
+    logger.info({ primary: primaryType, fallback: fallbackType }, 'Initializing AI service');
+
+    // Initialize primary provider
+    this.primaryProvider = this.createProvider(primaryType);
+
+    // Initialize fallback provider if specified
+    if (fallbackType && fallbackType !== primaryType) {
+      try {
+        this.fallbackProvider = this.createProvider(fallbackType);
+        logger.info({ fallback: fallbackType }, 'Fallback provider initialized');
+      } catch (err) {
+        logger.error({ err, fallbackType }, 'Failed to initialize fallback provider');
+      }
     }
   }
 
+  private createProvider(type: string): AIProvider {
+    switch (type) {
+      case 'openai':
+        return new OpenAIProvider(env.OPENAI_API_KEY || '', env.OPENAI_MODEL);
+      case 'gemini':
+        return new GeminiProvider(env.GEMINI_API_KEY || '', env.GEMINI_MODEL);
+      case 'ollama':
+        return new OllamaProvider(env.OLLAMA_URL, env.OLLAMA_POWERFUL_MODEL);
+      case 'deepseek':
+        return new DeepSeekProvider(env.DEEPSEEK_API_KEY || '', env.DEEPSEEK_MODEL);
+      case 'openrouter':
+        return new OpenRouterProvider(env.OPENROUTER_API_KEY || '', env.OPENROUTER_MODEL);
+      case 'mock':
+      default:
+        return new MockProvider();
+    }
+  }
+
+  private async enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push(async () => {
+        try {
+          const result = await fn();
+          resolve(result);
+        } catch (err) {
+          reject(err);
+        }
+      });
+      this.processQueue();
+    });
+  }
+
+  private async processQueue() {
+    if (this.processing || this.requestQueue.length === 0) return;
+    this.processing = true;
+    while (this.requestQueue.length > 0) {
+      const next = this.requestQueue.shift();
+      if (next) {
+        await next();
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    this.processing = false;
+  }
+
+  /**
+   * Attempt to complete a prompt with fallback and mock.
+   */
+  private async attemptComplete(prompt: string, system?: string): Promise<string> {
+    // Try primary provider
+    try {
+      logger.debug('Attempting primary provider');
+      return await this.primaryProvider.complete(prompt, system);
+    } catch (primaryError) {
+      logger.error({ error: primaryError, provider: env.AI_PROVIDER }, 'Primary provider failed');
+
+      // Try fallback if available
+      if (this.fallbackProvider) {
+        try {
+          logger.debug('Attempting fallback provider');
+          return await this.fallbackProvider.complete(prompt, system);
+        } catch (fallbackError) {
+          logger.error({ error: fallbackError, provider: env.PRIMARY_FALLBACK_PROVIDER }, 'Fallback provider failed');
+        }
+      }
+
+      // Finally, use mock
+      logger.debug('Falling back to mock provider');
+      return await this.mockProvider.complete(prompt, system);
+    }
+  }
+
+  /**
+   * Robustly extract JSON from a string that may contain extra text.
+   */
+  private extractJSON(raw: string): any {
+    // First, try to find a JSON object using regex that matches from the first { to the last }
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) {
+      throw new Error(`No JSON object found in response: ${raw.substring(0, 500)}`);
+    }
+    const candidate = match[0];
+    try {
+      return JSON.parse(candidate);
+    } catch (err) {
+      // If that fails, attempt to find the last complete JSON object by counting braces
+      let depth = 0;
+      let start = -1;
+      let lastValidEnd = -1;
+      for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i];
+        if (ch === '{') {
+          if (depth === 0) start = i;
+          depth++;
+        } else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            lastValidEnd = i;
+            const candidate = raw.substring(start, i + 1);
+            try {
+              return JSON.parse(candidate);
+            } catch (e) {
+              // Continue searching for the next complete object
+            }
+          }
+        }
+      }
+      throw new Error(`Could not extract valid JSON from response: ${raw.substring(0, 500)}`);
+    }
+  }
+
+  /**
+   * Public method for generic completions with fallback.
+   */
+  async complete(prompt: string, system?: string): Promise<string> {
+    return this.enqueue(() => this.attemptComplete(prompt, system));
+  }
+
+  /**
+   * Generate a cold email draft (uses PromptManager).
+   */
   async generateDraft(
     tone: string = 'professional',
-    useCase: string = 'initial',
-    campaignContext?: string,
-    reference?: string,
-    companyContext?: string
+    useCase: 'initial' | 'followup' | 'reply' = 'initial',
+    campaignContext?: string | null,
+    reference?: string | null,
+    companyContext?: string | null,
+    originalEmail?: string,
+    sentiment?: string
   ): Promise<{ subject: string; body: string }> {
-    try {
-      return await this.provider.generateDraft(tone, useCase, campaignContext, reference, companyContext);
-    } catch (error) {
-      logger.error({ error, provider: env.AI_PROVIDER }, 'AI provider failed, falling back to mock');
-      const mock = new MockProvider();
-      return mock.generateDraft(tone, useCase, campaignContext, reference, companyContext);
-    }
+    const variationSeed = Math.floor(Math.random() * 1000000);
+    const params: PromptParams = {
+      useCase,
+      tone,
+      campaignContext,
+      reference,
+      companyContext,
+      variationSeed,
+      originalEmail,
+      sentiment,
+    };
+    const prompt = promptManager.buildPrompt(params);
+    const system = 'You are an expert B2B cold email copywriter. Output only valid JSON with "subject" and "body".';
+
+    return this.enqueue(async () => {
+      const raw = await this.attemptComplete(prompt, system);
+      const parsed = this.extractJSON(raw);
+      if (!parsed.subject || !parsed.body) {
+        throw new Error(`Parsed JSON missing subject/body: ${JSON.stringify(parsed)}`);
+      }
+      return { subject: parsed.subject, body: parsed.body };
+    });
+  }
+
+  /**
+   * Analyze a reply email with expanded sentiment.
+   */
+  async analyzeReply(replyText: string): Promise<ReplyAnalysis> {
+    const prompt = `You are an elite sales analyst and manager. Analyze the following email reply from a lead. Provide a detailed JSON analysis with the following fields:
+- sentiment: one of "very positive", "positive", "neutral", "negative", "very negative"
+- intent: a short phrase describing the lead's primary intent (e.g., "interested", "not interested", "out of office", "asking for info", "objection", "scheduling")
+- painPoints: an array of specific pain points mentioned (if any)
+- objections: an array of specific objections raised (if any)
+- interestLevel: a number from 1 to 10 indicating the lead's interest level (1 = not interested, 10 = highly interested)
+- buyingSignals: an array of buying signals detected (e.g., "asked about pricing", "mentioned timeline", "wants demo")
+- suggestedApproach: a brief recommendation on how to reply (e.g., "provide case study", "schedule a demo", "address pricing concern", "ask clarifying question")
+- keyPoints: an array of any other important points from the email
+
+If a field is not applicable, omit it or use an empty array.
+Reply text: """${replyText}"""
+Output only valid JSON.`;
+
+    const system = 'You are an expert sales analyst. Output only valid JSON.';
+
+    return this.enqueue(async () => {
+      const raw = await this.attemptComplete(prompt, system);
+      const parsed = this.extractJSON(raw);
+      if (!parsed.sentiment || !parsed.intent) {
+        throw new Error(`Parsed JSON missing sentiment/intent: ${JSON.stringify(parsed)}`);
+      }
+      return parsed as ReplyAnalysis;
+    });
   }
 }
 

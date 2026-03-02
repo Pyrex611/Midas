@@ -9,13 +9,15 @@ const draftService = new DraftService();
 
 export class CampaignService {
   /**
-   * Create a new campaign with user‑provided context/reference, generate 5 drafts, and optionally start it.
+   * Create a new campaign with user‑provided context/reference, generate 5 drafts,
+   * and mark leads as PENDING.
    */
   async createCampaign(
     name: string,
     description?: string,
     context?: string,
     reference?: string,
+    senderName?: string,
     leadIds?: string[]
   ) {
     if (!prisma.campaign) {
@@ -29,6 +31,7 @@ export class CampaignService {
           description,
           context,
           reference,
+          senderName,
           status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
           startedAt: leadIds?.length ? new Date() : null,
           ...(leadIds?.length && {
@@ -37,20 +40,33 @@ export class CampaignService {
         },
       });
 
-      // Generate 5 varied drafts for this campaign
+      // If leads were added, set their outreachStatus to PENDING
+      if (leadIds?.length) {
+        await prisma.lead.updateMany({
+          where: { id: { in: leadIds } },
+          data: { outreachStatus: 'PENDING' as OutreachStatus },
+        });
+      }
+
+      // Generate 5 varied drafts
       await draftService.generateMultipleDrafts(
         5,
         'professional',
         'initial',
         campaign.id,
         context,
-        reference
+        reference,
+        undefined,
+        senderName
       );
 
       logger.info({ campaignId: campaign.id }, 'Campaign created with 5 drafts');
 
+      // Process leads in the background
       if (leadIds?.length) {
-        await this.processCampaign(campaign.id);
+        this.processCampaign(campaign.id).catch(err => {
+          logger.error({ err, campaignId: campaign.id }, 'Background campaign processing failed');
+        });
       }
 
       return campaign;
@@ -60,9 +76,6 @@ export class CampaignService {
     }
   }
 
-  /**
-   * Add leads to an existing campaign, skipping duplicates.
-   */
   async addLeadsToCampaign(campaignId: string, leadIds: string[]) {
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
@@ -98,7 +111,10 @@ export class CampaignService {
       });
     }
 
-    await this.processCampaign(campaignId, newLeadIds);
+    // Process in background
+    this.processCampaign(campaignId, newLeadIds).catch(err => {
+      logger.error({ err, campaignId }, 'Background lead processing failed');
+    });
 
     return { added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length };
   }
@@ -107,143 +123,157 @@ export class CampaignService {
    * Process leads in a campaign (all pending leads or a specific subset).
    */
   private async processCampaign(campaignId: string, specificLeadIds?: string[]) {
-    // Fetch all active drafts for this campaign
-    let drafts = await prisma.draft.findMany({
-      where: {
-        campaignId,
-        isActive: true,
-        useCase: 'initial',
-      },
-    });
-
-    // If no drafts exist, generate a batch of 5 on the fly
-    if (drafts.length === 0) {
-      logger.info({ campaignId }, 'No drafts found, generating 5 new drafts');
-      await draftService.generateMultipleDrafts(
-        5,
-        'professional',
-        'initial',
-        campaignId,
-        (await prisma.campaign.findUnique({ where: { id: campaignId } }))?.context || undefined,
-        (await prisma.campaign.findUnique({ where: { id: campaignId } }))?.reference || undefined
-      );
-      drafts = await prisma.draft.findMany({
+    try {
+      // Fetch all active drafts for this campaign
+      let drafts = await prisma.draft.findMany({
         where: {
           campaignId,
           isActive: true,
           useCase: 'initial',
         },
       });
-    }
 
-    if (drafts.length === 0) {
-      logger.error({ campaignId }, 'Failed to generate drafts');
-      return;
-    }
-
-    logger.info({ campaignId, draftCount: drafts.length }, 'Drafts available for campaign');
-    logger.debug('Available draft IDs:', drafts.map(d => d.id).join(', '));
-
-    // Determine which leads to process
-    const whereClause: any = { campaignId };
-    if (specificLeadIds) {
-      whereClause.id = { in: specificLeadIds };
-    } else {
-      whereClause.outreachStatus = { in: ['PENDING', 'PROCESSING'] };
-    }
-
-    const leads = await prisma.lead.findMany({ where: whereClause });
-
-    if (leads.length === 0) return;
-
-    for (const lead of leads) {
-      try {
-        // Pick a random draft for this lead
-        const randomIndex = Math.floor(Math.random() * drafts.length);
-        const draft = drafts[randomIndex];
-
-        // 🔥 LOGGING ADDED – confirm draft selection
-        logger.info({
-          leadId: lead.id,
-          selectedDraftId: draft.id,
-          draftIndex: randomIndex,
-          totalDrafts: drafts.length,
-        }, 'Random draft selected for lead');
-
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: { outreachStatus: 'PROCESSING' as OutreachStatus },
-        });
-
+      if (drafts.length === 0) {
+        logger.info({ campaignId }, 'No drafts found, generating 5 new drafts');
         const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
-
-        const { subject, body } = personalisationService.personalise(
-          lead as any,
-          draft.subject,
-          draft.body,
-          campaign?.reference
+        await draftService.generateMultipleDrafts(
+          5,
+          'professional',
+          'initial',
+          campaignId,
+          campaign?.context || undefined,
+          campaign?.reference || undefined,
+          undefined,
+          campaign?.senderName || undefined
         );
+        drafts = await prisma.draft.findMany({
+          where: {
+            campaignId,
+            isActive: true,
+            useCase: 'initial',
+          },
+        });
+      }
 
-        const result = await emailService.sendEmail(
-          lead.email,
-          subject,
-          body.replace(/\n/g, '<br>'),
-          body
-        );
+      if (drafts.length === 0) {
+        logger.error({ campaignId }, 'Failed to generate drafts');
+        return;
+      }
 
-        await prisma.outboundEmail.create({
-          data: {
+      logger.info({ campaignId, draftCount: drafts.length }, 'Drafts available for campaign');
+
+      // Determine which leads to process
+      const whereClause: any = { campaignId };
+      if (specificLeadIds) {
+        whereClause.id = { in: specificLeadIds };
+      } else {
+        whereClause.outreachStatus = { in: ['PENDING', 'PROCESSING'] };
+      }
+
+      const leads = await prisma.lead.findMany({ where: whereClause });
+      const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+
+      if (leads.length === 0) return;
+
+      for (const lead of leads) {
+        try {
+          const randomIndex = Math.floor(Math.random() * drafts.length);
+          const draft = drafts[randomIndex];
+
+          logger.info({
+            leadId: lead.id,
+            selectedDraftId: draft.id,
+            draftIndex: randomIndex,
+            totalDrafts: drafts.length,
+          }, 'Random draft selected for lead');
+
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { outreachStatus: 'PROCESSING' as OutreachStatus },
+          });
+
+          const { subject, body } = personalisationService.personalise(
+            lead as any,
+            draft.subject,
+            draft.body,
+            campaign?.reference,
+            campaign?.senderName
+          );
+
+          const result = await emailService.sendEmail(
+            lead.email,
+            subject,
+            body.replace(/\n/g, '<br>'),
+            body,
+            campaign?.senderName
+          );
+
+          const finalOutreachStatus = result.success ? 'SENT' : 'FAILED';
+          const finalLeadStatus = result.success ? 'CONTACTED' : 'NEW';
+
+          await prisma.outboundEmail.create({
+            data: {
+              leadId: lead.id,
+              campaignId,
+              draftId: draft.id,
+              subject,
+              body,
+              status: finalOutreachStatus,
+              error: result.error,
+              messageId: result.messageId,
+            },
+          });
+
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: {
+              outreachStatus: finalOutreachStatus as OutreachStatus,
+              status: finalLeadStatus,
+            },
+          });
+
+          if (result.success) {
+            await prisma.draft.update({
+              where: { id: draft.id },
+              data: { sentCount: { increment: 1 } },
+            });
+          }
+
+          logger.info({
             leadId: lead.id,
             campaignId,
-            draftId: draft.id,
-            subject,
-            body,
-            status: result.success ? 'SENT' : 'FAILED',
+            success: result.success,
             error: result.error,
-          },
-        });
-
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: {
-            outreachStatus: result.success ? ('SENT' as OutreachStatus) : ('FAILED' as OutreachStatus),
-            status: result.success ? 'CONTACTED' : 'NEW',
-          },
-        });
-
-        await prisma.draft.update({
-          where: { id: draft.id },
-          data: { sentCount: { increment: 1 } },
-        });
-
-        logger.info({ leadId: lead.id, campaignId, success: result.success }, 'Lead processed');
-      } catch (error) {
-        logger.error({ error, leadId: lead.id, campaignId }, 'Failed to process lead');
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: { outreachStatus: 'FAILED' as OutreachStatus },
-        });
+          }, 'Lead processed');
+        } catch (error: any) {
+          logger.error({ error, leadId: lead.id, campaignId }, 'Unexpected error processing lead');
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { outreachStatus: 'FAILED' as OutreachStatus },
+          });
+        }
       }
-    }
 
-    // Check if all leads are processed (only if not a subset)
-    if (!specificLeadIds) {
-      const remaining = await prisma.lead.count({
-        where: {
-          campaignId,
-          outreachStatus: { in: ['PENDING', 'PROCESSING'] },
-        },
-      });
-
-      if (remaining === 0) {
-        await prisma.campaign.update({
-          where: { id: campaignId },
-          data: {
-            status: 'COMPLETED',
-            completedAt: new Date(),
+      if (!specificLeadIds) {
+        const remaining = await prisma.lead.count({
+          where: {
+            campaignId,
+            outreachStatus: { in: ['PENDING', 'PROCESSING'] },
           },
         });
+
+        if (remaining === 0) {
+          await prisma.campaign.update({
+            where: { id: campaignId },
+            data: {
+              status: 'COMPLETED',
+              completedAt: new Date(),
+            },
+          });
+        }
       }
+    } catch (error) {
+      logger.error({ error, campaignId }, 'Fatal error in processCampaign');
     }
   }
 

@@ -16,7 +16,6 @@ export const Home: React.FC = () => {
   const [dbStatus, setDbStatus] = useState<any>(null);
   const [checkingDb, setCheckingDb] = useState(false);
 
-  // Campaign modal state
   const [showCampaignModal, setShowCampaignModal] = useState(false);
   const [availableCampaigns, setAvailableCampaigns] = useState<any[]>([]);
 
@@ -24,7 +23,6 @@ export const Home: React.FC = () => {
     setUploadHistory(prev => [summary, ...prev].slice(0, 5));
     setLastUploadLeadIds(leadIds);
 
-    // Fetch first 10 leads for preview
     const previewIds = leadIds.slice(0, 10);
     if (previewIds.length > 0) {
       const leads = await Promise.all(previewIds.map(id => leadAPI.get(id)));
@@ -70,14 +68,15 @@ export const Home: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Lead Upload</h1>
-        <div className="flex space-x-3">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-20">
+      {/* Header section */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Lead Upload</h1>
+        <div className="flex flex-wrap gap-3 w-full sm:w-auto">
           <button
             onClick={checkDatabase}
             disabled={checkingDb}
-            className="px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 flex items-center"
+            className="px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 flex items-center justify-center flex-1 sm:flex-none"
           >
             {checkingDb ? (
               <>
@@ -92,7 +91,7 @@ export const Home: React.FC = () => {
             <button
               onClick={openCampaignModal}
               disabled={isStartingCampaign}
-              className="px-6 py-2 bg-green-600 text-white font-medium rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 flex items-center"
+              className="px-6 py-2 bg-green-600 text-white font-medium rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 flex items-center justify-center flex-1 sm:flex-none"
             >
               {isStartingCampaign ? (
                 <>
@@ -107,7 +106,7 @@ export const Home: React.FC = () => {
         </div>
       </div>
 
-      {/* Database Status Display */}
+      {/* Database status */}
       {dbStatus && (
         <div className={`mb-6 p-4 rounded-md ${
           dbStatus.error 
@@ -128,11 +127,11 @@ export const Home: React.FC = () => {
                 </svg>
               )}
             </div>
-            <div className="ml-3 flex-1">
-              <h3 className="text-sm font-medium">
+            <div className="ml-3 flex-1 text-sm">
+              <h3 className="font-medium">
                 {dbStatus.error ? 'Database Connection Failed' : 'Database Healthy'}
               </h3>
-              <div className="mt-1 text-sm whitespace-pre-wrap">
+              <div className="mt-1 whitespace-pre-wrap">
                 {dbStatus.error ? (
                   <>
                     <p>{dbStatus.error}</p>
@@ -156,6 +155,7 @@ export const Home: React.FC = () => {
 
       <UploadArea onUploadComplete={handleUploadComplete} />
 
+      {/* Recent uploads */}
       {uploadHistory.length > 0 && (
         <div className="mt-8">
           <h2 className="text-lg font-medium text-gray-900 mb-4">Recent Uploads</h2>
@@ -167,12 +167,15 @@ export const Home: React.FC = () => {
         </div>
       )}
 
+      {/* Preview table */}
       {previewLeads.length > 0 && (
-        <div className="mt-8 bg-white shadow rounded-lg p-6">
+        <div className="mt-8 bg-white shadow rounded-lg p-4 sm:p-6">
           <h2 className="text-lg font-medium text-gray-900 mb-4">
             Preview – Latest Upload (first 10 leads)
           </h2>
-          <UploadPreviewTable leads={previewLeads} />
+          <div className="overflow-x-auto">
+            <UploadPreviewTable leads={previewLeads} />
+          </div>
         </div>
       )}
 

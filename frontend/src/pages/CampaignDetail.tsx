@@ -41,7 +41,11 @@ export const CampaignDetail: React.FC = () => {
       setCampaign(res.data);
     } catch (err: any) {
       console.error('Failed to fetch campaign', err);
-      setError(err.response?.data?.error || 'Failed to load campaign');
+      if (err.response?.status === 404) {
+        setError('Campaign not found.');
+      } else {
+        setError(err.response?.data?.error || err.message || 'Failed to load campaign');
+      }
     } finally {
       setLoading(false);
     }
@@ -108,7 +112,10 @@ export const CampaignDetail: React.FC = () => {
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-        <div className="text-center py-12">Loading campaign details...</div>
+        <div className="text-center py-12">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <p className="mt-2 text-gray-600">Loading campaign details...</p>
+        </div>
       </div>
     );
   }
@@ -117,8 +124,9 @@ export const CampaignDetail: React.FC = () => {
     return (
       <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-          <p>{error || 'Campaign not found.'}</p>
-          <Link to="/campaigns" className="text-blue-600 hover:text-blue-800 mt-2 inline-block">
+          <p className="font-bold">Error loading campaign</p>
+          <p className="text-sm">{error || 'Campaign not found.'}</p>
+          <Link to="/campaigns" className="mt-2 inline-block text-blue-600 hover:text-blue-800">
             ← Back to Campaigns
           </Link>
         </div>
@@ -265,6 +273,15 @@ export const CampaignDetail: React.FC = () => {
           </div>
         )}
 
+        {/* Sender Name Display */}
+        {campaign.senderName && (
+          <div className="mt-2 flex items-center">
+            <span className="text-sm text-gray-600 mr-2">Sender:</span>
+            <span className="text-sm font-medium">{campaign.senderName}</span>
+            {/* Optionally add an edit button later */}
+          </div>
+        )}
+
         {/* Stats */}
         <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div className="bg-gray-50 p-4 rounded-lg">
@@ -379,7 +396,7 @@ export const CampaignDetail: React.FC = () => {
                         <span>Replies: {draft.replyCount || 0}</span>
                       </div>
                     </div>
-                    {/* Action buttons */}
+                    {/* Draft action buttons */}
                     <div className="mt-2 flex justify-end space-x-2">
                       <button
                         onClick={() => {

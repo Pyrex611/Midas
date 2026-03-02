@@ -1,15 +1,20 @@
 import prisma from '../lib/prisma';
 import { aiService } from './ai.service';
 import { logger } from '../config/logger';
+import { env } from '../config/env';
 
 export class DraftService {
+  /**
+   * Generate a single draft. Returns null on failure.
+   */
   async generateAndSaveDraft(
     tone: string = 'professional',
     useCase: string = 'initial',
     campaignId?: string,
     campaignContext?: string,
     reference?: string,
-    companyContext?: string
+    companyContext?: string,
+    senderName?: string
   ) {
     try {
       const { subject, body } = await aiService.generateDraft(
@@ -17,7 +22,9 @@ export class DraftService {
         useCase,
         campaignContext,
         reference,
-        companyContext
+        companyContext,
+        undefined,
+        undefined
       );
 
       const draft = await prisma.draft.create({
@@ -35,11 +42,14 @@ export class DraftService {
       logger.info({ draftId: draft.id, campaignId }, 'New draft generated and saved');
       return draft;
     } catch (error) {
-      logger.error({ error }, 'Failed to generate draft');
-      throw error;
+      logger.error({ error, tone, useCase, campaignId }, 'Failed to generate draft');
+      return null; // Return null instead of throwing
     }
   }
 
+  /**
+   * Generate multiple drafts, skipping any that fail.
+   */
   async generateMultipleDrafts(
     count: number,
     tone: string = 'professional',
@@ -47,10 +57,12 @@ export class DraftService {
     campaignId?: string,
     campaignContext?: string,
     reference?: string,
-    companyContext?: string
+    companyContext?: string,
+    senderName?: string
   ) {
     const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
     const drafts = [];
+    const delayMs = env.AI_REQUEST_DELAY_MS;
 
     for (let i = 0; i < count; i++) {
       const variedTone = tones[i % tones.length];
@@ -64,12 +76,21 @@ export class DraftService {
         campaignId,
         variedContext,
         reference,
-        companyContext
+        companyContext,
+        senderName
       );
-      drafts.push(draft);
+      if (draft) {
+        drafts.push(draft);
+      } else {
+        logger.warn({ campaignId, index: i }, 'Skipping failed draft');
+      }
+
+      if (i < count - 1) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
     }
 
-    logger.info({ campaignId, count }, 'Generated multiple drafts');
+    logger.info({ campaignId, generated: drafts.length, requested: count }, 'Generated multiple drafts');
     return drafts;
   }
 
@@ -120,7 +141,6 @@ export class DraftService {
     });
   }
 
-  // ✅ NEW: Update draft
   async updateDraft(id: string, data: { subject?: string; body?: string; tone?: string }) {
     return prisma.draft.update({
       where: { id },
@@ -128,13 +148,10 @@ export class DraftService {
     });
   }
 
-  // ✅ NEW: Delete draft (soft delete by setting isActive false, or hard delete)
   async deleteDraft(id: string) {
-    // Hard delete (can also soft delete by setting isActive: false)
     return prisma.draft.delete({ where: { id } });
   }
 
-  // ✅ NEW: Create a custom draft (user-provided subject/body)
   async createCustomDraft(
     subject: string,
     body: string,
@@ -151,6 +168,42 @@ export class DraftService {
         isActive: true,
         campaignId,
       },
+    });
+  }
+
+  async getReplyDraft(leadId: string, campaignId: string) {
+    return prisma.draft.findFirst({
+      where: {
+        leadId,
+        campaignId,
+        isReplyDraft: true,
+        isActive: true,
+      },
+    });
+  }
+
+  async createReplyDraft(leadId: string, campaignId: string, subject: string, body: string, tone: string = 'professional') {
+    await prisma.draft.deleteMany({
+      where: { leadId, campaignId, isReplyDraft: true },
+    });
+    return prisma.draft.create({
+      data: {
+        subject,
+        body,
+        tone,
+        useCase: 'reply',
+        version: 1,
+        isActive: true,
+        campaignId,
+        leadId,
+        isReplyDraft: true,
+      },
+    });
+  }
+
+  async deleteReplyDraft(leadId: string, campaignId: string) {
+    return prisma.draft.deleteMany({
+      where: { leadId, campaignId, isReplyDraft: true },
     });
   }
 }

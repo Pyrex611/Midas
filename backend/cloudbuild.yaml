@@ -1,0 +1,39 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/backend:${SHORT_SHA}', '.']
+    dir: 'backend'
+
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/backend:${SHORT_SHA}']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'lead-backend'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/backend:${SHORT_SHA}'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=3000'
+      - '--memory=1Gi'
+      - '--cpu=2'
+      - '--cpu-boost'  # Enable startup CPU boost
+      - '--set-secrets=DB_PASSWORD=db-password:latest,OPENAI_API_KEY=openai-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,OPENROUTER_API_KEY=openrouter-api-key:latest,SMTP_PASS=smtp-password:latest'
+      - '--set-env-vars=^++^NODE_ENV=production,DATABASE_URL=postgresql://lead_user:${_DB_PASSWORD}@//cloudsql/${PROJECT_ID}:${_REGION}:lead-db/lead_management?host=/cloudsql/${PROJECT_ID}:${_REGION}:lead-db,EMAIL_SERVICE=smtp,SMTP_HOST=smtp.gmail.com,SMTP_PORT=587,SMTP_USER=${_SMTP_USER},EMAIL_FROM="${_EMAIL_FROM}",AI_PROVIDER=openrouter,OPENROUTER_MODEL=deepseek/deepseek-r1-0528:free,IMAP_HOST=imap.gmail.com,IMAP_PORT=993,IMAP_USER=${_IMAP_USER},IMAP_TLS=true,IMAP_MAILBOX=INBOX,IMAP_POLL_INTERVAL=300000,IMAP_CONN_TIMEOUT=30000'
+      - '--add-cloudsql-instances=${PROJECT_ID}:${_REGION}:lead-db'
+      - '--concurrency=80'
+      - '--max-instances=10'
+    dir: 'backend'
+substitutions:
+  _REGION: us-central1
+  _DB_PASSWORD: $(gcloud secrets versions access latest --secret=db-password)  # not directly; we use secret references above
+  _SMTP_USER: your-email@gmail.com
+  _EMAIL_FROM: "Your Name <your-email@gmail.com>"
+  _IMAP_USER: your-email@gmail.com
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lead-repo/backend:${SHORT_SHA}'

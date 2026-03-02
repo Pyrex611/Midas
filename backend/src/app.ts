@@ -7,6 +7,7 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import campaignRoutes from './routes/campaign.routes';
 import diagnosticRoutes from './routes/diagnostic.routes';
+import imapRoutes from './routes/imap.routes';
 
 const app = express();
 
@@ -22,6 +23,8 @@ app.use('/api/leads', leadRoutes);
 
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/diagnostics', diagnosticRoutes);
+
+app.use('/api/imap', imapRoutes);
 
 // Global error handler – must be last
 app.use(errorHandler);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { campaignAPI } from '../services/api';
 import { CreateCampaignModal } from './CreateCampaignModal';
 
@@ -8,7 +8,7 @@ interface Props {
   leadIds: string[];
   availableCampaigns: any[];
   onSuccess: (campaignId: string) => void;
-  onRefresh?: () => void; // Optional callback to refresh parent list
+  onRefresh?: () => void;
 }
 
 export const AddToCampaignModal: React.FC<Props> = ({
@@ -25,7 +25,7 @@ export const AddToCampaignModal: React.FC<Props> = ({
   const [localCampaigns, setLocalCampaigns] = useState(availableCampaigns);
 
   // Sync with prop when it changes
-  React.useEffect(() => {
+  useEffect(() => {
     setLocalCampaigns(availableCampaigns);
   }, [availableCampaigns]);
 
@@ -35,7 +35,7 @@ export const AddToCampaignModal: React.FC<Props> = ({
     try {
       await campaignAPI.addLeads(selectedCampaignId, leadIds);
       onSuccess(selectedCampaignId);
-      onClose();
+      onClose(); // close modal after success
     } catch (error) {
       console.error('Failed to add leads to campaign', error);
       alert('Could not add leads to campaign');
@@ -56,9 +56,12 @@ export const AddToCampaignModal: React.FC<Props> = ({
 
   const handleCreateSuccess = async () => {
     setShowCreateModal(false);
-    await refreshCampaigns(); // ✅ Refresh dropdown with new campaign
-    // Optionally auto-select the newly created campaign?
-    // For now, just refresh; user can select manually.
+    await refreshCampaigns();
+    // Optionally, you could auto‑select the newly created campaign here,
+    // but for now we just refresh the list and leave selection to the user.
+    // The modal stays open so user can now select the new campaign.
+    // If you want it to close after creation, uncomment the next line:
+    onClose();
   };
 
   if (!isOpen) return null;
@@ -67,7 +70,19 @@ export const AddToCampaignModal: React.FC<Props> = ({
     <>
       <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
         <div className="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Add to Outreach Campaign</h3>
+          {/* Header with title and close button */}
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-medium text-gray-900">Add to Outreach Campaign</h3>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
           <p className="text-sm text-gray-600 mb-4">
             {leadIds.length} lead(s) selected. Choose a campaign or create a new one.
           </p>

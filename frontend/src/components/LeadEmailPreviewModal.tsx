@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { campaignAPI } from '../services/api';
+import { campaignAPI, imapAPI } from '../services/api';
 
 interface Props {
   isOpen: boolean;
@@ -22,11 +22,17 @@ interface Draft {
   useCase: string;
 }
 
-interface SentEmail {
+interface EmailMessage {
   id: string;
   subject: string;
   body: string;
   sentAt: string;
+  isIncoming: boolean;
+  fromAddress?: string;
+  toAddress?: string;
+  status: string;
+  isDraft?: boolean;
+  analysis?: any;
 }
 
 export const LeadEmailPreviewModal: React.FC<Props> = ({
@@ -39,48 +45,77 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [currentDraftIndex, setCurrentDraftIndex] = useState(0);
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
-  const [sentEmail, setSentEmail] = useState<SentEmail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadingSent, setLoadingSent] = useState(false);
+  const [thread, setThread] = useState<EmailMessage[]>([]);
+  const [replyDraft, setReplyDraft] = useState<EmailMessage | null>(null);
+  const [loadingDrafts, setLoadingDrafts] = useState(false);
+  const [loadingThread, setLoadingThread] = useState(false);
+  const [generatingReply, setGeneratingReply] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [editingReply, setEditingReply] = useState(false);
+  const [editedSubject, setEditedSubject] = useState('');
+  const [editedBody, setEditedBody] = useState('');
 
-  const isAlreadySent = lead?.outreachStatus === 'SENT';
+  // Determine if any email has been successfully sent to this lead
+  const sentEmail = thread.find(msg => !msg.isIncoming && msg.status === 'SENT');
+  const hasSentEmail = !!sentEmail;
 
-  // Fetch all drafts for this campaign
+  // Find the most recent incoming reply (for analysis and reply drafting)
+  const latestReply = thread.filter(msg => msg.isIncoming).sort((a, b) =>
+    new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()
+  )[0];
+
+  // Fetch drafts and thread
   useEffect(() => {
     if (isOpen && lead) {
-      setLoading(true);
+      setLoadingDrafts(true);
       setError(null);
       campaignAPI.getDrafts(campaignId)
         .then(res => setDrafts(res.data))
         .catch(err => setError('Failed to load drafts'))
-        .finally(() => setLoading(false));
+        .finally(() => setLoadingDrafts(false));
     }
   }, [isOpen, campaignId, lead]);
 
-  // Fetch sent email if already sent
-  useEffect(() => {
-    if (isOpen && lead && isAlreadySent) {
-      setLoadingSent(true);
-      campaignAPI.getSentEmail(campaignId, lead.id)
-        .then(res => setSentEmail(res.data))
-        .catch(err => console.error('Failed to fetch sent email', err))
-        .finally(() => setLoadingSent(false));
-    } else {
-      setSentEmail(null);
+  const loadThread = async () => {
+    if (!isOpen || !lead) return;
+    setLoadingThread(true);
+    try {
+      const [threadRes, draftRes] = await Promise.all([
+        campaignAPI.getLeadThread(campaignId, lead.id),
+        campaignAPI.getReplyDraft(campaignId, lead.id).catch(() => null)
+      ]);
+      setThread(threadRes.data);
+      if (draftRes && draftRes.data) {
+        setReplyDraft(draftRes.data);
+        setEditedSubject(draftRes.data.subject);
+        setEditedBody(draftRes.data.body);
+      } else {
+        setReplyDraft(null);
+      }
+    } catch (err) {
+      setError('Failed to load conversation');
+    } finally {
+      setLoadingThread(false);
     }
-  }, [isOpen, campaignId, lead, isAlreadySent]);
+  };
 
-  // Fetch preview for current draft index (only if not already sent? No, still allow preview)
   useEffect(() => {
-    if (drafts.length > 0 && lead) {
+    if (isOpen && lead) {
+      loadThread();
+    }
+  }, [isOpen, campaignId, lead]);
+
+  // Fetch preview for current draft index (only if needed)
+  useEffect(() => {
+    if (drafts.length > 0 && lead && !hasSentEmail) {
       const draftId = drafts[currentDraftIndex].id;
       campaignAPI.previewLeadWithDraft(campaignId, lead.id, draftId)
         .then(res => setPreview(res.data))
         .catch(err => setError('Failed to load preview'));
     }
-  }, [drafts, currentDraftIndex, campaignId, lead]);
+  }, [drafts, currentDraftIndex, campaignId, lead, hasSentEmail]);
 
   const handlePrev = () => {
     setCurrentDraftIndex(prev => (prev > 0 ? prev - 1 : drafts.length - 1));
@@ -97,7 +132,7 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
     try {
       await campaignAPI.sendLeadEmail(campaignId, lead.id);
       if (onSendSuccess) onSendSuccess();
-      onClose();
+      await loadThread(); // refresh thread after send
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to send email');
     } finally {
@@ -105,145 +140,400 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
     }
   };
 
+  const handleGenerateReply = async () => {
+    if (!lead || !latestReply) return;
+    setGeneratingReply(true);
+    setError(null);
+    try {
+      const res = await campaignAPI.generateReplyDraft(campaignId, lead.id);
+      setReplyDraft(res.data);
+      setEditedSubject(res.data.subject);
+      setEditedBody(res.data.body);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to generate reply draft');
+    } finally {
+      setGeneratingReply(false);
+    }
+  };
+
+  const handleEditReply = () => {
+    if (replyDraft) {
+      setEditedSubject(replyDraft.subject);
+      setEditedBody(replyDraft.body);
+      setEditingReply(true);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingReply(false);
+    if (replyDraft) {
+      setEditedSubject(replyDraft.subject);
+      setEditedBody(replyDraft.body);
+    }
+  };
+
+  const handleSaveEdit = () => {
+    if (replyDraft) {
+      setReplyDraft({
+        ...replyDraft,
+        subject: editedSubject,
+        body: editedBody,
+      });
+      setEditingReply(false);
+    }
+  };
+
+  const handleSendReply = async () => {
+    if (!replyDraft || !lead) return;
+    setSending(true);
+    setError(null);
+    try {
+      await campaignAPI.sendReplyDraft(campaignId, lead.id, {
+        subject: replyDraft.subject,
+        body: replyDraft.body,
+      });
+      await loadThread();
+      setReplyDraft(null);
+      if (onSendSuccess) onSendSuccess();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to send reply');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      await imapAPI.poll();
+      setTimeout(async () => {
+        await loadThread();
+        setRefreshing(false);
+      }, 3000);
+    } catch (err: any) {
+      setError('Failed to trigger IMAP poll');
+      setRefreshing(false);
+    }
+  };
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleString();
+  };
+
+  const getSentimentBadge = (sentiment: string) => {
+    const colors: Record<string, string> = {
+      'very positive': 'bg-green-600 text-white',
+      'positive': 'bg-green-400 text-white',
+      'neutral': 'bg-yellow-400 text-white',
+      'negative': 'bg-red-400 text-white',
+      'very negative': 'bg-red-600 text-white',
+    };
+    return (
+      <span className={`px-2 py-1 text-xs font-medium rounded-full ${colors[sentiment] || 'bg-gray-400 text-white'}`}>
+        {sentiment}
+      </span>
+    );
+  };
+
   if (!isOpen || !lead) return null;
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-      <div className="relative top-20 mx-auto p-5 border w-full max-w-3xl shadow-lg rounded-md bg-white">
+      <div className="relative top-20 mx-auto p-5 border w-full max-w-3xl shadow-lg rounded-md bg-white max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex justify-between items-center mb-4 sticky top-0 bg-white z-10 pb-2 border-b">
           <h3 className="text-lg font-medium text-gray-900">
-            Email Preview – {lead.name}
+            {lead.name} – Conversation
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {loading && (
-          <div className="flex justify-center items-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <span className="ml-3 text-gray-600">Loading drafts...</span>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-50"
+              title="Check for new replies"
+            >
+              <svg className="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-        )}
+        </div>
 
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">{error}</div>
         )}
 
-        {drafts.length > 0 && preview && (
-          <div className="space-y-4">
-            {/* To / Subject / Body */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
-              <div className="bg-gray-50 p-2 rounded text-sm">{lead.email}</div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Subject:</label>
-              <div className="bg-gray-50 p-2 rounded text-sm font-medium">{preview.subject}</div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Body:</label>
-              <div className="bg-gray-50 p-4 rounded text-sm whitespace-pre-wrap font-mono">
-                {preview.body}
-              </div>
-            </div>
-
-            {/* Draft selector */}
-            <div className="flex items-center justify-between bg-gray-50 p-3 rounded">
-              <button
-                onClick={handlePrev}
-                className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
-                disabled={drafts.length <= 1}
+        {/* Conversation Thread */}
+        {loadingThread ? (
+          <div className="flex items-center text-gray-500">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+            Loading conversation...
+          </div>
+        ) : (
+          <div className="space-y-4 mb-6">
+            {thread.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${msg.isIncoming ? 'justify-start' : 'justify-end'}`}
               >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-              <span className="text-sm font-medium">
-                Draft {currentDraftIndex + 1} of {drafts.length} ({drafts[currentDraftIndex].tone} tone)
-              </span>
-              <button
-                onClick={handleNext}
-                className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
-                disabled={drafts.length <= 1}
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Lead Interactions section */}
-            <div className="border-t pt-4">
-              <h4 className="text-md font-medium text-gray-800 mb-2">Lead Interactions</h4>
-              <div className="bg-gray-50 p-4 rounded text-sm text-gray-600">
-                {loadingSent ? (
-                  <div className="flex items-center">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                    Loading sent email...
+                <div
+                  className={`max-w-[80%] p-3 rounded-lg ${
+                    msg.isIncoming
+                      ? 'bg-white border border-gray-200'
+                      : 'bg-blue-50 border border-blue-200'
+                  }`}
+                >
+                  <div className="flex justify-between items-start text-xs text-gray-500 mb-1">
+                    <span>{msg.isIncoming ? msg.fromAddress || 'Lead' : 'You'}</span>
+                    <span>{formatDate(msg.sentAt)}</span>
                   </div>
-                ) : isAlreadySent && sentEmail ? (
-                  <div>
-                    <p className="font-medium text-green-700 mb-2">📧 Outreach Email Sent</p>
-                    <p><span className="font-medium">Subject:</span> {sentEmail.subject}</p>
-                    <p className="mt-2 whitespace-pre-wrap font-mono text-xs">{sentEmail.body}</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Sent at {new Date(sentEmail.sentAt).toLocaleString()}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="italic">
-                    {isAlreadySent
-                      ? 'No sent email record found (unexpected).'
-                      : '⏳ No interactions yet. After sending, replies and history will be displayed here.'}
-                  </p>
-                )}
+                  <div className="text-sm font-medium">{msg.subject}</div>
+                  <div className="mt-1 text-sm whitespace-pre-wrap">{msg.body}</div>
+                </div>
               </div>
-            </div>
+            ))}
 
-            {/* Send button */}
-            <div className="flex items-center justify-between pt-4 border-t">
-              <div className="text-xs text-gray-500">
-                {isAlreadySent ? (
-                  <span className="text-green-600 font-medium">✓ Outreach Already Sent</span>
-                ) : (
-                  <span>This email has not been sent yet.</span>
-                )}
+            {/* Generate Reply Button (if no reply draft and there is a latest reply) */}
+            {!replyDraft && latestReply && (
+              <div className="flex justify-center mt-4">
+                <button
+                  onClick={handleGenerateReply}
+                  disabled={generatingReply}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {generatingReply ? 'Generating...' : 'Generate Reply'}
+                </button>
               </div>
-              <button
-                onClick={handleSend}
-                disabled={sending || isAlreadySent}
-                className={`px-6 py-2 rounded-md text-white font-medium flex items-center ${
-                  sending || isAlreadySent
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-green-600 hover:bg-green-700'
-                }`}
-              >
-                {sending ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Sending...
-                  </>
-                ) : isAlreadySent ? (
-                  '✓ Already Sent'
-                ) : (
-                  <>
-                    <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                    Send Email
-                  </>
-                )}
-              </button>
+            )}
+
+            {/* Reply draft if exists */}
+            {replyDraft && !editingReply && (
+              <div className="flex justify-end">
+                <div className="max-w-[80%] bg-blue-100 border border-blue-300 p-3 rounded-lg">
+                  <div className="flex justify-between items-start text-xs text-gray-600 mb-1">
+                    <span>You (draft)</span>
+                    <span>{formatDate(replyDraft.sentAt)}</span>
+                  </div>
+                  <div className="text-sm font-medium">{replyDraft.subject}</div>
+                  <div className="mt-1 text-sm whitespace-pre-wrap">{replyDraft.body}</div>
+                  <div className="mt-3 flex justify-end space-x-2">
+                    <button
+                      onClick={handleEditReply}
+                      className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={handleSendReply}
+                      disabled={sending}
+                      className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {sending ? 'Sending...' : 'Send'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {editingReply && replyDraft && (
+              <div className="flex justify-end">
+                <div className="max-w-[80%] bg-blue-50 border border-blue-200 p-3 rounded-lg w-full">
+                  <div className="mb-2">
+                    <label className="block text-xs text-gray-600 mb-1">Subject</label>
+                    <input
+                      type="text"
+                      value={editedSubject}
+                      onChange={(e) => setEditedSubject(e.target.value)}
+                      className="w-full px-2 py-1 border rounded text-sm"
+                    />
+                  </div>
+                  <div className="mb-2">
+                    <label className="block text-xs text-gray-600 mb-1">Body</label>
+                    <textarea
+                      value={editedBody}
+                      onChange={(e) => setEditedBody(e.target.value)}
+                      rows={6}
+                      className="w-full px-2 py-1 border rounded text-sm font-mono"
+                    />
+                  </div>
+                  <div className="flex justify-end space-x-2">
+                    <button
+                      onClick={handleCancelEdit}
+                      className="px-3 py-1 bg-gray-300 text-gray-800 text-sm rounded hover:bg-gray-400"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveEdit}
+                      className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Analysis Card (if latest reply exists) */}
+        {latestReply && latestReply.analysis && (
+          <div className="border-t pt-4">
+            <h4 className="text-md font-medium text-gray-800 mb-3">Reply Analysis</h4>
+            <div className="bg-gray-50 p-4 rounded-lg space-y-3">
+              <div className="flex items-center">
+                <span className="text-sm font-medium text-gray-600 w-24">Sentiment:</span>
+                {getSentimentBadge(latestReply.analysis.sentiment)}
+              </div>
+
+              <div className="flex">
+                <span className="text-sm font-medium text-gray-600 w-24">Intent:</span>
+                <span className="text-sm text-gray-800">{latestReply.analysis.intent}</span>
+              </div>
+
+              {latestReply.analysis.interestLevel !== undefined && (
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-sm font-medium text-gray-600">Interest Level</span>
+                    <span className="text-xs text-gray-500">{latestReply.analysis.interestLevel}/10</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full"
+                      style={{ width: `${latestReply.analysis.interestLevel * 10}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {latestReply.analysis.painPoints && latestReply.analysis.painPoints.length > 0 && (
+                <div>
+                  <span className="text-sm font-medium text-gray-600 block mb-1">Pain Points</span>
+                  <ul className="list-disc list-inside text-sm text-gray-800">
+                    {latestReply.analysis.painPoints.map((point: string, idx: number) => (
+                      <li key={idx}>{point}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {latestReply.analysis.objections && latestReply.analysis.objections.length > 0 && (
+                <div>
+                  <span className="text-sm font-medium text-gray-600 block mb-1">Objections</span>
+                  <ul className="list-disc list-inside text-sm text-gray-800">
+                    {latestReply.analysis.objections.map((obj: string, idx: number) => (
+                      <li key={idx}>{obj}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {latestReply.analysis.buyingSignals && latestReply.analysis.buyingSignals.length > 0 && (
+                <div>
+                  <span className="text-sm font-medium text-gray-600 block mb-1">Buying Signals</span>
+                  <ul className="list-disc list-inside text-sm text-gray-800">
+                    {latestReply.analysis.buyingSignals.map((signal: string, idx: number) => (
+                      <li key={idx}>{signal}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {latestReply.analysis.suggestedApproach && (
+                <div className="bg-blue-50 p-2 rounded text-sm text-blue-800">
+                  <span className="font-medium">Suggested Approach:</span> {latestReply.analysis.suggestedApproach}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {!loading && drafts.length === 0 && (
-          <p className="text-center py-8 text-gray-500">No drafts available for this campaign.</p>
+        {/* Campaign Drafts Section – only show if no sent email */}
+        {!hasSentEmail && (
+          <div className="border-t pt-4 mt-4">
+            <h4 className="text-md font-medium text-gray-800 mb-3">Campaign Drafts</h4>
+            {loadingDrafts ? (
+              <div className="flex items-center text-gray-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                Loading drafts...
+              </div>
+            ) : drafts.length > 0 && preview ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
+                  <div className="bg-gray-50 p-2 rounded text-sm">{lead.email}</div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject:</label>
+                  <div className="bg-gray-50 p-2 rounded text-sm font-medium">{preview.subject}</div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Body:</label>
+                  <div className="bg-gray-50 p-4 rounded text-sm whitespace-pre-wrap font-mono">
+                    {preview.body}
+                  </div>
+                </div>
+
+                {/* Draft selector */}
+                <div className="flex items-center justify-between bg-gray-50 p-3 rounded">
+                  <button
+                    onClick={handlePrev}
+                    className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
+                    disabled={drafts.length <= 1}
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <span className="text-sm font-medium">
+                    Draft {currentDraftIndex + 1} of {drafts.length} ({drafts[currentDraftIndex].tone} tone)
+                  </span>
+                  <button
+                    onClick={handleNext}
+                    className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-30"
+                    disabled={drafts.length <= 1}
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Send button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSend}
+                    disabled={sending}
+                    className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
+                  >
+                    {sending ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Sending...
+                      </>
+                    ) : (
+                      'Send Email'
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-center py-4">No drafts available for this campaign.</p>
+            )}
+          </div>
+        )}
+
+        {/* If email already sent, show a message */}
+        {hasSentEmail && (
+          <div className="border-t pt-4 mt-4 text-center text-green-600">
+            <p>✅ Outreach email already sent. No further action needed.</p>
+          </div>
         )}
       </div>
     </div>
