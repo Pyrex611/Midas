@@ -229,7 +229,8 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
       subject,
       body.replace(/\n/g, '<br>'),
       body,
-      campaign.senderName
+      campaign.senderName,
+			userId
     );
     if (!result.success) throw new Error(result.error || 'Email sending failed');
 
@@ -394,7 +395,8 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       personalisedBody.replace(/\n/g, '<br>'),
       personalisedBody,
       campaign.senderName,
-      latestIncoming.messageId
+      latestIncoming.messageId,
+			userId
     );
     if (!result.success) throw new Error(result.error || 'Email sending failed');
 

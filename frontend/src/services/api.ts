@@ -44,6 +44,11 @@ export const userAPI = {
   updateProfile: (data: { name: string }) => api.put('/user/profile', data),
 };
 
+export const userSettingsAPI = {
+  get: () => api.get('/user/settings'),
+  update: (data: any) => api.put('/user/settings', data),
+};
+
 // ===== CAMPAIGN API =====
 export const campaignAPI = {
   create: (data: {

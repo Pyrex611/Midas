@@ -118,7 +118,8 @@ export class FollowUpService {
         body.replace(/\n/g, '<br>'),
         body,
         campaign.senderName,
-        lastOutbound.messageId
+        lastOutbound.messageId,
+				userId
       );
 
       if (!result.success) throw new Error(result.error || 'Email sending failed');

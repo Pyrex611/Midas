@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { userAPI } from '../services/api';
+import { UserSettings } from '../components/UserSettings';
 import { Link, useNavigate } from 'react-router-dom';
 
 interface CampaignStat {
@@ -143,8 +144,11 @@ export const Profile: React.FC = () => {
         </div>
       </div>
 
+      {/* UserSettings Component */}
+      <UserSettings />
+
       {/* Campaigns Summary */}
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">Your Campaigns</h2>
+      <h2 className="text-2xl font-bold text-gray-900 mb-4 mt-8">Your Campaigns</h2>
       {campaigns.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-12 text-center">
           <p className="text-gray-500">No campaigns yet.</p>

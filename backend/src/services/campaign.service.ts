@@ -22,8 +22,7 @@ export class CampaignService {
     followUpEnabled?: boolean,
     followUpDelay?: number
   ) {
-    console.log('[CampaignService] Received userId:', userId, 'type:', typeof userId);
-    // 🔍 Validate userId format (UUID)
+    // Validate userId format (UUID)
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) {
       throw new Error(`Invalid userId format: ${userId}. Expected a UUID.`);
@@ -44,11 +43,20 @@ export class CampaignService {
           startedAt: leadIds?.length ? new Date() : null,
           followUpEnabled: followUpEnabled ?? false,
           followUpDelay: followUpDelay ?? 24,
+          // Connect leads if provided (they already exist)
           ...(leadIds?.length && {
             leads: { connect: leadIds.map(id => ({ id })) },
           }),
         },
       });
+
+      // If leads were provided, set their outreachStatus to PENDING
+      if (leadIds?.length) {
+        await prisma.lead.updateMany({
+          where: { id: { in: leadIds }, userId }, // ensure leads belong to user
+          data: { outreachStatus: 'PENDING' as OutreachStatus },
+        });
+      }
 
       // Generate 5 varied drafts for this campaign
       await draftService.generateMultipleDrafts(
@@ -65,8 +73,8 @@ export class CampaignService {
 
       logger.info({ campaignId: campaign.id }, 'Campaign created with 5 drafts');
 
+      // Process leads in the background
       if (leadIds?.length) {
-        // Process leads in background – do not await
         this.processCampaign(userId, campaign.id).catch(err => {
           logger.error({ err, campaignId: campaign.id }, 'Background campaign processing failed');
         });
@@ -194,6 +202,7 @@ export class CampaignService {
 
       logger.info({ campaignId, draftCount: drafts.length }, 'Drafts available for campaign');
 
+      // Determine which leads to process
       const whereClause: any = { userId, campaignId };
       if (specificLeadIds) {
         whereClause.id = { in: specificLeadIds };
@@ -236,7 +245,9 @@ export class CampaignService {
             subject,
             body.replace(/\n/g, '<br>'),
             body,
-            campaign?.senderName
+            campaign?.senderName,
+            undefined,
+            userId
           );
 
           const finalOutreachStatus = result.success ? 'SENT' : 'FAILED';
