@@ -4,3 +4,7 @@ __pycache__/
 midas.db
 .pytest_cache/
 *.env
+
+# Build outputs
+dist/
+node_modules/

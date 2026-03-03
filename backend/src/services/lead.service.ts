@@ -7,83 +7,47 @@ export class LeadService {
   /**
    * Bulk insert leads with duplicate handling. Returns created leads.
    */
-  async createLeads(
-    leads: LeadCreateInput[],
-    skipDuplicates = true
-  ): Promise<{
-    created: number;
-    duplicates: number;
-    failed: number;
-    errors: any[];
-    createdLeads: Lead[];
-  }> {
-    const result = {
-      created: 0,
-      duplicates: 0,
-      failed: 0,
-      errors: [] as any[],
-      createdLeads: [] as Lead[],
-    };
-
+  async createLeads(userId: string, leads: LeadCreateInput[], skipDuplicates = true) {
+    const result = { created: 0, duplicates: 0, failed: 0, errors: [], createdLeads: [] as any[] };
     for (const lead of leads) {
       try {
-        // Defensive: ensure lead has required fields
-        if (!lead.email || !lead.name) {
-          throw new Error('Lead missing email or name');
-        }
-
-        const existing = await prisma.lead.findUnique({
-          where: { email: lead.email },
+        const existing = await prisma.lead.findFirst({
+          where: { userId, email: lead.email },
         });
-
         if (existing) {
           if (skipDuplicates) {
             result.duplicates++;
             continue;
           } else {
-            // Update existing lead
             const updated = await prisma.lead.update({
               where: { id: existing.id },
-              data: {
-                name: lead.name,
-                company: lead.company ?? existing.company,
-                position: lead.position ?? existing.position,
-              },
+              data: { name: lead.name, company: lead.company ?? existing.company, position: lead.position ?? existing.position },
             });
             result.created++;
             result.createdLeads.push(updated);
             continue;
           }
         }
-
-        const created = await prisma.lead.create({ data: lead });
+        const created = await prisma.lead.create({ data: { ...lead, userId } });
         result.created++;
         result.createdLeads.push(created);
       } catch (error: any) {
         result.failed++;
         result.errors.push({ email: lead.email, error: error.message });
-        logger.error({ error, lead }, '❌ Lead creation failed');
-        // Rethrow to controller for 500 response
+        logger.error({ error, lead }, 'Lead creation failed');
         throw new Error(`Lead creation failed for ${lead.email}: ${error.message}`);
       }
     }
-
     return result;
   }
 
   /**
    * Retrieve paginated leads, optionally filtered by status and campaign.
    */
-  async getLeads(
-    page: number,
-    pageSize: number,
-    status?: LeadStatus,
-    campaignId?: string
-  ) {
-    const where: any = {};
+  async getLeads(userId: string, page: number, pageSize: number, status?: LeadStatus, campaignId?: string) {
+    const where: any = { userId };
     if (status) where.status = status;
     if (campaignId) where.campaignId = campaignId;
-
     const [leads, total] = await Promise.all([
       prisma.lead.findMany({
         where,
@@ -93,43 +57,20 @@ export class LeadService {
       }),
       prisma.lead.count({ where }),
     ]);
-
-    return {
-      data: leads,
-      pagination: {
-        page,
-        pageSize,
-        total,
-        totalPages: Math.ceil(total / pageSize),
-      },
-    };
+    return { data: leads, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
   }
 
-  async getLead(id: string) {
-    try {
-      return await prisma.lead.findUniqueOrThrow({ where: { id } });
-    } catch (error: any) {
-      if (error.code === 'P2025') throw new Error('Lead not found');
-      throw error;
-    }
+
+  async getLead(userId: string, id: string) {
+    return prisma.lead.findFirstOrThrow({ where: { id, userId } });
   }
 
-  async updateLead(id: string, data: LeadUpdateInput) {
-    try {
-      return await prisma.lead.update({ where: { id }, data });
-    } catch (error: any) {
-      if (error.code === 'P2025') throw new Error('Lead not found');
-      throw error;
-    }
+  async updateLead(userId: string, id: string, data: LeadUpdateInput) {
+    return prisma.lead.update({ where: { id, userId }, data });
   }
 
-  async deleteLead(id: string) {
-    try {
-      await prisma.lead.delete({ where: { id } });
-      return { success: true };
-    } catch (error: any) {
-      if (error.code === 'P2025') throw new Error('Lead not found');
-      throw error;
-    }
+  async deleteLead(userId: string, id: string) {
+    await prisma.lead.delete({ where: { id, userId } });
+    return { success: true };
   }
 }

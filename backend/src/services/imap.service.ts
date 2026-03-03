@@ -171,7 +171,7 @@ export class ImapService {
       return;
     }
 
-    // Find original email
+    // Find original email, including userId
     let originalEmail = null;
     const searchIds = [];
     if (inReplyTo) searchIds.push(inReplyTo);
@@ -180,6 +180,12 @@ export class ImapService {
     if (searchIds.length > 0) {
       originalEmail = await prisma.outboundEmail.findFirst({
         where: { messageId: { in: searchIds }, isIncoming: false },
+        select: {
+          id: true,
+          leadId: true,
+          campaignId: true,
+          userId: true, // ✅ needed for foreign key
+        },
       });
     }
 
@@ -191,9 +197,10 @@ export class ImapService {
     const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
     if (existing) return;
 
-    // Create inbound email record
+    // Create inbound email record with userId from original
     const newEmail = await prisma.outboundEmail.create({
       data: {
+        userId: originalEmail.userId, // ✅ required
         leadId: originalEmail.leadId,
         campaignId: originalEmail.campaignId,
         subject,
@@ -226,7 +233,7 @@ export class ImapService {
         data: {
           sentiment: analysis.sentiment,
           intent: analysis.intent,
-          analysis: JSON.stringify(analysis), // store as JSON string
+          analysis: JSON.stringify(analysis),
         },
       });
       logger.info({

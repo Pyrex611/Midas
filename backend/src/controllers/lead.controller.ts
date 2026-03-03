@@ -5,6 +5,7 @@ import { parseLeadFile } from '../utils/fileParser';
 import { UploadQuerySchema } from '../types/lead.types';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
+import { AuthRequest } from '../middleware/auth.middleware';
 
 const upload = multer({
   limits: { fileSize: parseInt(env.MAX_FILE_SIZE_MB) * 1024 * 1024 },
@@ -31,12 +32,13 @@ const leadService = new LeadService();
  */
 export const uploadLeads = [
   upload.single('file'),
-  async (req: Request, res: Response, next: NextFunction) => {
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
+      const userId = req.user!.id;
       const query = UploadQuerySchema.parse(req.query);
       const skipDuplicates = query.skipDuplicates === 'true';
 
@@ -54,7 +56,7 @@ export const uploadLeads = [
 
       let result;
       try {
-        result = await leadService.createLeads(leads, skipDuplicates);
+        result = await leadService.createLeads(userId, leads, skipDuplicates);
       } catch (saveError: any) {
         logger.error({ saveError }, '❌ Lead creation threw exception');
         return res.status(500).json({
@@ -64,7 +66,6 @@ export const uploadLeads = [
         });
       }
 
-      // If no leads were created but we expected to, treat as error
       if (result.created === 0 && leads.length > 0 && result.failed === 0 && result.duplicates === 0) {
         logger.error(
           {
@@ -92,7 +93,7 @@ export const uploadLeads = [
           parseErrors,
           dbErrors: result.errors,
         },
-        createdLeadIds: result.createdLeads.map((l) => l.id), // ✅ Return IDs
+        createdLeadIds: result.createdLeads.map((l: any) => l.id),
       });
     } catch (error) {
       next(error);
@@ -104,13 +105,15 @@ export const uploadLeads = [
  * GET /api/leads
  * List leads with pagination and optional status/campaign filter.
  */
-export const getLeads = async (req: Request, res: Response, next: NextFunction) => {
+export const getLeads = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const userId = req.user!.id;
     const { page, pageSize, status, campaignId } = req.query;
     const pageNum = parseInt(page as string) || 1;
     const size = parseInt(pageSize as string) || 20;
 
     const result = await leadService.getLeads(
+      userId,
       pageNum,
       size,
       status as any,
@@ -126,12 +129,13 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction) 
  * GET /api/leads/:id
  * Retrieve a single lead by ID.
  */
-export const getLead = async (req: Request, res: Response, next: NextFunction) => {
+export const getLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const lead = await leadService.getLead(req.params.id);
+    const userId = req.user!.id;
+    const lead = await leadService.getLead(userId, req.params.id);
     res.json(lead);
   } catch (error: any) {
-    if (error.message === 'Lead not found') {
+    if (error.code === 'P2025') {
       return res.status(404).json({ error: 'Lead not found' });
     }
     next(error);
@@ -142,12 +146,13 @@ export const getLead = async (req: Request, res: Response, next: NextFunction) =
  * PUT /api/leads/:id
  * Update a lead.
  */
-export const updateLead = async (req: Request, res: Response, next: NextFunction) => {
+export const updateLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const lead = await leadService.updateLead(req.params.id, req.body);
+    const userId = req.user!.id;
+    const lead = await leadService.updateLead(userId, req.params.id, req.body);
     res.json(lead);
   } catch (error: any) {
-    if (error.message === 'Lead not found') {
+    if (error.code === 'P2025') {
       return res.status(404).json({ error: 'Lead not found' });
     }
     next(error);
@@ -158,12 +163,13 @@ export const updateLead = async (req: Request, res: Response, next: NextFunction
  * DELETE /api/leads/:id
  * Delete a lead.
  */
-export const deleteLead = async (req: Request, res: Response, next: NextFunction) => {
+export const deleteLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await leadService.deleteLead(req.params.id);
+    const userId = req.user!.id;
+    await leadService.deleteLead(userId, req.params.id);
     res.status(204).send();
   } catch (error: any) {
-    if (error.message === 'Lead not found') {
+    if (error.code === 'P2025') {
       return res.status(404).json({ error: 'Lead not found' });
     }
     next(error);

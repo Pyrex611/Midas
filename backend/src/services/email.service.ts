@@ -1,43 +1,36 @@
 import nodemailer from 'nodemailer';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
+import prisma from '../lib/prisma';
+import { decrypt } from '../lib/encryption';
+
+interface CachedSettings {
+  settings: any;
+  expires: number;
+}
 
 export class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
-  private useEthereal: boolean;
+  private settingsCache: Map<string, CachedSettings> = new Map();
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-  constructor() {
-    this.useEthereal = env.EMAIL_SERVICE === 'ethereal';
+  private getCachedSettings(userId: string): any | null {
+    const cached = this.settingsCache.get(userId);
+    if (cached && cached.expires > Date.now()) {
+      return cached.settings;
+    }
+    this.settingsCache.delete(userId);
+    return null;
   }
 
-  private async initTransporter() {
-    if (this.useEthereal) {
-      const testAccount = await nodemailer.createTestAccount();
-      this.transporter = nodemailer.createTransport({
-        host: 'smtp.ethereal.email',
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-      logger.info('Email service using Ethereal (preview mode)');
-    } else {
-      if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
-        throw new Error('SMTP configuration missing when EMAIL_SERVICE=smtp');
-      }
-      this.transporter = nodemailer.createTransport({
-        host: env.SMTP_HOST,
-        port: parseInt(env.SMTP_PORT || '587'),
-        secure: env.SMTP_SECURE === 'true',
-        auth: {
-          user: env.SMTP_USER,
-          pass: env.SMTP_PASS,
-        },
-      });
-      logger.info('Email service using SMTP (production mode)');
-    }
+  private setCachedSettings(userId: string, settings: any) {
+    this.settingsCache.set(userId, {
+      settings,
+      expires: Date.now() + this.CACHE_TTL,
+    });
+  }
+
+  public clearCache(userId: string) {
+    this.settingsCache.delete(userId);
   }
 
   async sendEmail(
@@ -46,43 +39,85 @@ export class EmailService {
     html: string,
     text: string,
     senderName?: string | null,
-    inReplyTo?: string | null
+    inReplyTo?: string | null,
+    userId?: string
   ) {
-    try {
-      if (!this.transporter) {
-        await this.initTransporter();
+    let transporter: nodemailer.Transporter;
+    let from: string;
+
+    if (userId) {
+      // Try cache first
+      let userSettings = this.getCachedSettings(userId);
+      if (!userSettings) {
+        // Fetch from DB
+        userSettings = await prisma.userSettings.findUnique({
+          where: { userId },
+        });
+        if (userSettings) {
+          this.setCachedSettings(userId, userSettings);
+        }
       }
 
-      let fromEmail = env.EMAIL_FROM;
-      const match = env.EMAIL_FROM.match(/<(.+)>/);
+      if (userSettings && userSettings.smtpHost && userSettings.smtpUser && userSettings.smtpPass) {
+        try {
+          const smtpPass = decrypt(userSettings.smtpPass);
+          transporter = nodemailer.createTransport({
+            host: userSettings.smtpHost,
+            port: userSettings.smtpPort || 587,
+            secure: userSettings.smtpSecure ?? false,
+            auth: {
+              user: userSettings.smtpUser,
+              pass: smtpPass,
+            },
+            logger: env.NODE_ENV === 'development',
+            debug: env.NODE_ENV === 'development',
+          });
+          from = userSettings.emailFrom || env.EMAIL_FROM;
+        } catch (error) {
+          logger.error({ error, userId }, 'Failed to decrypt SMTP password, falling back to global');
+          transporter = this.createGlobalTransporter();
+          from = env.EMAIL_FROM;
+        }
+      } else {
+        transporter = this.createGlobalTransporter();
+        from = env.EMAIL_FROM;
+      }
+    } else {
+      transporter = this.createGlobalTransporter();
+      from = env.EMAIL_FROM;
+    }
+
+    if (senderName) {
+      const match = from.match(/<(.+)>/);
       if (match) {
-        fromEmail = match[1];
+        from = `"${senderName}" <${match[1]}>`;
+      } else {
+        from = `"${senderName}" <${from}>`;
       }
+    }
 
-      const from = senderName ? `"${senderName}" <${fromEmail}>` : env.EMAIL_FROM;
+    const mailOptions: any = {
+      from,
+      to,
+      subject,
+      text,
+      html,
+    };
 
-      const mailOptions: any = {
-        from,
-        to,
-        subject,
-        text,
-        html,
-      };
+    if (inReplyTo) {
+      mailOptions.inReplyTo = inReplyTo;
+      mailOptions.references = [inReplyTo];
+    }
 
-      if (inReplyTo) {
-        mailOptions.inReplyTo = inReplyTo;
-        mailOptions.references = [inReplyTo];
-      }
-
-      const info = await this.transporter!.sendMail(mailOptions);
+    try {
+      const info = await transporter.sendMail(mailOptions);
       const messageId = info.messageId;
 
-      if (this.useEthereal) {
+      if (env.EMAIL_SERVICE === 'ethereal') {
         const previewUrl = nodemailer.getTestMessageUrl(info);
         logger.info({ previewUrl, to, subject, messageId }, 'Email preview generated');
         return { success: true, previewUrl, messageId };
       } else {
-        // SMTP: ensure we have a messageId
         if (!messageId) {
           throw new Error('No messageId returned from SMTP server');
         }
@@ -92,6 +127,24 @@ export class EmailService {
     } catch (error: any) {
       logger.error({ error, to, subject }, 'Email sending failed');
       return { success: false, error: error.message };
+    }
+  }
+
+  private createGlobalTransporter(): nodemailer.Transporter {
+    if (env.EMAIL_SERVICE === 'ethereal') {
+      throw new Error('Ethereal not supported with per‑user settings yet; use SMTP mode.');
+    } else {
+      return nodemailer.createTransport({
+        host: env.SMTP_HOST,
+        port: parseInt(env.SMTP_PORT || '587'),
+        secure: env.SMTP_SECURE === 'true',
+        auth: {
+          user: env.SMTP_USER,
+          pass: env.SMTP_PASS,
+        },
+        logger: env.NODE_ENV === 'development',
+        debug: env.NODE_ENV === 'development',
+      });
     }
   }
 }
