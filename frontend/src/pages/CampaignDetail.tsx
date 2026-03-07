@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { campaignAPI } from '../services/api';
 import { LeadEmailPreviewModal } from '../components/LeadEmailPreviewModal';
 import { RenameCampaignModal } from '../components/RenameCampaignModal';
@@ -10,6 +11,7 @@ import { CustomDraftModal } from '../components/CustomDraftModal';
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +34,15 @@ export const CampaignDetail: React.FC = () => {
   const [showCustomDraftModal, setShowCustomDraftModal] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
+  // Follow‑up settings state
+  const [followUpEnabled, setFollowUpEnabled] = useState(false);
+  const [followUpDelay, setFollowUpDelay] = useState(24);
+  const [updatingFollowUp, setUpdatingFollowUp] = useState(false);
+
+  // Auto‑reply settings state
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
+  const [updatingAutoReply, setUpdatingAutoReply] = useState(false);
+
   const fetchCampaign = async () => {
     if (!id) return;
     setLoading(true);
@@ -39,6 +50,9 @@ export const CampaignDetail: React.FC = () => {
     try {
       const res = await campaignAPI.get(id);
       setCampaign(res.data);
+      setFollowUpEnabled(res.data.followUpEnabled || false);
+      setFollowUpDelay(res.data.followUpDelay || 24);
+      setAutoReplyEnabled(res.data.autoReplyEnabled || false);
     } catch (err: any) {
       console.error('Failed to fetch campaign', err);
       if (err.response?.status === 404) {
@@ -107,6 +121,34 @@ export const CampaignDetail: React.FC = () => {
     if (!campaign?.id) return;
     await campaignAPI.createCustomDraft(campaign.id, data);
     fetchCampaign();
+  };
+
+  const handleUpdateFollowUp = async () => {
+    if (!campaign?.id) return;
+    setUpdatingFollowUp(true);
+    try {
+      await campaignAPI.updateFollowUpSettings(campaign.id, { followUpEnabled, followUpDelay });
+      alert('Follow‑up settings updated');
+    } catch (error) {
+      console.error('Failed to update follow‑up settings', error);
+      alert('Could not update settings');
+    } finally {
+      setUpdatingFollowUp(false);
+    }
+  };
+
+  const handleUpdateAutoReply = async () => {
+    if (!campaign?.id) return;
+    setUpdatingAutoReply(true);
+    try {
+      await campaignAPI.updateAutoReply(campaign.id, { autoReplyEnabled });
+      alert('Auto‑reply setting updated');
+    } catch (error) {
+      console.error('Failed to update auto‑reply', error);
+      alert('Could not update auto‑reply');
+    } finally {
+      setUpdatingAutoReply(false);
+    }
   };
 
   if (loading) {
@@ -278,7 +320,6 @@ export const CampaignDetail: React.FC = () => {
           <div className="mt-2 flex items-center">
             <span className="text-sm text-gray-600 mr-2">Sender:</span>
             <span className="text-sm font-medium">{campaign.senderName}</span>
-            {/* Optionally add an edit button later */}
           </div>
         )}
 
@@ -301,6 +342,86 @@ export const CampaignDetail: React.FC = () => {
               {campaign.leads?.filter((l: any) => l?.outreachStatus === 'SENT').length || 0}
             </div>
             <div className="text-sm text-gray-600">Delivered</div>
+          </div>
+        </div>
+
+        {/* Follow‑up Settings Card */}
+        <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
+          <h3 className="text-lg font-medium text-gray-900 mb-3">Follow‑up Automation</h3>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="followUpEnabled"
+                checked={followUpEnabled}
+                onChange={(e) => setFollowUpEnabled(e.target.checked)}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label htmlFor="followUpEnabled" className="text-sm text-gray-700">
+                Enable automatic follow‑ups
+              </label>
+            </div>
+            {followUpEnabled && (
+              <div className="flex items-center space-x-2">
+                <label htmlFor="followUpDelay" className="text-sm text-gray-600">Delay (hours):</label>
+                <input
+                  type="number"
+                  id="followUpDelay"
+                  min="1"
+                  max="720"
+                  value={followUpDelay}
+                  onChange={(e) => setFollowUpDelay(parseInt(e.target.value) || 24)}
+                  className="w-20 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+            )}
+          </div>
+          {followUpEnabled && (
+            <p className="text-xs text-gray-500 mb-3">
+              Follow‑up emails will be sent automatically to leads who have been contacted but have not replied within the specified delay.
+            </p>
+          )}
+          <div className="flex justify-end">
+            <button
+              onClick={handleUpdateFollowUp}
+              disabled={updatingFollowUp}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {updatingFollowUp ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
+        </div>
+
+        {/* Auto‑Reply Card */}
+        <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
+          <h3 className="text-lg font-medium text-gray-900 mb-3">Automatic Replies</h3>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="autoReplyEnabled"
+                checked={autoReplyEnabled}
+                onChange={(e) => setAutoReplyEnabled(e.target.checked)}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label htmlFor="autoReplyEnabled" className="text-sm text-gray-700">
+                Enable automatic replies
+              </label>
+            </div>
+          </div>
+          {autoReplyEnabled && (
+            <p className="text-xs text-gray-500 mb-3">
+              When a lead replies, the system will automatically generate and send a response based on sentiment analysis.
+            </p>
+          )}
+          <div className="flex justify-end">
+            <button
+              onClick={handleUpdateAutoReply}
+              disabled={updatingAutoReply}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {updatingAutoReply ? 'Saving...' : 'Save Settings'}
+            </button>
           </div>
         </div>
 

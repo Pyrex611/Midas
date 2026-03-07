@@ -96,6 +96,8 @@ export const campaignAPI = {
     api.post(`/campaigns/${campaignId}/drafts/custom`, data),
   generateDraft: (campaignId: string) =>
     api.post(`/campaigns/${campaignId}/drafts/generate`),
+	updateAutoReply: (id: string, data: { autoReplyEnabled: boolean }) =>
+		api.put(`/campaigns/${id}/auto-reply`, data),
 };
 
 // ===== IMAP API =====

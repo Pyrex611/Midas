@@ -223,3 +223,5 @@ export class DraftService {
     });
   }
 }
+
+export const draftService = new DraftService();

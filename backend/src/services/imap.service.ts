@@ -6,6 +6,7 @@ import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import dns from 'dns';
 import { aiService } from './ai.service';
+import { autoReplyService } from './autoReply.service';
 
 export class ImapService {
   private isPolling = false;
@@ -236,6 +237,11 @@ export class ImapService {
           analysis: JSON.stringify(analysis),
         },
       });
+			if (analysis) {
+				autoReplyService.processReply(newEmail.id).catch(err => {
+					logger.error({ err, messageId }, 'Auto‑reply processing failed');
+				});
+			}
       logger.info({
         messageId,
         sentiment: analysis.sentiment,

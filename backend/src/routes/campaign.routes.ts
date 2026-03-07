@@ -17,12 +17,18 @@ import {
   generateCampaignDraft,
   getReplyDraft,
   sendReplyDraft,
+  updateFollowUpSettings,
+  updateAutoReply,
 } from '../controllers/campaign.controller';
 
 const router = Router();
 
 // Campaign CRUD
 router.post('/', createCampaign);
+
+router.put('/:id/followup', updateFollowUpSettings);
+router.put('/:id/auto-reply', updateAutoReply);
+
 router.put('/:id', updateCampaign);
 router.delete('/:id', deleteCampaign);
 router.get('/', getCampaigns);

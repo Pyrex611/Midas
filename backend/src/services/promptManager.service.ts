@@ -144,10 +144,14 @@ export class PromptManager {
   }
 
   private buildReplyPrompt(params: PromptParams): string {
-    const { originalEmail, originalSubject, sentiment, recipientName, recipientCompany } = params;
-    let section = `\n## REPLY TO LEAD RESPONSE TASK\n`;
-    section += `You are replying to a lead who has responded to your previous email. Adapt to their sentiment and move the conversation forward.\n\n`;
+		const { originalEmail, originalSubject, sentiment, recipientName, recipientCompany, conversationHistory } = params;
+		let section = `\n## REPLY TO LEAD RESPONSE TASK\n`;
+		section += `You are replying to a lead who has responded to your previous email. Adapt to their sentiment and move the conversation forward.\n\n`;
 
+		if (conversationHistory) {
+			section += `### Conversation History (most recent first)\n${conversationHistory}\n\n`;
+			section += `- Use this history to understand context, avoid repeating yourself, and answer any previously asked questions(if an answer hasnt yet been provided).\n`;
+		}
     if (originalSubject) {
       section += `### Original Subject\n${originalSubject}\n`;
       section += `- The subject should continue the thread. Typically you would use "Re: ${originalSubject}" or a more specific variant. However, if the original subject is generic, you may improve it while keeping the thread context.\n`;

@@ -8,9 +8,6 @@ import { logger } from '../config/logger';
 const draftService = new DraftService();
 
 export class CampaignService {
-  /**
-   * Create a new campaign with follow‑up settings.
-   */
   async createCampaign(
     userId: string,
     name: string,
@@ -20,9 +17,9 @@ export class CampaignService {
     senderName?: string,
     leadIds?: string[],
     followUpEnabled?: boolean,
-    followUpDelay?: number
+    followUpDelay?: number,
+    autoReplyEnabled?: boolean
   ) {
-    // Validate userId format (UUID)
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) {
       throw new Error(`Invalid userId format: ${userId}. Expected a UUID.`);
@@ -43,22 +40,20 @@ export class CampaignService {
           startedAt: leadIds?.length ? new Date() : null,
           followUpEnabled: followUpEnabled ?? false,
           followUpDelay: followUpDelay ?? 24,
-          // Connect leads if provided (they already exist)
+          autoReplyEnabled: autoReplyEnabled ?? false,
           ...(leadIds?.length && {
             leads: { connect: leadIds.map(id => ({ id })) },
           }),
         },
       });
 
-      // If leads were provided, set their outreachStatus to PENDING
       if (leadIds?.length) {
         await prisma.lead.updateMany({
-          where: { id: { in: leadIds }, userId }, // ensure leads belong to user
+          where: { id: { in: leadIds }, userId },
           data: { outreachStatus: 'PENDING' as OutreachStatus },
         });
       }
 
-      // Generate 5 varied drafts for this campaign
       await draftService.generateMultipleDrafts(
         userId,
         5,
@@ -73,7 +68,6 @@ export class CampaignService {
 
       logger.info({ campaignId: campaign.id }, 'Campaign created with 5 drafts');
 
-      // Process leads in the background
       if (leadIds?.length) {
         this.processCampaign(userId, campaign.id).catch(err => {
           logger.error({ err, campaignId: campaign.id }, 'Background campaign processing failed');
@@ -87,9 +81,6 @@ export class CampaignService {
     }
   }
 
-  /**
-   * Add leads to an existing campaign, skipping duplicates.
-   */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
     const campaign = await prisma.campaign.findFirst({
       where: { id: campaignId, userId },
@@ -125,7 +116,6 @@ export class CampaignService {
       });
     }
 
-    // Process in background
     this.processCampaign(userId, campaignId, newLeadIds).catch(err => {
       logger.error({ err, userId, campaignId }, 'Background lead processing failed');
     });
@@ -133,9 +123,6 @@ export class CampaignService {
     return { added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length };
   }
 
-  /**
-   * Update follow‑up settings for a campaign.
-   */
   async updateFollowUpSettings(
     userId: string,
     campaignId: string,
@@ -154,12 +141,18 @@ export class CampaignService {
     });
   }
 
-  /**
-   * Process leads in a campaign (initial outreach).
-   */
+  async updateAutoReplySettings(userId: string, campaignId: string, autoReplyEnabled: boolean) {
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    if (!campaign) throw new Error('Campaign not found');
+
+    return prisma.campaign.update({
+      where: { id: campaignId },
+      data: { autoReplyEnabled },
+    });
+  }
+
   private async processCampaign(userId: string, campaignId: string, specificLeadIds?: string[]) {
     try {
-      // Fetch all active drafts for this campaign
       let drafts = await prisma.draft.findMany({
         where: {
           userId,
@@ -202,7 +195,6 @@ export class CampaignService {
 
       logger.info({ campaignId, draftCount: drafts.length }, 'Drafts available for campaign');
 
-      // Determine which leads to process
       const whereClause: any = { userId, campaignId };
       if (specificLeadIds) {
         whereClause.id = { in: specificLeadIds };
@@ -321,9 +313,6 @@ export class CampaignService {
     }
   }
 
-  /**
-   * Get all campaigns for a user.
-   */
   async getCampaigns(userId: string) {
     return prisma.campaign.findMany({
       where: { userId },
@@ -340,9 +329,6 @@ export class CampaignService {
     });
   }
 
-  /**
-   * Get detailed campaign information.
-   */
   async getCampaignDetails(userId: string, campaignId: string) {
     return prisma.campaign.findFirst({
       where: { id: campaignId, userId },

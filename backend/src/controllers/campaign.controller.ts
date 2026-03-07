@@ -594,3 +594,22 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
     next(error);
   }
 };
+
+/**
+ * PUT /api/campaigns/:id/auto-reply
+ * Update auto‑reply setting for a campaign.
+ */
+export const updateAutoReply = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { autoReplyEnabled } = req.body;
+    if (typeof autoReplyEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'autoReplyEnabled must be a boolean' });
+    }
+    const updated = await campaignService.updateAutoReplySettings(userId, id, autoReplyEnabled);
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};

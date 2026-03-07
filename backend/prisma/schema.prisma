@@ -62,6 +62,7 @@ model Campaign {
 
   followUpEnabled Boolean @default(false) @map("follow_up_enabled")
   followUpDelay   Int     @default(24) @map("follow_up_delay")
+  autoReplyEnabled Boolean @default(false) @map("auto_reply_enabled")
 
   leads  Lead[]
   emails OutboundEmail[]
