@@ -60,16 +60,16 @@ model Campaign {
   startedAt   DateTime? @map("started_at")
   completedAt DateTime? @map("completed_at")
 
-  followUpEnabled Boolean @default(false) @map("follow_up_enabled")
-  followUpDelay   Int     @default(24) @map("follow_up_delay")
+  sendHourUTC Int      @default(9) @map("send_hour_utc")
+
+  // relation to follow‑up steps
+  followUpSteps FollowUpStep[]
+
   autoReplyEnabled Boolean @default(false) @map("auto_reply_enabled")
 
   leads  Lead[]
   emails OutboundEmail[]
   drafts Draft[]
-
-  @@index([userId])
-  @@index([status])
 }
 
 model Draft {
@@ -96,6 +96,7 @@ model Draft {
   replyCount Int @default(0) @map("reply_count")
 
   emails OutboundEmail[]
+	followUpSteps FollowUpStep[]
 
   @@index([isActive])
   @@index([tone, useCase])
@@ -144,6 +145,21 @@ model OutboundEmail {
   @@index([sentAt])
   @@index([messageId])
   @@index([userId])
+}
+
+model FollowUpStep {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  stepNumber Int      // 1,2,3...
+  delayDays  Int      // days after initial outreach
+  draftId    String?  @map("draft_id") // optional specific draft
+  draft      Draft?   @relation(fields: [draftId], references: [id])
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([campaignId, stepNumber])
 }
 
 model UserSettings {

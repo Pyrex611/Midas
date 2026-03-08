@@ -21,7 +21,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
     const userId = req.user!.id;
     logger.debug({ userId }, 'Creating campaign for user');
 
-    const { name, description, context, reference, senderName, leadIds, followUpEnabled, followUpDelay } = req.body;
+    const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC } = req.body;
     if (!name) return res.status(400).json({ error: 'Campaign name is required' });
 
     const campaign = await campaignService.createCampaign(
@@ -32,8 +32,8 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       reference,
       senderName,
       leadIds,
-      followUpEnabled,
-      followUpDelay
+      autoReplyEnabled,
+      sendHourUTC
     );
 
     res.status(201).json({
@@ -230,7 +230,8 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
       body.replace(/\n/g, '<br>'),
       body,
       campaign.senderName,
-			userId
+      undefined,
+      userId
     );
     if (!result.success) throw new Error(result.error || 'Email sending failed');
 
@@ -330,7 +331,6 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
     if (!jsonMatch) throw new Error('No JSON in response');
     const draftData = JSON.parse(jsonMatch[0]);
 
-    // ✅ Pass userId to createReplyDraft
     const savedDraft = await draftService.createReplyDraft(
       userId,
       leadId,
@@ -396,7 +396,7 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       personalisedBody,
       campaign.senderName,
       latestIncoming.messageId,
-			userId
+      userId
     );
     if (!result.success) throw new Error(result.error || 'Email sending failed');
 
@@ -431,7 +431,7 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
 
 /**
  * PUT /api/campaigns/:id/followup
- * Update follow‑up settings for a campaign.
+ * Update follow‑up settings (legacy).
  */
 export const updateFollowUpSettings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -441,8 +441,151 @@ export const updateFollowUpSettings = async (req: AuthRequest, res: Response, ne
     if (typeof followUpEnabled !== 'boolean') {
       return res.status(400).json({ error: 'followUpEnabled must be a boolean' });
     }
-
     const updated = await campaignService.updateFollowUpSettings(userId, id, followUpEnabled, followUpDelay);
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/campaigns/:id/auto-reply
+ * Update auto‑reply setting.
+ */
+export const updateAutoReply = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { autoReplyEnabled } = req.body;
+    if (typeof autoReplyEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'autoReplyEnabled must be a boolean' });
+    }
+    const updated = await campaignService.updateAutoReplySettings(userId, id, autoReplyEnabled);
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/campaigns/:id/followup-steps
+ * Retrieve all follow‑up steps for a campaign.
+ */
+export const getFollowUpSteps = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const steps = await campaignService.getFollowUpSteps(userId, id);
+    res.json(steps);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/campaigns/:id/followup-steps
+ * Replace all follow‑up steps for a campaign and generate missing drafts.
+ */
+export const setFollowUpSteps = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { steps } = req.body; // expected array of { stepNumber, delayDays, draftId? }
+
+    if (!Array.isArray(steps)) {
+      return res.status(400).json({ error: 'steps must be an array' });
+    }
+
+    // First, get the campaign to have context for draft generation
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, userId },
+      select: {
+        context: true,
+        reference: true,
+        senderName: true,
+      },
+    });
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    // Replace all steps (this deletes old ones and creates new ones)
+    const createdSteps = await campaignService.setFollowUpSteps(userId, id, steps);
+
+    // For each created step that does not have a draftId, generate a new follow‑up draft
+    const stepsWithDrafts = await Promise.all(
+      createdSteps.map(async (step) => {
+        if (!step.draftId) {
+          try {
+            // Generate 3 follow‑up drafts for this step (we'll assign the first one)
+            const drafts = await draftService.generateFollowUpDrafts(
+              userId,
+              id,
+              campaign.context || undefined,
+              campaign.reference || undefined,
+              campaign.senderName || undefined,
+              step.stepNumber
+            );
+            if (drafts && drafts.length > 0) {
+              // Assign the first generated draft to the step
+              const updatedStep = await prisma.followUpStep.update({
+                where: { id: step.id },
+                data: { draftId: drafts[0].id },
+                include: { draft: true },
+              });
+              return updatedStep;
+            } else {
+              logger.warn({ stepId: step.id }, 'No drafts generated for follow‑up step');
+              return step;
+            }
+          } catch (error) {
+            logger.error({ error, stepId: step.id }, 'Failed to generate draft for follow‑up step');
+            return step; // return step without draft
+          }
+        }
+        // If step already has a draftId, just fetch the draft
+        const stepWithDraft = await prisma.followUpStep.findUnique({
+          where: { id: step.id },
+          include: { draft: true },
+        });
+        return stepWithDraft;
+      })
+    );
+
+    res.status(201).json(stepsWithDrafts);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/campaigns/:id/followup-steps/:stepId
+ * Delete a specific follow‑up step.
+ */
+export const deleteFollowUpStep = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { stepId } = req.params;
+    await campaignService.deleteFollowUpStep(userId, stepId);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/campaigns/:id/send-hour
+ * Update the campaign's send hour (UTC).
+ */
+export const updateSendHour = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { sendHourUTC } = req.body;
+    if (typeof sendHourUTC !== 'number' || sendHourUTC < 0 || sendHourUTC > 23) {
+      return res.status(400).json({ error: 'sendHourUTC must be a number between 0 and 23' });
+    }
+    const updated = await campaignService.updateSendHour(userId, id, sendHourUTC);
     res.json(updated);
   } catch (error) {
     next(error);
@@ -590,25 +733,6 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
     }
 
     res.status(201).json(draft);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * PUT /api/campaigns/:id/auto-reply
- * Update auto‑reply setting for a campaign.
- */
-export const updateAutoReply = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const { id } = req.params;
-    const { autoReplyEnabled } = req.body;
-    if (typeof autoReplyEnabled !== 'boolean') {
-      return res.status(400).json({ error: 'autoReplyEnabled must be a boolean' });
-    }
-    const updated = await campaignService.updateAutoReplySettings(userId, id, autoReplyEnabled);
-    res.json(updated);
   } catch (error) {
     next(error);
   }

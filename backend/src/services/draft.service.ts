@@ -4,6 +4,9 @@ import { logger } from '../config/logger';
 import { env } from '../config/env';
 
 export class DraftService {
+  /**
+   * Generate a single draft. Returns null on failure.
+   */
   async generateAndSaveDraft(
     userId: string,
     tone: string = 'professional',
@@ -12,17 +15,19 @@ export class DraftService {
     campaignContext?: string,
     reference?: string,
     companyContext?: string,
-    senderName?: string
+    senderName?: string,
+    stepNumber?: number // for follow‑up steps
   ) {
     try {
       const { subject, body } = await aiService.generateDraft(
         tone,
-        useCase,
+        useCase as any,
         campaignContext,
         reference,
         companyContext,
         undefined,
-        undefined
+        undefined,
+        stepNumber // pass step number to AI for context
       );
 
       const draft = await prisma.draft.create({
@@ -46,6 +51,9 @@ export class DraftService {
     }
   }
 
+  /**
+   * Generate multiple drafts for a given use case (e.g., initial, follow‑up).
+   */
   async generateMultipleDrafts(
     userId: string,
     count: number,
@@ -55,7 +63,8 @@ export class DraftService {
     campaignContext?: string,
     reference?: string,
     companyContext?: string,
-    senderName?: string
+    senderName?: string,
+    stepNumber?: number // for follow‑ups
   ) {
     const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
     const drafts = [];
@@ -75,7 +84,8 @@ export class DraftService {
         variedContext,
         reference,
         companyContext,
-        senderName
+        senderName,
+        stepNumber // pass step number for follow‑ups
       );
       if (draft) {
         drafts.push(draft);
@@ -90,6 +100,32 @@ export class DraftService {
 
     logger.info({ campaignId, generated: drafts.length, requested: count }, 'Generated multiple drafts');
     return drafts;
+  }
+
+  /**
+   * Generate 3 follow‑up drafts for a campaign's first step.
+   */
+  async generateFollowUpDrafts(
+    userId: string,
+    campaignId: string,
+    campaignContext?: string,
+    reference?: string,
+    senderName?: string,
+    stepNumber: number = 1
+  ) {
+    logger.info({ campaignId, stepNumber }, 'Generating follow‑up drafts');
+    return this.generateMultipleDrafts(
+      userId,
+      3,
+      'professional',
+      'followup',
+      campaignId,
+      campaignContext,
+      reference,
+      undefined,
+      senderName,
+      stepNumber
+    );
   }
 
   async getBestDraft(

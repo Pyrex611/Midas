@@ -34,14 +34,17 @@ export const CampaignDetail: React.FC = () => {
   const [showCustomDraftModal, setShowCustomDraftModal] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
-  // Follow‑up settings state
-  const [followUpEnabled, setFollowUpEnabled] = useState(false);
-  const [followUpDelay, setFollowUpDelay] = useState(24);
-  const [updatingFollowUp, setUpdatingFollowUp] = useState(false);
+  // Follow‑up steps state
+  const [followUpSteps, setFollowUpSteps] = useState<any[]>([]);
+  const [sendHourUTC, setSendHourUTC] = useState(9);
+  const [loadingSteps, setLoadingSteps] = useState(false);
 
   // Auto‑reply settings state
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [updatingAutoReply, setUpdatingAutoReply] = useState(false);
+
+  // Drafts filter state
+  const [draftFilter, setDraftFilter] = useState<'all' | 'initial' | number>('all');
 
   const fetchCampaign = async () => {
     if (!id) return;
@@ -50,9 +53,9 @@ export const CampaignDetail: React.FC = () => {
     try {
       const res = await campaignAPI.get(id);
       setCampaign(res.data);
-      setFollowUpEnabled(res.data.followUpEnabled || false);
-      setFollowUpDelay(res.data.followUpDelay || 24);
       setAutoReplyEnabled(res.data.autoReplyEnabled || false);
+      setSendHourUTC(res.data.sendHourUTC || 9);
+      setFollowUpSteps(res.data.followUpSteps || []);
     } catch (err: any) {
       console.error('Failed to fetch campaign', err);
       if (err.response?.status === 404) {
@@ -123,17 +126,35 @@ export const CampaignDetail: React.FC = () => {
     fetchCampaign();
   };
 
-  const handleUpdateFollowUp = async () => {
-    if (!campaign?.id) return;
-    setUpdatingFollowUp(true);
+  const handleAddStep = () => {
+    const newStep = {
+      stepNumber: followUpSteps.length + 1,
+      delayDays: 1,
+      draftId: null,
+    };
+    setFollowUpSteps([...followUpSteps, newStep]);
+  };
+
+  const handleRemoveStep = (index: number) => {
+    setFollowUpSteps(followUpSteps.filter((_, i) => i !== index));
+  };
+
+  const handleStepChange = (index: number, field: string, value: any) => {
+    const newSteps = [...followUpSteps];
+    newSteps[index][field] = value;
+    setFollowUpSteps(newSteps);
+  };
+
+  const saveSteps = async () => {
+    setLoadingSteps(true);
     try {
-      await campaignAPI.updateFollowUpSettings(campaign.id, { followUpEnabled, followUpDelay });
-      alert('Follow‑up settings updated');
-    } catch (error) {
-      console.error('Failed to update follow‑up settings', error);
-      alert('Could not update settings');
+      await campaignAPI.setFollowUpSteps(campaign.id, followUpSteps);
+      alert('Follow‑up steps saved');
+    } catch (err) {
+      console.error('Failed to save steps', err);
+      alert('Could not save follow‑up steps');
     } finally {
-      setUpdatingFollowUp(false);
+      setLoadingSteps(false);
     }
   };
 
@@ -150,6 +171,37 @@ export const CampaignDetail: React.FC = () => {
       setUpdatingAutoReply(false);
     }
   };
+
+  const handleSendHourChange = async (hour: number) => {
+    if (!campaign?.id) return;
+    try {
+      await campaignAPI.updateSendHour(campaign.id, hour);
+      setSendHourUTC(hour);
+    } catch (err) {
+      console.error('Failed to update send hour', err);
+    }
+  };
+
+  // Helper to get draft label based on use case and step association
+  const getDraftLabel = (draft: any): string => {
+    if (draft.useCase === 'initial') return 'Outreach';
+    if (draft.useCase === 'followup') {
+      // Find if this draft is linked to any step
+      const step = followUpSteps.find(s => s.draftId === draft.id);
+      if (step) return `Follow‑up ${step.stepNumber}`;
+      return 'Follow‑up (global)';
+    }
+    return 'Draft';
+  };
+
+  // Filter drafts based on selected filter
+  const filteredDrafts = campaign?.drafts?.filter((draft: any) => {
+    if (draftFilter === 'all') return true;
+    if (draftFilter === 'initial') return draft.useCase === 'initial';
+    // filter by step number
+    const step = followUpSteps.find(s => s.stepNumber === draftFilter && s.draftId === draft.id);
+    return !!step;
+  }) || [];
 
   if (loading) {
     return (
@@ -345,49 +397,70 @@ export const CampaignDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Follow‑up Settings Card */}
+        {/* Follow‑up Steps Card */}
         <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-900 mb-3">Follow‑up Automation</h3>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="followUpEnabled"
-                checked={followUpEnabled}
-                onChange={(e) => setFollowUpEnabled(e.target.checked)}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <label htmlFor="followUpEnabled" className="text-sm text-gray-700">
-                Enable automatic follow‑ups
-              </label>
-            </div>
-            {followUpEnabled && (
-              <div className="flex items-center space-x-2">
-                <label htmlFor="followUpDelay" className="text-sm text-gray-600">Delay (hours):</label>
-                <input
-                  type="number"
-                  id="followUpDelay"
-                  min="1"
-                  max="720"
-                  value={followUpDelay}
-                  onChange={(e) => setFollowUpDelay(parseInt(e.target.value) || 24)}
-                  className="w-20 px-2 py-1 border border-gray-300 rounded-md text-sm"
-                />
-              </div>
-            )}
-          </div>
-          {followUpEnabled && (
-            <p className="text-xs text-gray-500 mb-3">
-              Follow‑up emails will be sent automatically to leads who have been contacted but have not replied within the specified delay.
-            </p>
-          )}
-          <div className="flex justify-end">
-            <button
-              onClick={handleUpdateFollowUp}
-              disabled={updatingFollowUp}
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+          <h3 className="text-lg font-medium text-gray-900 mb-3">Follow‑up Steps</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Configure multiple follow‑up emails to be sent after the initial outreach. Each step's delay is in days from the initial email.
+          </p>
+
+          <div className="mb-4">
+            <label className="block text-sm text-gray-600 mb-1">Send time (UTC hour)</label>
+            <select
+              value={sendHourUTC}
+              onChange={(e) => handleSendHourChange(parseInt(e.target.value))}
+              className="border rounded-md px-3 py-2 text-sm"
             >
-              {updatingFollowUp ? 'Saving...' : 'Save Settings'}
+              {Array.from({ length: 24 }, (_, i) => (
+                <option key={i} value={i}>{i.toString().padStart(2, '0')}:00 UTC</option>
+              ))}
+            </select>
+          </div>
+
+          {followUpSteps.map((step, index) => (
+            <div key={index} className="flex items-center space-x-2 mb-2 border-b pb-2">
+              <span className="text-sm font-medium w-16">Step {step.stepNumber}</span>
+              <input
+                type="number"
+                min="1"
+                value={step.delayDays}
+                onChange={(e) => handleStepChange(index, 'delayDays', parseInt(e.target.value) || 1)}
+                className="w-20 px-2 py-1 border rounded-md text-sm"
+              />
+              <span className="text-sm text-gray-600">days after initial</span>
+              <select
+                value={step.draftId || ''}
+                onChange={(e) => handleStepChange(index, 'draftId', e.target.value || null)}
+                className="flex-1 px-2 py-1 border rounded-md text-sm"
+              >
+                <option value="">Use best draft</option>
+                {campaign.drafts?.map((d: any) => (
+                  <option key={d.id} value={d.id}>{d.subject.substring(0, 30)}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleRemoveStep(index)}
+                className="text-red-600 hover:text-red-800"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+
+          <button
+            onClick={handleAddStep}
+            className="mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+          >
+            + Add Follow‑up Step
+          </button>
+
+          <div className="flex justify-end mt-4">
+            <button
+              onClick={saveSteps}
+              disabled={loadingSteps}
+              className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
+            >
+              {loadingSteps ? 'Saving...' : 'Save Steps'}
             </button>
           </div>
         </div>
@@ -497,11 +570,45 @@ export const CampaignDetail: React.FC = () => {
         {/* Drafts Tab */}
         {activeTab === 'drafts' && (
           <div className="mt-6">
-            {campaign.drafts && campaign.drafts.length > 0 ? (
+            {/* Filter bar */}
+            <div className="mb-4 flex space-x-2 border-b pb-2">
+              <button
+                onClick={() => setDraftFilter('all')}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  draftFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
+                }`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setDraftFilter('initial')}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  draftFilter === 'initial' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
+                }`}
+              >
+                Outreach
+              </button>
+              {followUpSteps.map((step) => (
+                <button
+                  key={step.stepNumber}
+                  onClick={() => setDraftFilter(step.stepNumber)}
+                  className={`px-3 py-1 text-sm rounded-md ${
+                    draftFilter === step.stepNumber ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  Follow‑up {step.stepNumber}
+                </button>
+              ))}
+            </div>
+
+            {filteredDrafts.length > 0 ? (
               <div className="space-y-4">
-                {campaign.drafts.map((draft: any) => (
+                {filteredDrafts.map((draft: any) => (
                   <div key={draft.id} className="border rounded-lg p-4 relative">
-                    <div className="flex justify-between items-start pr-12">
+                    <div className="absolute top-2 right-2 bg-blue-100 text-blue-800 px-2 py-1 text-xs font-medium rounded">
+                      {getDraftLabel(draft)}
+                    </div>
+                    <div className="flex justify-between items-start pr-24">
                       <div className="flex-1">
                         <div className="text-sm font-medium text-gray-900">
                           Subject: {draft.subject || '(no subject)'}
@@ -539,7 +646,7 @@ export const CampaignDetail: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500 text-center py-8">No drafts yet.</p>
+              <p className="text-gray-500 text-center py-8">No drafts match the selected filter.</p>
             )}
 
             {/* Draft action buttons */}

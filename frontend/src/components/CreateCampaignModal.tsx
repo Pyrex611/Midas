@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { campaignAPI } from '../services/api';
+import { campaignAPI, aiAPI } from '../services/api';
 
 interface Props {
   isOpen: boolean;
@@ -22,6 +22,7 @@ export const CreateCampaignModal: React.FC<Props> = ({
   const [reference, setReference] = useState('');
   const [senderName, setSenderName] = useState(defaultSenderName || '');
   const [submitting, setSubmitting] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
 
   // Reset form when modal opens
   useEffect(() => {
@@ -33,6 +34,20 @@ export const CreateCampaignModal: React.FC<Props> = ({
       setSenderName(defaultSenderName || '');
     }
   }, [isOpen, defaultSenderName]);
+
+  const handleOptimize = async () => {
+    if (!context.trim()) return;
+    setOptimizing(true);
+    try {
+      const res = await aiAPI.optimizeContext(context);
+      setContext(res.data.optimized);
+    } catch (error) {
+      console.error('Failed to optimize context', error);
+      alert('Could not optimize context. Please try again.');
+    } finally {
+      setOptimizing(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,7 +107,7 @@ export const CreateCampaignModal: React.FC<Props> = ({
             />
           </div>
 
-          <div className="mb-4">
+          <div className="mb-4 relative">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Campaign Goal / Context <span className="text-gray-500 text-xs">(Crucial for AI drafting)</span>
             </label>
@@ -103,6 +118,14 @@ export const CreateCampaignModal: React.FC<Props> = ({
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               placeholder="e.g., Propose my services as a senior software engineer, emphasize value I can add to their team."
             />
+            <button
+              type="button"
+              onClick={handleOptimize}
+              disabled={optimizing || !context.trim()}
+              className="absolute right-2 top-8 px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 disabled:opacity-50"
+            >
+              {optimizing ? 'Optimizing...' : '✨ Optimize'}
+            </button>
           </div>
 
           <div className="mb-4">

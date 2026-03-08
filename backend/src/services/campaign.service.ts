@@ -8,6 +8,10 @@ import { logger } from '../config/logger';
 const draftService = new DraftService();
 
 export class CampaignService {
+  /**
+   * Create a new campaign with modern follow‑up settings (autoReply, sendHourUTC).
+   * Legacy followUpEnabled/followUpDelay are no longer used.
+   */
   async createCampaign(
     userId: string,
     name: string,
@@ -16,9 +20,8 @@ export class CampaignService {
     reference?: string,
     senderName?: string,
     leadIds?: string[],
-    followUpEnabled?: boolean,
-    followUpDelay?: number,
-    autoReplyEnabled?: boolean
+    autoReplyEnabled?: boolean,
+    sendHourUTC?: number
   ) {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) {
@@ -38,15 +41,15 @@ export class CampaignService {
           senderName,
           status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
           startedAt: leadIds?.length ? new Date() : null,
-          followUpEnabled: followUpEnabled ?? false,
-          followUpDelay: followUpDelay ?? 24,
           autoReplyEnabled: autoReplyEnabled ?? false,
+          sendHourUTC: sendHourUTC ?? 9, // default 9 AM UTC
           ...(leadIds?.length && {
             leads: { connect: leadIds.map(id => ({ id })) },
           }),
         },
       });
 
+      // Set outreach status to PENDING for initial leads
       if (leadIds?.length) {
         await prisma.lead.updateMany({
           where: { id: { in: leadIds }, userId },
@@ -54,6 +57,7 @@ export class CampaignService {
         });
       }
 
+      // Generate 5 varied initial drafts
       await draftService.generateMultipleDrafts(
         userId,
         5,
@@ -66,8 +70,19 @@ export class CampaignService {
         senderName
       );
 
-      logger.info({ campaignId: campaign.id }, 'Campaign created with 5 drafts');
+      // Generate 3 follow‑up drafts for step 1
+      await draftService.generateFollowUpDrafts(
+        userId,
+        campaign.id,
+        context,
+        reference,
+        senderName,
+        1
+      );
 
+      logger.info({ campaignId: campaign.id }, 'Campaign created with 5 initial and 3 follow‑up drafts');
+
+      // Process leads in the background
       if (leadIds?.length) {
         this.processCampaign(userId, campaign.id).catch(err => {
           logger.error({ err, campaignId: campaign.id }, 'Background campaign processing failed');
@@ -81,6 +96,9 @@ export class CampaignService {
     }
   }
 
+  /**
+   * Add leads to an existing campaign, skipping duplicates.
+   */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
     const campaign = await prisma.campaign.findFirst({
       where: { id: campaignId, userId },
@@ -116,6 +134,7 @@ export class CampaignService {
       });
     }
 
+    // Process in background
     this.processCampaign(userId, campaignId, newLeadIds).catch(err => {
       logger.error({ err, userId, campaignId }, 'Background lead processing failed');
     });
@@ -123,6 +142,9 @@ export class CampaignService {
     return { added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length };
   }
 
+  /**
+   * Update follow‑up settings (legacy – kept for backward compatibility).
+   */
   async updateFollowUpSettings(
     userId: string,
     campaignId: string,
@@ -141,6 +163,9 @@ export class CampaignService {
     });
   }
 
+  /**
+   * Update auto‑reply setting.
+   */
   async updateAutoReplySettings(userId: string, campaignId: string, autoReplyEnabled: boolean) {
     const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
     if (!campaign) throw new Error('Campaign not found');
@@ -151,6 +176,86 @@ export class CampaignService {
     });
   }
 
+  /**
+   * Update send hour (UTC).
+   */
+  async updateSendHour(userId: string, campaignId: string, sendHourUTC: number) {
+    if (sendHourUTC < 0 || sendHourUTC > 23) throw new Error('sendHourUTC must be 0-23');
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    if (!campaign) throw new Error('Campaign not found');
+
+    return prisma.campaign.update({
+      where: { id: campaignId },
+      data: { sendHourUTC },
+    });
+  }
+
+  /**
+   * Get all follow‑up steps for a campaign.
+   */
+  async getFollowUpSteps(userId: string, campaignId: string) {
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    if (!campaign) throw new Error('Campaign not found');
+
+    return prisma.followUpStep.findMany({
+      where: { campaignId },
+      orderBy: { stepNumber: 'asc' },
+      include: { draft: true },
+    });
+  }
+
+  /**
+   * Replace all follow‑up steps for a campaign (bulk update).
+   */
+  async setFollowUpSteps(
+    userId: string,
+    campaignId: string,
+    steps: { stepNumber: number; delayDays: number; draftId?: string | null }[]
+  ) {
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    if (!campaign) throw new Error('Campaign not found');
+
+    // Validate step numbers are unique
+    const stepNumbers = steps.map(s => s.stepNumber);
+    if (new Set(stepNumbers).size !== steps.length) {
+      throw new Error('Duplicate step numbers not allowed');
+    }
+
+    // Use transaction to replace all steps
+    return prisma.$transaction(async (tx) => {
+      await tx.followUpStep.deleteMany({ where: { campaignId } });
+      const created = await Promise.all(
+        steps.map(step =>
+          tx.followUpStep.create({
+            data: {
+              campaignId,
+              stepNumber: step.stepNumber,
+              delayDays: step.delayDays,
+              draftId: step.draftId,
+            },
+          })
+        )
+      );
+      return created;
+    });
+  }
+
+  /**
+   * Delete a specific follow‑up step.
+   */
+  async deleteFollowUpStep(userId: string, stepId: string) {
+    const step = await prisma.followUpStep.findUnique({
+      where: { id: stepId },
+      include: { campaign: true },
+    });
+    if (!step) throw new Error('Step not found');
+    if (step.campaign.userId !== userId) throw new Error('Unauthorized');
+    await prisma.followUpStep.delete({ where: { id: stepId } });
+  }
+
+  /**
+   * Process leads in a campaign (initial outreach).
+   */
   private async processCampaign(userId: string, campaignId: string, specificLeadIds?: string[]) {
     try {
       let drafts = await prisma.draft.findMany({
@@ -313,6 +418,9 @@ export class CampaignService {
     }
   }
 
+  /**
+   * Get all campaigns for a user.
+   */
   async getCampaigns(userId: string) {
     return prisma.campaign.findMany({
       where: { userId },
@@ -329,6 +437,9 @@ export class CampaignService {
     });
   }
 
+  /**
+   * Get detailed campaign information.
+   */
   async getCampaignDetails(userId: string, campaignId: string) {
     return prisma.campaign.findFirst({
       where: { id: campaignId, userId },
@@ -351,6 +462,10 @@ export class CampaignService {
         emails: {
           orderBy: { sentAt: 'desc' },
           take: 100,
+        },
+        followUpSteps: {
+          orderBy: { stepNumber: 'asc' },
+          include: { draft: true },
         },
       },
     });

@@ -15,6 +15,9 @@ export interface PromptParams {
   recipientName?: string;
   recipientCompany?: string;
   sentiment?: string;
+  conversationHistory?: string;
+  // For follow‑up use case
+  stepNumber?: number; // 1,2,3...
 }
 
 export class PromptManager {
@@ -22,7 +25,7 @@ export class PromptManager {
    * Build a state‑of‑the‑art prompt for the given use case.
    */
   buildPrompt(params: PromptParams): string {
-    const { useCase, tone, campaignContext, reference, companyContext, variationSeed } = params;
+    const { useCase, tone, campaignContext, reference, companyContext, variationSeed, stepNumber } = params;
     const hasReference = !!reference;
 
     let prompt = `You are an elite B2B sales development representative with a 40%+ reply rate. You write concise, human‑centric emails that spark curiosity and respect the prospect's time. Your copy is always personalised, avoids clichés, and follows proven persuasion frameworks. You never use spammy language, gimmicks, or hard sells.\n\n`;
@@ -52,7 +55,7 @@ export class PromptManager {
         prompt += this.buildInitialPrompt(tone, campaignContext, hasReference, reference);
         break;
       case 'followup':
-        prompt += this.buildFollowupPrompt(tone, campaignContext, hasReference, params.originalEmail);
+        prompt += this.buildFollowupPrompt(tone, campaignContext, hasReference, params.originalEmail, stepNumber);
         break;
       case 'reply':
         prompt += this.buildReplyPrompt(params);
@@ -61,7 +64,7 @@ export class PromptManager {
         prompt += this.buildInitialPrompt(tone, campaignContext, hasReference, reference);
     }
 
-    prompt += this.getExampleForUseCase(useCase, tone, hasReference);
+    prompt += this.getExampleForUseCase(useCase, tone, hasReference, stepNumber);
 
     prompt += `\n## OUTPUT FORMAT\n`;
     prompt += `Return ONLY a valid JSON object with two fields: "subject" and "body". Do not include any other text, markdown, or explanation.\n`;
@@ -71,7 +74,6 @@ export class PromptManager {
       prompt += `\n## SENDER COMPANY CONTEXT\n${companyContext}\n`;
     }
 
-    // ===== STRENGTHENED SELF‑CRITIQUE =====
     prompt += `\n## SELF‑CRITIQUE (CRITICAL – MUST FOLLOW)\n`;
     prompt += `Before finalizing, review your email against these checks:\n`;
     prompt += `1. If no reference story was provided (check above: reference story is ${hasReference ? 'PROVIDED' : 'NOT PROVIDED'}), ensure there is NO mention of any client story and that you NEVER used {{reference_company}} or implied a past client using {{company}}.\n`;
@@ -91,12 +93,12 @@ export class PromptManager {
     reference?: string | null
   ): string {
     let section = `\n## INITIAL OUTREACH TASK\n`;
-    section += `You are writing the very first email to a prospect. The goal is to spark curiosity and earn a reply.\n\n`;
+    section += `You are writing the very first email to a prospect. The goal is to spark curiosity and earn a reply, not to close a deal immediately. Focus on building rapport by asking a thoughtful, relevant question based on the campaign objective.\n\n`;
 
     if (campaignContext) {
       section += `### Campaign Objective\n${campaignContext}\n`;
-      section += `- Identify the primary pain point or opportunity this campaign addresses.\n`;
-      section += `- Frame your value proposition as a means to achieve that objective.\n`;
+      section += `- Identify a specific pain point or opportunity this campaign addresses.\n`;
+      section += `- Frame your question or insight to align with that objective.\n`;
     }
 
     if (hasReference && reference) {
@@ -106,10 +108,10 @@ export class PromptManager {
     }
 
     section += `\n### Structure Guidelines for Initial Email\n`;
-    section += `1. **Opening line:** Personalise by mentioning something specific about the prospect's company or role (e.g., "I saw that {{company}} recently expanded into..." or "Following your recent post on...").\n`;
-    section += `2. **Value hook:** Briefly state how you help companies like theirs achieve a specific result. Use numbers or concrete outcomes if possible. This should be tailored to the campaign objective.\n`;
+    section += `1. **Opening line:** Personalise by mentioning the prospect's pain point the campaign addresses (e.g., "Insurance companies like {{company}} all tell me they suffer low conversion rates and have tons of unconverted leads sitting in their CRMs...").\n`;
+    section += `2. **Value hook / question:** Ask a question that highlights a common challenge or opportunity related to the campaign. For example: "How many cold leads do you have sitting in your CRM?" or "What's your biggest hurdle in achieving X?"\n`;
     section += `3. **Social proof / reference (optional):** ${hasReference ? 'If a reference story exists and fits, add one sentence about a similar client\'s success, using {{reference_company}}.' : 'Do not mention any client stories.'}\n`;
-    section += `4. **Low‑friction CTA:** Ask a simple, open‑ended question that invites a reply (e.g., "Would you be open to a 10‑minute call to explore if this could be relevant?").\n`;
+    section += `4. **Low‑friction CTA:** End with a simple, open‑ended question that invites a reply (e.g., "Would you be open to a 10‑minute chat to explore if this could be relevant?").\n`;
 
     return section;
   }
@@ -118,10 +120,11 @@ export class PromptManager {
     tone: string,
     campaignContext?: string | null,
     hasReference?: boolean,
-    originalEmail?: string
+    originalEmail?: string,
+    stepNumber?: number
   ): string {
-    let section = `\n## FOLLOW‑UP EMAIL TASK\n`;
-    section += `The prospect has not replied to the initial email. Your job is to gently re‑engage them with added value or a different angle.\n\n`;
+    let section = `\n## FOLLOW‑UP EMAIL TASK (Step ${stepNumber || 1})\n`;
+    section += `The prospect has not replied to the previous email(s). Your job is to gently re‑engage them with added value or a different angle. The goal is to continue building rapport and eventually lead to a conversation.\n\n`;
 
     if (originalEmail) {
       section += `### Original Email (for context)\n${originalEmail}\n`;
@@ -134,7 +137,7 @@ export class PromptManager {
     section += `- **Option C (Social proof):** Mention that others in their industry (or similar roles) have found value in a specific outcome.\n`;
     section += `- **Politely acknowledge** that they might be busy – e.g., "I know you're busy, so just circling back."\n`;
     section += `- **Keep it very short** – 2–3 sentences maximum. The goal is to remind and add a fresh reason to reply.\n`;
-    section += `- **CTA:** Suggest a specific, easy next step, e.g., "Would a 5‑minute call next Tuesday work for you?"\n`;
+    section += `- **CTA:** End with a simple, open‑ended question that invites a reply (e.g., "How nice would it be for those old leads to generate some unexpected revenue for you at no additional cost?"\n`;
 
     if (campaignContext) {
       section += `\nCampaign Objective (re‑emphasise the core problem): ${campaignContext}\n`;
@@ -144,14 +147,15 @@ export class PromptManager {
   }
 
   private buildReplyPrompt(params: PromptParams): string {
-		const { originalEmail, originalSubject, sentiment, recipientName, recipientCompany, conversationHistory } = params;
-		let section = `\n## REPLY TO LEAD RESPONSE TASK\n`;
-		section += `You are replying to a lead who has responded to your previous email. Adapt to their sentiment and move the conversation forward.\n\n`;
+    const { originalEmail, originalSubject, sentiment, recipientName, recipientCompany, conversationHistory } = params;
+    let section = `\n## REPLY TO LEAD RESPONSE TASK\n`;
+    section += `You are replying to a lead who has responded to your previous email. Adapt to their sentiment and move the conversation forward.\n\n`;
 
-		if (conversationHistory) {
-			section += `### Conversation History (most recent first)\n${conversationHistory}\n\n`;
-			section += `- Use this history to understand context, avoid repeating yourself, and answer any previously asked questions(if an answer hasnt yet been provided).\n`;
-		}
+    if (conversationHistory) {
+      section += `### Conversation History (most recent first)\n${conversationHistory}\n\n`;
+      section += `- Use this history to understand context, avoid repeating yourself, and answer any previously asked questions.\n`;
+    }
+
     if (originalSubject) {
       section += `### Original Subject\n${originalSubject}\n`;
       section += `- The subject should continue the thread. Typically you would use "Re: ${originalSubject}" or a more specific variant. However, if the original subject is generic, you may improve it while keeping the thread context.\n`;
@@ -163,9 +167,9 @@ export class PromptManager {
 
     if (sentiment) {
       section += `\n### Detected Sentiment\n${sentiment}\n`;
-      section += `- If sentiment is **positive**: Reinforce their interest, provide the information they requested, and propose a concrete next step (e.g., calendar link).\n`;
+      section += `- If sentiment is **very positive/positive**: Reinforce their interest, provide the information they requested, and propose a concrete next step (e.g., calendar link).\n`;
       section += `- If sentiment is **neutral/curious**: Answer their questions directly and gently guide them toward a low‑commitment next step.\n`;
-      section += `- If sentiment is **negative/objection**: Acknowledge their concern empathetically, reframe if possible, or ask a clarifying question to understand better.\n`;
+      section += `- If sentiment is **negative/very negative**: Acknowledge their concern empathetically, reframe if possible, or ask a clarifying question to understand better.\n`;
     }
 
     section += `\n### Reply Guidelines\n`;
@@ -178,41 +182,41 @@ export class PromptManager {
     return section;
   }
 
-  private getExampleForUseCase(useCase: UseCase, tone: string, hasReference: boolean): string {
+  private getExampleForUseCase(useCase: UseCase, tone: string, hasReference: boolean, stepNumber?: number): string {
     if (useCase === 'initial' && tone === 'professional') {
       if (hasReference) {
         return `
 ## EXAMPLE (professional tone, initial outreach with reference story)
 {
-  "subject": "Quick question about {{company}}'s 2024 goals",
-  "body": "Hi {{name}},\\n\\nI noticed that {{company}} recently expanded into the EU market – congratulations! Many companies in your space struggle with local compliance while scaling. We recently helped {{reference_company}} reduce compliance overhead by 30% in their first year abroad.\\n\\nWould you be open to a 15‑minute chat about the common pitfalls we see and how to avoid them?\\n\\nBest,\\n{{senderName}}"
+  "subject": "Quick question about {{company}}'s lead conversion",
+  "body": "Hi {{name}},\\n\\nI noticed that many companies in the {{industry}} space struggle with reactivating cold leads. We recently helped {{reference_company}} turn 30% of their dormant database into paying clients within 60 days.\\n\\nHow many unconverted leads do you currently have sitting in your CRM?\\n\\nBest,\\n{{senderName}}"
 }
 `;
       } else {
         return `
 ## EXAMPLE (professional tone, initial outreach without reference)
 {
-  "subject": "Quick question about {{company}}'s 2024 goals",
-  "body": "Hi {{name}},\\n\\nI noticed that {{company}} recently expanded into the EU market – congratulations! Many companies in your space struggle with local compliance while scaling. We help businesses like yours reduce compliance overhead by 30% with a streamlined approach.\\n\\nWould you be open to a 15‑minute chat about the common pitfalls we see and how to avoid them?\\n\\nBest,\\n{{senderName}}"
+  "subject": "A quick question about {{company}}'s pipeline",
+  "body": "Hi {{name}},\\n\\nI've been speaking to insurance companies like {{company}} and many companies in your space tell us that converting cold leads is their biggest challenge.\\n\\nWhat's your current approach to reactivating old leads?\\n\\nBest,\\n{{senderName}}"
 }
 `;
       }
     }
-    if (useCase === 'initial' && tone === 'friendly') {
+    if (useCase === 'followup' && tone === 'professional') {
       if (hasReference) {
         return `
-## EXAMPLE (friendly tone, initial outreach with reference story)
+## EXAMPLE (professional tone, follow‑up step ${stepNumber || 1} with reference story)
 {
-  "subject": "Loved your recent post on scaling",
-  "body": "Hi {{name}},\\n\\nI really enjoyed your recent post about scaling challenges. At {{reference_company}}, we faced similar hurdles and managed to cut onboarding time by 40% with a few simple process tweaks.\\n\\nI'd love to share what we learned – would a quick call next week work for you?\\n\\nCheers,\\n{{senderName}}"
+  "subject": "Following up – lead reactivation at {{company}}",
+  "body": "Hi {{name}},\\n\\nJust circling back – I know you're busy. At {{reference_company}}, they were surprised by how quickly they started seeing results with our approach.\\n\\nIf you're not the right person, could you point me to who handles lead reactivation?\\n\\nBest,\\n{{senderName}}"
 }
 `;
       } else {
         return `
-## EXAMPLE (friendly tone, initial outreach without reference)
+## EXAMPLE (professional tone, follow‑up step ${stepNumber || 1} without reference)
 {
-  "subject": "Loved your recent post on scaling",
-  "body": "Hi {{name}},\\n\\nI really enjoyed your recent post about scaling challenges. Many companies in your space struggle with this, and we've developed a simple framework that cuts onboarding time by 40%.\\n\\nWould a quick call next week work for you to exchange ideas?\\n\\nCheers,\\n{{senderName}}"
+  "subject": "Re: A quick question about {{company}}'s pipeline",
+  "body": "Hi {{name}},\\n\\nI wanted to follow up in case my first email got lost. I'd love to share a quick insight about how companies similar to {{company}} are boosting revenue from old leads.\\n\\nWould a brief call next week work for you?\\n\\nBest,\\n{{senderName}}"
 }
 `;
       }

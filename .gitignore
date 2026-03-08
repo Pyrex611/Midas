@@ -8,3 +8,4 @@ midas.db
 # Build outputs
 dist/
 node_modules/
+backend/node_modules/

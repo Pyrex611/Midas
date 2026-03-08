@@ -33,52 +33,90 @@ export class FollowUpService {
     }
     this.isRunning = true;
     try {
-      logger.debug('Running follow‑up check');
-
-      // Find all campaigns with follow‑ups enabled and active
+      // Get all campaigns with at least one follow‑up step enabled
       const campaigns = await prisma.campaign.findMany({
         where: {
-          followUpEnabled: true,
           status: 'ACTIVE',
+          followUpSteps: { some: { enabled: true } },
         },
         include: {
-          leads: {
-            where: {
-              outreachStatus: 'SENT', // only leads that have been contacted
-            },
-            include: {
-              sentEmails: {
-                where: { isIncoming: false },
-                orderBy: { sentAt: 'desc' },
-                take: 1,
-              },
-            },
+          followUpSteps: {
+            where: { enabled: true },
+            orderBy: { stepNumber: 'asc' },
           },
         },
       });
 
       for (const campaign of campaigns) {
-        const userId = campaign.userId; // capture for later use
-        const delayHours = campaign.followUpDelay;
-        const now = new Date();
+        const userId = campaign.userId;
+        // Get all leads in this campaign that have been contacted (initial email sent)
+        const leads = await prisma.lead.findMany({
+          where: {
+            campaignId: campaign.id,
+            outreachStatus: 'SENT',
+          },
+          include: {
+            sentEmails: {
+              where: { isIncoming: false },
+              orderBy: { sentAt: 'asc' },
+              take: 1, // initial email
+            },
+          },
+        });
 
-        for (const lead of campaign.leads) {
-          const lastOutbound = lead.sentEmails[0];
-          if (!lastOutbound) continue;
+        for (const lead of leads) {
+          const initialEmail = lead.sentEmails[0];
+          if (!initialEmail) continue;
 
+          // Check if lead has replied since initial email
           const hasReplied = await prisma.outboundEmail.findFirst({
             where: {
               leadId: lead.id,
               campaignId: campaign.id,
               isIncoming: true,
-              sentAt: { gt: lastOutbound.sentAt },
+              sentAt: { gt: initialEmail.sentAt },
             },
           });
-          if (hasReplied) continue;
+          if (hasReplied) continue; // replied, no further follow‑ups needed
 
-          const hoursSince = (now.getTime() - lastOutbound.sentAt.getTime()) / (1000 * 60 * 60);
-          if (hoursSince >= delayHours) {
-            await this.sendFollowUp(userId, lead.id, campaign.id, lastOutbound);
+          // Determine which follow‑up steps have already been sent for this lead
+          const sentSteps = await prisma.outboundEmail.findMany({
+            where: {
+              leadId: lead.id,
+              campaignId: campaign.id,
+              isIncoming: false,
+              NOT: { id: initialEmail.id },
+            },
+            orderBy: { sentAt: 'asc' },
+          });
+
+          const sentStepNumbers = new Set<number>();
+          // We need to know which step each sent email corresponds to.
+          // We can infer by counting them in order (step1 = first sent follow-up, step2 = second, etc.)
+          // This assumes steps are sent sequentially without skipping.
+          sentSteps.forEach((_, index) => {
+            sentStepNumbers.add(index + 1); // first follow-up is step1
+          });
+
+          for (const step of campaign.followUpSteps) {
+            // If this step already sent, skip
+            if (sentStepNumbers.has(step.stepNumber)) continue;
+
+            // Calculate target time: initialEmail.sentAt + step.delayDays days, adjusted to sendHourUTC
+            const targetDate = new Date(initialEmail.sentAt);
+            targetDate.setDate(targetDate.getDate() + step.delayDays);
+            targetDate.setUTCHours(campaign.sendHourUTC, 0, 0, 0);
+
+            const now = new Date();
+
+            if (now >= targetDate) {
+              // Send this step
+              await this.sendFollowUp(userId, lead.id, campaign.id, step, initialEmail);
+              // Once sent, we'll break? Actually we should send only the next step that is due, but if multiple steps are due, send them in order.
+              // Since we are iterating in ascending step order, and we check >= targetDate, we may send multiple steps if they are all due.
+              // That's acceptable – but to avoid sending too many at once, we could add a small buffer.
+              // For now, we'll send all due steps.
+            }
           }
         }
       }
@@ -89,7 +127,13 @@ export class FollowUpService {
     }
   }
 
-  private async sendFollowUp(userId: string, leadId: string, campaignId: string, lastOutbound: any) {
+  private async sendFollowUp(
+    userId: string,
+    leadId: string,
+    campaignId: string,
+    step: any,
+    initialEmail: any
+  ) {
     try {
       const [lead, campaign] = await Promise.all([
         prisma.lead.findUnique({ where: { id: leadId } }),
@@ -97,10 +141,15 @@ export class FollowUpService {
       ]);
       if (!lead || !campaign) return;
 
-      // Get a follow‑up draft scoped to user
-      const draft = await draftService.getBestDraft(userId, 'followup', 'professional', campaignId);
+      // Determine which draft to use (step-specific or campaign's best)
+      let draft;
+      if (step.draftId) {
+        draft = await prisma.draft.findUnique({ where: { id: step.draftId } });
+      } else {
+        draft = await draftService.getBestDraft(userId, 'followup', 'professional', campaignId);
+      }
       if (!draft) {
-        logger.warn({ leadId, campaignId }, 'No follow‑up draft available');
+        logger.warn({ leadId, campaignId, step }, 'No follow‑up draft available');
         return;
       }
 
@@ -118,13 +167,13 @@ export class FollowUpService {
         body.replace(/\n/g, '<br>'),
         body,
         campaign.senderName,
-        lastOutbound.messageId,
-				userId
+        initialEmail.messageId, // thread as reply to initial email
+        userId
       );
 
       if (!result.success) throw new Error(result.error || 'Email sending failed');
 
-      // Record the sent follow‑up with userId
+      // Record sent follow‑up
       await prisma.outboundEmail.create({
         data: {
           userId,
@@ -136,7 +185,7 @@ export class FollowUpService {
           status: 'SENT',
           sentAt: new Date(),
           messageId: result.messageId,
-          replyToId: lastOutbound.id,
+          replyToId: initialEmail.id,
         },
       });
 
@@ -145,7 +194,7 @@ export class FollowUpService {
         data: { sentCount: { increment: 1 } },
       });
 
-      logger.info({ leadId, campaignId }, 'Follow‑up sent');
+      logger.info({ leadId, campaignId, step: step.stepNumber }, 'Follow‑up sent');
     } catch (error) {
       logger.error({ error, leadId, campaignId }, 'Failed to send follow‑up');
     }

@@ -12,6 +12,7 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import userRoutes from './routes/user.routes';
 import userSettingsRoutes from './routes/userSettings.routes';
+import aiRoutes from './routes/ai.routes';
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/imap', requireAuth, imapRoutes);
 app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
+app.use('/api/ai', requireAuth, aiRoutes);
 
 app.use(errorHandler);
 
