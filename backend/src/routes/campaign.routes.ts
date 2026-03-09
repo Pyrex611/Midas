@@ -23,6 +23,7 @@ import {
   setFollowUpSteps,
   deleteFollowUpStep,
   updateSendHour,
+	generateStepDraft,
 } from '../controllers/campaign.controller';
 
 const router = Router();
@@ -58,6 +59,7 @@ router.put('/:campaignId/drafts/:draftId', updateDraft);
 router.delete('/:campaignId/drafts/:draftId', deleteDraft);
 router.post('/:campaignId/drafts/custom', createCustomDraft);
 router.post('/:campaignId/drafts/generate', generateCampaignDraft);
+router.post('/:campaignId/steps/:stepNumber/generate-draft', generateStepDraft);
 
 // Get all campaigns (should be after specific routes)
 router.get('/', getCampaigns);

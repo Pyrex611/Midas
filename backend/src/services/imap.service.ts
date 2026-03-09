@@ -8,6 +8,19 @@ import dns from 'dns';
 import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
 
+// Simple bounce detection
+function isBounceMessage(parsed: any): boolean {
+  const from = parsed.from?.value[0]?.address?.toLowerCase() || '';
+  const subject = parsed.subject?.toLowerCase() || '';
+  return (
+    from.includes('mailer-daemon') ||
+    from.includes('postmaster') ||
+    subject.includes('delivery status notification') ||
+    subject.includes('failure') ||
+    subject.includes('undeliverable')
+  );
+}
+
 export class ImapService {
   private isPolling = false;
   private pollInterval: NodeJS.Timeout | null = null;
@@ -158,6 +171,37 @@ export class ImapService {
     const text = parsed.text || '';
     const html = parsed.html || '';
 
+    // Check if this is a bounce message
+    if (isBounceMessage(parsed)) {
+      logger.info({ messageId, from, subject }, 'Bounce detected, skipping and marking lead as bounced');
+
+      // Try to find the original email to update the lead status
+      let originalEmail = null;
+      const searchIds = [];
+      if (inReplyTo) searchIds.push(inReplyTo);
+      if (references.length) searchIds.push(...references);
+
+      if (searchIds.length > 0) {
+        originalEmail = await prisma.outboundEmail.findFirst({
+          where: { messageId: { in: searchIds }, isIncoming: false },
+          select: { leadId: true, userId: true },
+        });
+      }
+
+      if (originalEmail) {
+        await prisma.lead.update({
+          where: { id: originalEmail.leadId },
+          data: { outreachStatus: 'BOUNCED', status: 'NEW' },
+        });
+				// Delete any pending emails for this lead
+				await prisma.pendingEmail.deleteMany({
+					where: { leadId: originalEmail.leadId, status: 'PENDING' },
+				});
+        logger.info({ leadId: originalEmail.leadId }, 'Lead marked as BOUNCED due to bounce');
+      }
+      return; // stop processing this message
+    }
+
     // Extract only the reply (strip quoted original)
     let replyText = text;
     try {
@@ -172,7 +216,7 @@ export class ImapService {
       return;
     }
 
-    // Find original email, including userId
+    // Find original email
     let originalEmail = null;
     const searchIds = [];
     if (inReplyTo) searchIds.push(inReplyTo);
@@ -185,7 +229,7 @@ export class ImapService {
           id: true,
           leadId: true,
           campaignId: true,
-          userId: true, // ✅ needed for foreign key
+          userId: true,
         },
       });
     }
@@ -198,10 +242,10 @@ export class ImapService {
     const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
     if (existing) return;
 
-    // Create inbound email record with userId from original
+    // Create inbound email record
     const newEmail = await prisma.outboundEmail.create({
       data: {
-        userId: originalEmail.userId, // ✅ required
+        userId: originalEmail.userId,
         leadId: originalEmail.leadId,
         campaignId: originalEmail.campaignId,
         subject,
@@ -237,11 +281,6 @@ export class ImapService {
           analysis: JSON.stringify(analysis),
         },
       });
-			if (analysis) {
-				autoReplyService.processReply(newEmail.id).catch(err => {
-					logger.error({ err, messageId }, 'Auto‑reply processing failed');
-				});
-			}
       logger.info({
         messageId,
         sentiment: analysis.sentiment,
@@ -250,6 +289,11 @@ export class ImapService {
         objections: analysis.objections?.length,
         interestLevel: analysis.interestLevel,
       }, 'Reply analysis stored');
+
+      // Trigger auto‑reply if campaign has it enabled
+      autoReplyService.processReply(newEmail.id).catch(err => {
+        logger.error({ err, messageId }, 'Auto‑reply processing failed');
+      });
     } catch (error) {
       logger.error({ error, messageId }, 'Failed to analyze reply');
     }

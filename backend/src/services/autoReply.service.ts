@@ -1,7 +1,6 @@
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { aiService } from './ai.service';
-import { draftService } from './draft.service'; // 👈 IMPORT ADDED
 import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
 import { promptManager } from './promptManager.service';
@@ -33,14 +32,11 @@ export class AutoReplyService {
       const campaign = inbound.campaign;
       const userId = inbound.userId;
 
-      // Fetch conversation history (last 5 emails for this lead)
+      // Fetch conversation history (last 5 emails)
       const conversationHistory = await prisma.outboundEmail.findMany({
-        where: {
-          leadId: lead.id,
-          campaignId: campaign.id,
-        },
+        where: { leadId: lead.id, campaignId: campaign.id },
         orderBy: { sentAt: 'asc' },
-        take: 5, // last 5 (including the current inbound)
+        take: 5,
       });
 
       const historyFormatted = conversationHistory
@@ -52,7 +48,6 @@ export class AutoReplyService {
 
       let analysis = inbound.analysis ? JSON.parse(inbound.analysis) : null;
       if (!analysis) {
-        // If analysis missing, run it now (should not happen, but fallback)
         analysis = await aiService.analyzeReply(inbound.body);
       }
 
@@ -67,51 +62,44 @@ export class AutoReplyService {
         recipientName: lead.name,
         recipientCompany: lead.company || undefined,
         sentiment: analysis.sentiment,
-        conversationHistory: historyFormatted, // new param
+        conversationHistory: historyFormatted,
       };
       const prompt = promptManager.buildPrompt(params);
-      const system = 'You are an expert B2B sales copywriter. Output only valid JSON with "subject" and "body".';
+      const system = 'You are an expert B2B sales closer. Output only valid JSON with "subject" and "body".';
       const raw = await aiService.complete(prompt, system);
 
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('No JSON in response');
       const draftData = JSON.parse(jsonMatch[0]);
 
-      const draft = await draftService.createReplyDraft(
-        userId,
-        lead.id,
-        campaign.id,
-        draftData.subject,
-        draftData.body,
-        'professional'
-      );
-
+      // Personalise the draft
       const { subject, body } = personalisationService.personalise(
         lead,
-        draft.subject,
-        draft.body,
+        draftData.subject,
+        draftData.body,
         campaign.reference,
         campaign.senderName
       );
 
-      const result = await emailService.sendEmail(
+      // Send immediately (bypass queue)
+      const result = await emailService.sendEmailNow(
+        userId,
         lead.email,
         subject,
         body.replace(/\n/g, '<br>'),
         body,
         campaign.senderName,
-        inbound.messageId,
-        userId
+        inbound.messageId
       );
 
       if (!result.success) throw new Error(result.error || 'Email sending failed');
 
+      // Record the sent reply
       await prisma.outboundEmail.create({
         data: {
           userId,
           leadId: lead.id,
           campaignId: campaign.id,
-          draftId: draft.id,
           subject,
           body,
           isIncoming: false,
@@ -122,9 +110,7 @@ export class AutoReplyService {
         },
       });
 
-      await draftService.deleteReplyDraft(lead.id, campaign.id);
-
-      logger.info({ inboundEmailId, leadId: lead.id }, 'Auto‑reply sent');
+      logger.info({ inboundEmailId, leadId: lead.id }, 'Auto‑reply sent immediately');
     } catch (error) {
       logger.error({ error, inboundEmailId }, 'Auto‑reply failed');
     }

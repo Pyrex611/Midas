@@ -450,70 +450,79 @@ export const CampaignDetail: React.FC = () => {
           </button>
           {showFollowUpSteps && (
             <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
-              <p className="text-sm text-gray-600 mb-4">
-                Configure multiple follow‑up emails to be sent after the initial outreach. Each step's delay is in days from the initial email.
-              </p>
+							<h3 className="text-lg font-medium text-gray-900 mb-3">Follow‑up Steps</h3>
+							<p className="text-sm text-gray-600 mb-4">
+								Configure multiple follow‑up emails to be sent after the initial outreach. Each step's delay is in days from the initial email.
+							</p>
 
-              <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1">Send time (UTC hour)</label>
-                <select
-                  value={sendHourUTC}
-                  onChange={(e) => handleSendHourChange(parseInt(e.target.value))}
-                  className="border rounded-md px-3 py-2 text-sm"
-                >
-                  {Array.from({ length: 24 }, (_, i) => (
-                    <option key={i} value={i}>{i.toString().padStart(2, '0')}:00 UTC</option>
-                  ))}
-                </select>
-              </div>
+							<div className="mb-4">
+								<label className="block text-sm text-gray-600 mb-1">Send time (UTC hour)</label>
+								<select
+									value={sendHourUTC}
+									onChange={(e) => handleSendHourChange(parseInt(e.target.value))}
+									className="border rounded-md px-3 py-2 text-sm"
+								>
+									{Array.from({ length: 24 }, (_, i) => (
+										<option key={i} value={i}>{i.toString().padStart(2, '0')}:00 UTC</option>
+									))}
+								</select>
+							</div>
 
-              {followUpSteps.map((step, index) => (
-                <div key={index} className="flex items-center space-x-2 mb-2 border-b pb-2">
-                  <span className="text-sm font-medium w-16">Step {step.stepNumber}</span>
-                  <input
-                    type="number"
-                    min="1"
-                    value={step.delayDays}
-                    onChange={(e) => handleStepChange(index, 'delayDays', parseInt(e.target.value) || 1)}
-                    className="w-20 px-2 py-1 border rounded-md text-sm"
-                  />
-                  <span className="text-sm text-gray-600">days after initial</span>
-                  <select
-                    value={step.draftId || ''}
-                    onChange={(e) => handleStepChange(index, 'draftId', e.target.value || null)}
-                    className="flex-1 px-2 py-1 border rounded-md text-sm"
-                  >
-                    <option value="">Select a draft</option>
-                    {followUpDrafts.map((d: any) => (
-                      <option key={d.id} value={d.id}>{d.subject.substring(0, 40)}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => handleRemoveStep(index)}
-                    className="text-red-600 hover:text-red-800"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+							{followUpSteps.map((step, index) => (
+								<div key={index} className="flex items-center space-x-2 mb-2 border-b pb-2">
+									<span className="text-sm font-medium w-16">Step {step.stepNumber}</span>
+									<input
+										type="number"
+										min="1"
+										value={step.delayDays}
+										onChange={(e) => handleStepChange(index, 'delayDays', parseInt(e.target.value) || 1)}
+										className="w-20 px-2 py-1 border rounded-md text-sm"
+									/>
+									<span className="text-sm text-gray-600">days after initial</span>
 
-              <button
-                onClick={handleAddStep}
-                className="mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-              >
-                + Add Follow‑up Step
-              </button>
+									{/* Draft info and generate button */}
+									<div className="flex items-center flex-1">
+										{step.draftCount !== undefined ? (
+											<span className="text-sm text-gray-700">
+												{step.draftCount} draft{step.draftCount !== 1 ? 's' : ''} available
+											</span>
+										) : (
+											<span className="text-sm text-gray-400">No drafts yet</span>
+										)}
+										<button
+											onClick={() => handleGenerateStepDraft(step.stepNumber)}
+											className="ml-2 px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
+										>
+											+ Generate
+										</button>
+									</div>
 
-              <div className="flex justify-end mt-4">
-                <button
-                  onClick={saveSteps}
-                  disabled={loadingSteps}
-                  className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
-                >
-                  {loadingSteps ? 'Saving...' : 'Save Steps'}
-                </button>
-              </div>
-            </div>
+									<button
+										onClick={() => handleRemoveStep(index)}
+										className="text-red-600 hover:text-red-800"
+									>
+										✕
+									</button>
+								</div>
+							))}
+
+							<button
+								onClick={handleAddStep}
+								className="mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+							>
+								+ Add Follow‑up Step
+							</button>
+
+							<div className="flex justify-end mt-4">
+								<button
+									onClick={saveSteps}
+									disabled={loadingSteps}
+									className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
+								>
+									{loadingSteps ? 'Saving...' : 'Save Steps'}
+								</button>
+							</div>
+						</div>
           )}
         </div>
 

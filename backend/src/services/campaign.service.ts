@@ -9,8 +9,8 @@ const draftService = new DraftService();
 
 export class CampaignService {
   /**
-   * Create a new campaign with modern follow‑up settings (autoReply, sendHourUTC).
-   * Legacy followUpEnabled/followUpDelay are no longer used.
+   * Create a new campaign with modern settings (autoReply, sendHourUTC).
+   * Generates 5 initial drafts and 3 follow‑up drafts for step 1.
    */
   async createCampaign(
     userId: string,
@@ -42,7 +42,7 @@ export class CampaignService {
           status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
           startedAt: leadIds?.length ? new Date() : null,
           autoReplyEnabled: autoReplyEnabled ?? false,
-          sendHourUTC: sendHourUTC ?? 9, // default 9 AM UTC
+          sendHourUTC: sendHourUTC ?? 9,
           ...(leadIds?.length && {
             leads: { connect: leadIds.map(id => ({ id })) },
           }),
@@ -71,29 +71,26 @@ export class CampaignService {
       );
 
       // Generate 3 follow‑up drafts for step 1
-			const followUpDrafts = await draftService.generateFollowUpDrafts(
-				userId,
-				campaign.id,
-				context,
-				reference,
-				senderName,
-				1, // stepNumber
-				3  // count = 3
-			);
+      const followUpDrafts = await draftService.generateFollowUpDrafts(
+        userId,
+        campaign.id,
+        context,
+        reference,
+        senderName,
+        1, // stepNumber
+        3  // count
+      );
 
-			// Create step 1 with default delay 3 days, linking the first draft
-			if (followUpDrafts && followUpDrafts.length > 0) {
-				await prisma.followUpStep.create({
-					data: {
-						campaignId: campaign.id,
-						stepNumber: 1,
-						delayDays: 3,
-						draftId: followUpDrafts[0].id,
-					},
-				});
-			}
+      // Create step 1 with default delay 3 days (no direct draft link)
+      await prisma.followUpStep.create({
+        data: {
+          campaignId: campaign.id,
+          stepNumber: 1,
+          delayDays: 3,
+        },
+      });
 
-      logger.info({ campaignId: campaign.id }, 'Campaign created with 5 initial and 3 follow‑up drafts');
+      logger.info({ campaignId: campaign.id, draftCount: followUpDrafts?.length }, 'Campaign created with 5 initial and 3 follow‑up drafts for step 1');
 
       // Process leads in the background
       if (leadIds?.length) {
@@ -156,27 +153,6 @@ export class CampaignService {
   }
 
   /**
-   * Update follow‑up settings (legacy – kept for backward compatibility).
-   */
-  async updateFollowUpSettings(
-    userId: string,
-    campaignId: string,
-    followUpEnabled: boolean,
-    followUpDelay?: number
-  ) {
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
-    if (!campaign) throw new Error('Campaign not found');
-
-    return prisma.campaign.update({
-      where: { id: campaignId },
-      data: {
-        followUpEnabled,
-        followUpDelay: followUpDelay ?? campaign.followUpDelay,
-      },
-    });
-  }
-
-  /**
    * Update auto‑reply setting.
    */
   async updateAutoReplySettings(userId: string, campaignId: string, autoReplyEnabled: boolean) {
@@ -204,17 +180,47 @@ export class CampaignService {
   }
 
   /**
-   * Get all follow‑up steps for a campaign.
+   * Update active hours.
+   */
+  async updateActiveHours(
+    userId: string,
+    campaignId: string,
+    activeStartHour?: number | null,
+    activeEndHour?: number | null,
+    timezone?: string | null
+  ) {
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    if (!campaign) throw new Error('Campaign not found');
+
+    return prisma.campaign.update({
+      where: { id: campaignId },
+      data: { activeStartHour, activeEndHour, timezone },
+    });
+  }
+
+  /**
+   * Get all follow‑up steps for a campaign (with draft counts).
    */
   async getFollowUpSteps(userId: string, campaignId: string) {
     const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
     if (!campaign) throw new Error('Campaign not found');
 
-    return prisma.followUpStep.findMany({
+    const steps = await prisma.followUpStep.findMany({
       where: { campaignId },
       orderBy: { stepNumber: 'asc' },
-      include: { draft: true },
     });
+
+    // Add draft count to each step
+    const stepsWithCounts = await Promise.all(
+      steps.map(async (step) => {
+        const draftCount = await prisma.draft.count({
+          where: { userId, campaignId, stepNumber: step.stepNumber, isActive: true },
+        });
+        return { ...step, draftCount };
+      })
+    );
+
+    return stepsWithCounts;
   }
 
   /**
@@ -223,7 +229,7 @@ export class CampaignService {
   async setFollowUpSteps(
     userId: string,
     campaignId: string,
-    steps: { stepNumber: number; delayDays: number; draftId?: string | null }[]
+    steps: { stepNumber: number; delayDays: number }[]
   ) {
     const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
     if (!campaign) throw new Error('Campaign not found');
@@ -244,7 +250,6 @@ export class CampaignService {
               campaignId,
               stepNumber: step.stepNumber,
               delayDays: step.delayDays,
-              draftId: step.draftId,
             },
           })
         )
@@ -270,89 +275,107 @@ export class CampaignService {
    * Process leads in a campaign (initial outreach).
    */
   private async processCampaign(userId: string, campaignId: string, specificLeadIds?: string[]) {
-		try {
-			let drafts = await prisma.draft.findMany({
-				where: { userId, campaignId, isActive: true, useCase: 'initial' },
-			});
+    try {
+      let drafts = await prisma.draft.findMany({
+        where: { userId, campaignId, isActive: true, useCase: 'initial' },
+      });
 
-			if (drafts.length === 0) {
-				const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
-				if (campaign) {
-					await draftService.generateMultipleDrafts(
-						userId, 5, 'professional', 'initial', campaignId,
-						campaign.context || undefined,
-						campaign.reference || undefined,
-						undefined,
-						campaign.senderName || undefined
-					);
-					drafts = await prisma.draft.findMany({ where: { userId, campaignId, isActive: true, useCase: 'initial' } });
-				}
-			}
-			if (drafts.length === 0) {
-				logger.error({ campaignId }, 'Failed to generate drafts');
-				return;
-			}
+      if (drafts.length === 0) {
+        logger.info({ campaignId }, 'No initial drafts found, generating 5 new drafts');
+        const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+        if (campaign) {
+          await draftService.generateMultipleDrafts(
+            userId,
+            5,
+            'professional',
+            'initial',
+            campaignId,
+            campaign.context || undefined,
+            campaign.reference || undefined,
+            undefined,
+            campaign.senderName || undefined
+          );
+          drafts = await prisma.draft.findMany({ where: { userId, campaignId, isActive: true, useCase: 'initial' } });
+        }
+      }
 
-			const whereClause: any = { userId, campaignId };
-			if (specificLeadIds) {
-				whereClause.id = { in: specificLeadIds };
-			} else {
-				whereClause.outreachStatus = { in: ['PENDING', 'PROCESSING'] };
-			}
+      if (drafts.length === 0) {
+        logger.error({ campaignId }, 'Failed to generate initial drafts');
+        return;
+      }
 
-			const leads = await prisma.lead.findMany({ where: whereClause });
-			const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+      const whereClause: any = { userId, campaignId };
+      if (specificLeadIds) {
+        whereClause.id = { in: specificLeadIds };
+      } else {
+        whereClause.outreachStatus = { in: ['PENDING', 'PROCESSING'] };
+      }
 
-			if (leads.length === 0) return;
+      const leads = await prisma.lead.findMany({ where: whereClause });
+      const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
 
-			for (const lead of leads) {
-				try {
-					const randomIndex = Math.floor(Math.random() * drafts.length);
-					const draft = drafts[randomIndex];
+      if (leads.length === 0) return;
 
-					logger.info({ leadId: lead.id, selectedDraftId: draft.id }, 'Random draft selected for lead');
+      for (const lead of leads) {
+        try {
+          const randomIndex = Math.floor(Math.random() * drafts.length);
+          const draft = drafts[randomIndex];
 
-					await prisma.lead.update({
-						where: { id: lead.id },
-						data: { outreachStatus: 'PROCESSING' as OutreachStatus },
-					});
+          logger.info({ leadId: lead.id, selectedDraftId: draft.id }, 'Random draft selected for lead');
 
-					const { subject, body } = personalisationService.personalise(
-						lead as any,
-						draft.subject,
-						draft.body,
-						campaign?.reference,
-						campaign?.senderName
-					);
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { outreachStatus: 'PROCESSING' as OutreachStatus },
+          });
 
-					// QUEUE THE EMAIL
-					await emailService.queueEmail(
-						userId,
-						lead.id,
-						campaignId,
-						draft.id,
-						subject,
-						body
-					);
+          const { subject, body } = personalisationService.personalise(
+            lead as any,
+            draft.subject,
+            draft.body,
+            campaign?.reference,
+            campaign?.senderName
+          );
 
-					await prisma.lead.update({
-						where: { id: lead.id },
-						data: { outreachStatus: 'QUEUED' as OutreachStatus },
-					});
+          // Queue the email
+          await emailService.queueEmail(
+            userId,
+            lead.id,
+            campaignId,
+            draft.id,
+            subject,
+            body
+          );
 
-					logger.info({ leadId: lead.id }, 'Email queued');
-				} catch (error: any) {
-					logger.error({ error, leadId: lead.id }, 'Error processing lead');
-					await prisma.lead.update({
-						where: { id: lead.id },
-						data: { outreachStatus: 'FAILED' as OutreachStatus },
-					});
-				}
-			}
-		} catch (error) {
-			logger.error({ error, userId, campaignId }, 'Fatal error in processCampaign');
-		}
-	}
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { outreachStatus: 'QUEUED' as OutreachStatus },
+          });
+
+          logger.info({ leadId: lead.id }, 'Email queued');
+        } catch (error: any) {
+          logger.error({ error, leadId: lead.id }, 'Error processing lead');
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { outreachStatus: 'FAILED' as OutreachStatus },
+          });
+        }
+      }
+
+      if (!specificLeadIds) {
+        const remaining = await prisma.lead.count({
+          where: { userId, campaignId, outreachStatus: { in: ['PENDING', 'PROCESSING', 'QUEUED'] } },
+        });
+        if (remaining === 0) {
+          await prisma.campaign.update({
+            where: { id: campaignId },
+            data: { status: 'COMPLETED', completedAt: new Date() },
+          });
+        }
+      }
+    } catch (error) {
+      logger.error({ error, userId, campaignId }, 'Fatal error in processCampaign');
+    }
+  }
 
   /**
    * Get all campaigns for a user.
@@ -374,72 +397,58 @@ export class CampaignService {
   }
 
   /**
-	 * Get detailed campaign information.
-	 */
-	async getCampaignDetails(userId: string, campaignId: string) {
-		const campaign = await prisma.campaign.findFirst({
-			where: { id: campaignId, userId },
-			include: {
-				leads: {
-					select: {
-						id: true,
-						name: true,
-						email: true,
-						company: true,
-						position: true,
-						outreachStatus: true,
-						status: true,
-					},
-				},
-				drafts: {
-					where: { isActive: true },
-					orderBy: { createdAt: 'desc' },
-				},
-				emails: {
-					orderBy: { sentAt: 'desc' },
-					take: 100,
-				},
-				followUpSteps: {
-					orderBy: { stepNumber: 'asc' },
-					include: { draft: true },
-				},
-				pendingEmails: {
-					where: { status: 'PENDING' },
-					select: { id: true },
-				},
-			},
-		});
+   * Get detailed campaign information, including follow‑up steps with draft counts.
+   */
+  async getCampaignDetails(userId: string, campaignId: string) {
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: campaignId, userId },
+      include: {
+        leads: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            company: true,
+            position: true,
+            outreachStatus: true,
+            status: true,
+          },
+        },
+        drafts: {
+          where: { isActive: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        emails: {
+          orderBy: { sentAt: 'desc' },
+          take: 100,
+        },
+        followUpSteps: {
+          orderBy: { stepNumber: 'asc' },
+        },
+      },
+    });
 
-		if (!campaign) return null;
+    if (!campaign) return null;
 
-		// Add computed counts
-		const result = {
-			...campaign,
-			queuedCount: campaign.pendingEmails.length,
-		};
-		delete result.pendingEmails; // remove raw relation
+    // Compute draft counts for each step
+    const stepsWithCounts = await Promise.all(
+      campaign.followUpSteps.map(async (step) => {
+        const draftCount = await prisma.draft.count({
+          where: { userId, campaignId, stepNumber: step.stepNumber, isActive: true },
+        });
+        return { ...step, draftCount };
+      })
+    );
 
-		return result;
-	}
-	
-	// Add to CampaignService class
-	async updateActiveHours(
-		userId: string,
-		campaignId: string,
-		activeStartHour?: number | null,
-		activeEndHour?: number | null,
-		timezone?: string | null
-	) {
-		const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
-		if (!campaign) throw new Error('Campaign not found');
+    // Compute queued count
+    const queuedCount = await prisma.pendingEmail.count({
+      where: { userId, campaignId, status: 'PENDING' },
+    });
 
-		return prisma.campaign.update({
-			where: { id: campaignId },
-			data: {
-				activeStartHour,
-				activeEndHour,
-				timezone,
-			},
-		});
-	}
+    return {
+      ...campaign,
+      followUpSteps: stepsWithCounts,
+      queuedCount,
+    };
+  }
 }

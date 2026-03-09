@@ -468,69 +468,46 @@ export const setFollowUpSteps = async (req: AuthRequest, res: Response, next: Ne
   try {
     const userId = req.user!.id;
     const { id } = req.params;
-    const { steps } = req.body; // expected array of { stepNumber, delayDays, draftId? }
+    const { steps } = req.body; // array of { stepNumber, delayDays }
 
     if (!Array.isArray(steps)) {
       return res.status(400).json({ error: 'steps must be an array' });
     }
 
-    // First, get the campaign to have context for draft generation
     const campaign = await prisma.campaign.findFirst({
       where: { id, userId },
-      select: {
-        context: true,
-        reference: true,
-        senderName: true,
-      },
+      select: { context: true, reference: true, senderName: true },
     });
     if (!campaign) {
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
-    // Replace all steps (this deletes old ones and creates new ones)
+    // Replace all steps (delete old, create new)
     const createdSteps = await campaignService.setFollowUpSteps(userId, id, steps);
 
-    // For each created step that does not have a draftId, generate a new follow‑up draft (only one)
-		const stepsWithDrafts = await Promise.all(
-			createdSteps.map(async (step) => {
-				if (!step.draftId) {
-					try {
-						// Generate exactly 3 draft for this step
-						const drafts = await draftService.generateFollowUpDrafts(
-							userId,
-							id,
-							campaign.context || undefined,
-							campaign.reference || undefined,
-							campaign.senderName || undefined,
-							step.stepNumber,
-							3 // count
-						);
-						if (drafts && drafts.length > 0) {
-							const updatedStep = await prisma.followUpStep.update({
-								where: { id: step.id },
-								data: { draftId: drafts[0].id },
-								include: { draft: true },
-							});
-							return updatedStep;
-						} else {
-							logger.warn({ stepId: step.id }, 'No draft generated for follow‑up step');
-							return step;
-						}
-					} catch (error) {
-						logger.error({ error, stepId: step.id }, 'Failed to generate draft for follow‑up step');
-						return step;
-					}
-				}
-				// If step already has draftId, fetch it
-				const stepWithDraft = await prisma.followUpStep.findUnique({
-					where: { id: step.id },
-					include: { draft: true },
-				});
-				return stepWithDraft;
-			})
-		);
+    // For each new step, generate a follow‑up draft (one per step)
+    for (const step of createdSteps) {
+      try {
+        const drafts = await draftService.generateFollowUpDrafts(
+          userId,
+          id,
+          campaign.context || undefined,
+          campaign.reference || undefined,
+          campaign.senderName || undefined,
+          step.stepNumber,
+          1 // count
+        );
+        if (drafts && drafts.length > 0) {
+          // No need to link the draft to the step; we'll rely on stepNumber field.
+          logger.info({ stepId: step.id, draftId: drafts[0].id }, 'Generated draft for new step');
+        }
+      } catch (error) {
+        logger.error({ error, stepId: step.id }, 'Failed to generate draft for step');
+      }
+    }
 
-    res.status(201).json(stepsWithDrafts);
+    // Return steps with draft counts (we'll enhance the return later)
+    res.status(201).json(createdSteps);
   } catch (error) {
     next(error);
   }
@@ -741,6 +718,28 @@ export const updateActiveHours = async (req: AuthRequest, res: Response, next: N
       timezone
     );
     res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const generateStepDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { campaignId, stepNumber } = req.params;
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+    const drafts = await draftService.generateFollowUpDrafts(
+      userId,
+      campaignId,
+      campaign.context || undefined,
+      campaign.reference || undefined,
+      campaign.senderName || undefined,
+      parseInt(stepNumber),
+      1
+    );
+    res.status(201).json(drafts);
   } catch (error) {
     next(error);
   }

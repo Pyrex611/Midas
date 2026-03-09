@@ -127,78 +127,87 @@ export class FollowUpService {
     }
   }
 
-  private async sendFollowUp(
-    userId: string,
-    leadId: string,
-    campaignId: string,
-    step: any,
-    initialEmail: any
-  ) {
-    try {
-      const [lead, campaign] = await Promise.all([
-        prisma.lead.findUnique({ where: { id: leadId } }),
-        prisma.campaign.findUnique({ where: { id: campaignId } }),
-      ]);
-      if (!lead || !campaign) return;
+  private async sendFollowUp(userId: string, leadId: string, campaignId: string, step: any, initialEmail: any) {
+		try {
+			const [lead, campaign] = await Promise.all([
+				prisma.lead.findUnique({ where: { id: leadId } }),
+				prisma.campaign.findUnique({ where: { id: campaignId } }),
+			]);
+			if (!lead || !campaign) return;
 
-      // Determine which draft to use (step-specific or campaign's best)
-      let draft;
-      if (step.draftId) {
-        draft = await prisma.draft.findUnique({ where: { id: step.draftId } });
-      } else {
-        draft = await draftService.getBestDraft(userId, 'followup', 'professional', campaignId);
-      }
-      if (!draft) {
-        logger.warn({ leadId, campaignId, step }, 'No follow‑up draft available');
-        return;
-      }
+			// Get all active drafts for this step
+			const drafts = await prisma.draft.findMany({
+				where: {
+					userId,
+					campaignId,
+					useCase: 'followup',
+					stepNumber: step.stepNumber,
+					isActive: true,
+				},
+			});
 
-      const { subject, body } = personalisationService.personalise(
-        lead as any,
-        draft.subject,
-        draft.body,
-        campaign.reference,
-        campaign.senderName
-      );
+			let draft;
+			if (drafts.length === 0) {
+				// Fallback: try any follow‑up draft for this campaign (older method)
+				const anyDraft = await prisma.draft.findFirst({
+					where: { userId, campaignId, useCase: 'followup', isActive: true },
+				});
+				if (!anyDraft) {
+					logger.warn({ leadId, campaignId, step }, 'No follow‑up draft available');
+					return;
+				}
+				draft = anyDraft;
+			} else {
+				// Pick a random draft from the available ones
+				const randomIndex = Math.floor(Math.random() * drafts.length);
+				draft = drafts[randomIndex];
+			}
 
-      const result = await emailService.sendEmail(
-        lead.email,
-        subject,
-        body.replace(/\n/g, '<br>'),
-        body,
-        campaign.senderName,
-        initialEmail.messageId, // thread as reply to initial email
-        userId
-      );
+			const { subject, body } = personalisationService.personalise(
+				lead as any,
+				draft.subject,
+				draft.body,
+				campaign.reference,
+				campaign.senderName
+			);
 
-      if (!result.success) throw new Error(result.error || 'Email sending failed');
+			const result = await emailService.sendEmail(
+				lead.email,
+				subject,
+				body.replace(/\n/g, '<br>'),
+				body,
+				campaign.senderName,
+				initialEmail.messageId,
+				userId
+			);
 
-      // Record sent follow‑up
-      await prisma.outboundEmail.create({
-        data: {
-          userId,
-          leadId,
-          campaignId,
-          draftId: draft.id,
-          subject,
-          body,
-          status: 'SENT',
-          sentAt: new Date(),
-          messageId: result.messageId,
-          replyToId: initialEmail.id,
-        },
-      });
+			if (!result.success) throw new Error(result.error || 'Email sending failed');
 
-      await prisma.draft.update({
-        where: { id: draft.id },
-        data: { sentCount: { increment: 1 } },
-      });
+			await prisma.outboundEmail.create({
+				data: {
+					userId,
+					leadId,
+					campaignId,
+					draftId: draft.id,
+					subject,
+					body,
+					status: 'SENT',
+					sentAt: new Date(),
+					messageId: result.messageId,
+					replyToId: initialEmail.id,
+				},
+			});
 
-      logger.info({ leadId, campaignId, step: step.stepNumber }, 'Follow‑up sent');
-    } catch (error) {
-      logger.error({ error, leadId, campaignId }, 'Failed to send follow‑up');
-    }
-  }
+			await prisma.draft.update({
+				where: { id: draft.id },
+				data: { sentCount: { increment: 1 } },
+			});
+
+			logger.info({ leadId, campaignId, step: step.stepNumber, draftId: draft.id }, 'Follow‑up sent');
+		} catch (error) {
+			logger.error({ error, leadId, campaignId }, 'Failed to send follow‑up');
+		}
+	}
 }
 
 export const followUpService = new FollowUpService();
