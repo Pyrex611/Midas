@@ -190,7 +190,7 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
 
 /**
  * POST /api/campaigns/:campaignId/leads/:leadId/send
- * Send the personalised email for a lead in a campaign immediately.
+ * Queue the personalised email for a lead in a campaign for sending.
  */
 export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -201,7 +201,7 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
       prisma.lead.findFirst({ where: { id: leadId, userId } }),
       prisma.campaign.findFirst({
         where: { id: campaignId, userId },
-        include: { drafts: { where: { isActive: true, userId }, orderBy: { createdAt: 'desc' }, take: 1 } },
+        include: { drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' }, take: 1 } },
       }),
     ]);
 
@@ -224,41 +224,15 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
       campaign.senderName
     );
 
-    const result = await emailService.sendEmail(
-      lead.email,
-      subject,
-      body.replace(/\n/g, '<br>'),
-      body,
-      campaign.senderName,
-      undefined,
-      userId
-    );
-    if (!result.success) throw new Error(result.error || 'Email sending failed');
-
-    await prisma.outboundEmail.create({
-      data: {
-        userId,
-        leadId,
-        campaignId,
-        draftId: draft.id,
-        subject,
-        body,
-        status: 'SENT',
-        sentAt: new Date(),
-        messageId: result.messageId,
-      },
-    });
+    // Queue the email
+    await emailService.queueEmail(userId, leadId, campaignId, draft.id, subject, body);
     await prisma.lead.update({
       where: { id: leadId },
-      data: { outreachStatus: 'SENT', status: 'CONTACTED' },
-    });
-    await prisma.draft.update({
-      where: { id: draft.id },
-      data: { sentCount: { increment: 1 } },
+      data: { outreachStatus: 'QUEUED' },
     });
 
-    logger.info({ leadId, campaignId, messageId: result.messageId }, 'Email sent');
-    res.json({ success: true, message: 'Email sent successfully', previewUrl: result.previewUrl });
+    logger.info({ leadId, campaignId }, 'Email queued (manual)');
+    res.json({ success: true, message: 'Email queued' });
   } catch (error) {
     next(error);
   }
@@ -355,7 +329,7 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
 
 /**
  * POST /api/campaigns/:campaignId/leads/:leadId/send-reply-draft
- * Send the reply draft and delete it.
+ * Send the reply draft immediately (bypasses queue).
  */
 export const sendReplyDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -389,17 +363,20 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       campaign.senderName
     );
 
-    const result = await emailService.sendEmail(
+    // ✅ SEND IMMEDIATELY – bypass queue
+    const result = await emailService.sendEmailNow(
+      userId,
       lead.email,
       personalisedSubject,
       personalisedBody.replace(/\n/g, '<br>'),
       personalisedBody,
       campaign.senderName,
-      latestIncoming.messageId,
-      userId
+      latestIncoming.messageId
     );
+
     if (!result.success) throw new Error(result.error || 'Email sending failed');
 
+    // Record the sent reply
     await prisma.outboundEmail.create({
       data: {
         userId,
@@ -420,9 +397,10 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       data: { outreachStatus: 'SENT', status: 'CONTACTED' },
     });
 
+    // Delete the reply draft after sending
     await draftService.deleteReplyDraft(leadId, campaignId);
 
-    logger.info({ leadId, campaignId, messageId: result.messageId }, 'Reply sent');
+    logger.info({ leadId, campaignId, messageId: result.messageId }, 'Reply sent immediately');
     res.json({ success: true, message: 'Reply sent' });
   } catch (error) {
     next(error);
@@ -512,45 +490,45 @@ export const setFollowUpSteps = async (req: AuthRequest, res: Response, next: Ne
     // Replace all steps (this deletes old ones and creates new ones)
     const createdSteps = await campaignService.setFollowUpSteps(userId, id, steps);
 
-    // For each created step that does not have a draftId, generate a new follow‑up draft
-    const stepsWithDrafts = await Promise.all(
-      createdSteps.map(async (step) => {
-        if (!step.draftId) {
-          try {
-            // Generate 3 follow‑up drafts for this step (we'll assign the first one)
-            const drafts = await draftService.generateFollowUpDrafts(
-              userId,
-              id,
-              campaign.context || undefined,
-              campaign.reference || undefined,
-              campaign.senderName || undefined,
-              step.stepNumber
-            );
-            if (drafts && drafts.length > 0) {
-              // Assign the first generated draft to the step
-              const updatedStep = await prisma.followUpStep.update({
-                where: { id: step.id },
-                data: { draftId: drafts[0].id },
-                include: { draft: true },
-              });
-              return updatedStep;
-            } else {
-              logger.warn({ stepId: step.id }, 'No drafts generated for follow‑up step');
-              return step;
-            }
-          } catch (error) {
-            logger.error({ error, stepId: step.id }, 'Failed to generate draft for follow‑up step');
-            return step; // return step without draft
-          }
-        }
-        // If step already has a draftId, just fetch the draft
-        const stepWithDraft = await prisma.followUpStep.findUnique({
-          where: { id: step.id },
-          include: { draft: true },
-        });
-        return stepWithDraft;
-      })
-    );
+    // For each created step that does not have a draftId, generate a new follow‑up draft (only one)
+		const stepsWithDrafts = await Promise.all(
+			createdSteps.map(async (step) => {
+				if (!step.draftId) {
+					try {
+						// Generate exactly 3 draft for this step
+						const drafts = await draftService.generateFollowUpDrafts(
+							userId,
+							id,
+							campaign.context || undefined,
+							campaign.reference || undefined,
+							campaign.senderName || undefined,
+							step.stepNumber,
+							3 // count
+						);
+						if (drafts && drafts.length > 0) {
+							const updatedStep = await prisma.followUpStep.update({
+								where: { id: step.id },
+								data: { draftId: drafts[0].id },
+								include: { draft: true },
+							});
+							return updatedStep;
+						} else {
+							logger.warn({ stepId: step.id }, 'No draft generated for follow‑up step');
+							return step;
+						}
+					} catch (error) {
+						logger.error({ error, stepId: step.id }, 'Failed to generate draft for follow‑up step');
+						return step;
+					}
+				}
+				// If step already has draftId, fetch it
+				const stepWithDraft = await prisma.followUpStep.findUnique({
+					where: { id: step.id },
+					include: { draft: true },
+				});
+				return stepWithDraft;
+			})
+		);
 
     res.status(201).json(stepsWithDrafts);
   } catch (error) {
@@ -733,6 +711,36 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
     }
 
     res.status(201).json(draft);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/campaigns/:id/active-hours
+ * Update campaign's active sending hours.
+ */
+export const updateActiveHours = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { activeStartHour, activeEndHour, timezone } = req.body;
+
+    if (activeStartHour !== undefined && (activeStartHour < 0 || activeStartHour > 23)) {
+      return res.status(400).json({ error: 'activeStartHour must be 0-23' });
+    }
+    if (activeEndHour !== undefined && (activeEndHour < 0 || activeEndHour > 23)) {
+      return res.status(400).json({ error: 'activeEndHour must be 0-23' });
+    }
+
+    const updated = await campaignService.updateActiveHours(
+      userId,
+      id,
+      activeStartHour,
+      activeEndHour,
+      timezone
+    );
+    res.json(updated);
   } catch (error) {
     next(error);
   }

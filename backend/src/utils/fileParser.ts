@@ -1,17 +1,14 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import { LeadCreateInput, EmailCandidate } from '../types/lead.types';
+import { LeadCreateInput } from '../types/lead.types';
 
 export interface ParseResult {
   leads: LeadCreateInput[];
-  emailCandidates?: { rowIndex: number; candidates: EmailCandidate[] }[];
   errors: { row: number; message: string }[];
 }
 
 /**
- * Smart column mapper that detects columns using keyword matching.
- * Handles full name, first/last name, multiple email columns with type inference,
- * company, and position.
+ * Smart column mapper that uses keyword matching to identify relevant fields.
  */
 class ColumnMapper {
   private headers: string[];
@@ -107,8 +104,8 @@ class ColumnMapper {
   /**
    * Extract ALL email candidates from a row.
    */
-  extractEmailCandidates(row: any[]): EmailCandidate[] {
-    const candidates: EmailCandidate[] = [];
+  extractEmailCandidates(row: any[]): { email: string; type: string }[] {
+    const candidates: { email: string; type: string }[] = [];
     for (const col of this.emailCols) {
       const val = row[col.index]?.trim();
       if (val && isValidEmail(val)) {
@@ -157,17 +154,48 @@ class ColumnMapper {
   }
 }
 
-/**
- * Validate email format.
- */
 function isValidEmail(email: string): boolean {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(email);
 }
 
 /**
- * Parse uploaded file (CSV, TXT, XLSX) into leads and email candidates.
+ * Recursively collect leads from a JSON object.
+ * It collects:
+ * - Any array found under the key 'leadsEnrichment'
+ * - Any object that has an 'email' field (candidate lead)
  */
+function collectLeads(obj: any, leads: any[]): void {
+  if (Array.isArray(obj)) {
+    // If it's an array, iterate over its elements
+    obj.forEach(item => collectLeads(item, leads));
+  } else if (obj && typeof obj === 'object') {
+    // Check if this object looks like a lead (has email)
+    if (obj.email && typeof obj.email === 'string') {
+      leads.push(obj);
+    }
+    // If it has a leadsEnrichment array, collect its contents
+    if (obj.leadsEnrichment && Array.isArray(obj.leadsEnrichment)) {
+      leads.push(...obj.leadsEnrichment);
+    }
+    // Recurse into all object properties
+    Object.values(obj).forEach(value => collectLeads(value, leads));
+  }
+}
+
+/**
+ * Parse a JSON file that may contain leads in various structures.
+ * Returns the concatenated array of lead objects.
+ */
+async function parseJSONFile(buffer: Buffer): Promise<any[]> {
+  const text = buffer.toString('utf-8');
+  const json = JSON.parse(text);
+
+  const leads: any[] = [];
+  collectLeads(json, leads);
+  return leads;
+}
+
 export async function parseLeadFile(
   buffer: Buffer,
   mimeType: string
@@ -198,6 +226,8 @@ export async function parseLeadFile(
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       rows = XLSX.utils.sheet_to_json(sheet);
+    } else if (mimeType.includes('json') || mimeType.includes('application/json')) {
+      rows = await parseJSONFile(buffer);
     } else {
       throw new Error('Unsupported file type');
     }
@@ -233,7 +263,6 @@ export async function parseLeadFile(
   }
 
   const leads: LeadCreateInput[] = [];
-  const emailCandidates: { rowIndex: number; candidates: EmailCandidate[] }[] = [];
 
   rows.forEach((row, idx) => {
     const rowValues = headers.map(h => row[h]?.toString() || '');
@@ -241,9 +270,9 @@ export async function parseLeadFile(
 
     // Extract fields using the smart mapper
     const name = mapper.extractName(rowValues);
+    const candidates = mapper.extractEmailCandidates(rowValues);
     const company = mapper.extractCompany(rowValues);
     const position = mapper.extractPosition(rowValues);
-    const candidates = mapper.extractEmailCandidates(rowValues);
 
     // ----- VALIDATION & ERROR COLLECTION -----
     let rowValid = true;
@@ -263,8 +292,7 @@ export async function parseLeadFile(
       return;
     }
 
-    // TEMPORARY: store the first candidate as default email.
-    // If multiple candidates exist, we will later ask user to choose.
+    // Use the first email candidate as primary
     const primaryEmail = candidates[0].email;
     leads.push({
       name: name!.trim().slice(0, 255),
@@ -272,22 +300,7 @@ export async function parseLeadFile(
       company: company?.trim().slice(0, 255) || null,
       position: position?.trim().slice(0, 255) || null,
     });
-
-    // If more than one candidate, record them for conflict resolution
-    if (candidates.length > 1) {
-      emailCandidates.push({
-        rowIndex: idx,
-        candidates: candidates.map(c => ({
-          email: c.email.toLowerCase(),
-          type: c.type,
-        })),
-      });
-    }
   });
 
-  return {
-    leads,
-    emailCandidates: emailCandidates.length > 0 ? emailCandidates : undefined,
-    errors,
-  };
+  return { leads, errors };
 }

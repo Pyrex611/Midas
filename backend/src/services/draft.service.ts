@@ -103,30 +103,33 @@ export class DraftService {
   }
 
   /**
-   * Generate 3 follow‑up drafts for a campaign's first step.
-   */
-  async generateFollowUpDrafts(
-    userId: string,
-    campaignId: string,
-    campaignContext?: string,
-    reference?: string,
-    senderName?: string,
-    stepNumber: number = 1
-  ) {
-    logger.info({ campaignId, stepNumber }, 'Generating follow‑up drafts');
-    return this.generateMultipleDrafts(
-      userId,
-      3,
-      'professional',
-      'followup',
-      campaignId,
-      campaignContext,
-      reference,
-      undefined,
-      senderName,
-      stepNumber
-    );
-  }
+	 * Generate follow‑up drafts for a campaign step.
+	 * @param count Number of drafts to generate (default 3)
+	 */
+	async generateFollowUpDrafts(
+		userId: string,
+		campaignId: string,
+		campaignContext?: string,
+		reference?: string,
+		senderName?: string,
+		stepNumber: number = 1,
+		count: number = 3
+	) {
+		logger.info({ campaignId, stepNumber, count }, 'Generating follow‑up drafts');
+		const drafts = await this.generateMultipleDrafts(
+			userId,
+			count,
+			'professional',
+			'followup',
+			campaignId,
+			campaignContext,
+			reference,
+			undefined,
+			senderName,
+			stepNumber // pass stepNumber for prompt context
+		);
+		return drafts;
+	}
 
   async getBestDraft(
     userId: string,

@@ -38,6 +38,8 @@ export const CampaignDetail: React.FC = () => {
   const [followUpSteps, setFollowUpSteps] = useState<any[]>([]);
   const [sendHourUTC, setSendHourUTC] = useState(9);
   const [loadingSteps, setLoadingSteps] = useState(false);
+  const [showFollowUpSteps, setShowFollowUpSteps] = useState(false); // collapsed by default
+  const [showActiveHours, setShowActiveHours] = useState(false); // collapsed by default
 
   // Auto‑reply settings state
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
@@ -182,11 +184,10 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  // Helper to get draft label based on use case and step association
+  // Helper to get draft label
   const getDraftLabel = (draft: any): string => {
     if (draft.useCase === 'initial') return 'Outreach';
     if (draft.useCase === 'followup') {
-      // Find if this draft is linked to any step
       const step = followUpSteps.find(s => s.draftId === draft.id);
       if (step) return `Follow‑up ${step.stepNumber}`;
       return 'Follow‑up (global)';
@@ -198,10 +199,12 @@ export const CampaignDetail: React.FC = () => {
   const filteredDrafts = campaign?.drafts?.filter((draft: any) => {
     if (draftFilter === 'all') return true;
     if (draftFilter === 'initial') return draft.useCase === 'initial';
-    // filter by step number
     const step = followUpSteps.find(s => s.stepNumber === draftFilter && s.draftId === draft.id);
     return !!step;
   }) || [];
+
+  // Get all follow‑up drafts for the dropdown
+  const followUpDrafts = campaign?.drafts?.filter((d: any) => d.useCase === 'followup') || [];
 
   if (loading) {
     return (
@@ -376,7 +379,7 @@ export const CampaignDetail: React.FC = () => {
         )}
 
         {/* Stats */}
-        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
           <div className="bg-gray-50 p-4 rounded-lg">
             <div className="text-2xl font-bold text-gray-900">{campaign.leads?.length || 0}</div>
             <div className="text-sm text-gray-600">Leads</div>
@@ -384,6 +387,10 @@ export const CampaignDetail: React.FC = () => {
           <div className="bg-gray-50 p-4 rounded-lg">
             <div className="text-2xl font-bold text-gray-900">{campaign.emails?.length || 0}</div>
             <div className="text-sm text-gray-600">Emails Sent</div>
+          </div>
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <div className="text-2xl font-bold text-gray-900">{campaign.queuedCount || 0}</div>
+            <div className="text-sm text-gray-600">Queued</div>
           </div>
           <div className="bg-gray-50 p-4 rounded-lg">
             <div className="text-2xl font-bold text-gray-900">{campaign.drafts?.length || 0}</div>
@@ -394,74 +401,6 @@ export const CampaignDetail: React.FC = () => {
               {campaign.leads?.filter((l: any) => l?.outreachStatus === 'SENT').length || 0}
             </div>
             <div className="text-sm text-gray-600">Delivered</div>
-          </div>
-        </div>
-
-        {/* Follow‑up Steps Card */}
-        <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-900 mb-3">Follow‑up Steps</h3>
-          <p className="text-sm text-gray-600 mb-4">
-            Configure multiple follow‑up emails to be sent after the initial outreach. Each step's delay is in days from the initial email.
-          </p>
-
-          <div className="mb-4">
-            <label className="block text-sm text-gray-600 mb-1">Send time (UTC hour)</label>
-            <select
-              value={sendHourUTC}
-              onChange={(e) => handleSendHourChange(parseInt(e.target.value))}
-              className="border rounded-md px-3 py-2 text-sm"
-            >
-              {Array.from({ length: 24 }, (_, i) => (
-                <option key={i} value={i}>{i.toString().padStart(2, '0')}:00 UTC</option>
-              ))}
-            </select>
-          </div>
-
-          {followUpSteps.map((step, index) => (
-            <div key={index} className="flex items-center space-x-2 mb-2 border-b pb-2">
-              <span className="text-sm font-medium w-16">Step {step.stepNumber}</span>
-              <input
-                type="number"
-                min="1"
-                value={step.delayDays}
-                onChange={(e) => handleStepChange(index, 'delayDays', parseInt(e.target.value) || 1)}
-                className="w-20 px-2 py-1 border rounded-md text-sm"
-              />
-              <span className="text-sm text-gray-600">days after initial</span>
-              <select
-                value={step.draftId || ''}
-                onChange={(e) => handleStepChange(index, 'draftId', e.target.value || null)}
-                className="flex-1 px-2 py-1 border rounded-md text-sm"
-              >
-                <option value="">Use best draft</option>
-                {campaign.drafts?.map((d: any) => (
-                  <option key={d.id} value={d.id}>{d.subject.substring(0, 30)}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => handleRemoveStep(index)}
-                className="text-red-600 hover:text-red-800"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-
-          <button
-            onClick={handleAddStep}
-            className="mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-          >
-            + Add Follow‑up Step
-          </button>
-
-          <div className="flex justify-end mt-4">
-            <button
-              onClick={saveSteps}
-              disabled={loadingSteps}
-              className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
-            >
-              {loadingSteps ? 'Saving...' : 'Save Steps'}
-            </button>
           </div>
         </div>
 
@@ -496,6 +435,175 @@ export const CampaignDetail: React.FC = () => {
               {updatingAutoReply ? 'Saving...' : 'Save Settings'}
             </button>
           </div>
+        </div>
+
+        {/* Collapsible Advanced Settings */}
+        <div className="mt-4 border-t pt-4">
+          <button
+            onClick={() => setShowFollowUpSteps(!showFollowUpSteps)}
+            className="flex items-center justify-between w-full text-left"
+          >
+            <h3 className="text-lg font-medium text-gray-900">Follow‑up Steps</h3>
+            <svg className={`h-5 w-5 transform transition-transform ${showFollowUpSteps ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {showFollowUpSteps && (
+            <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
+              <p className="text-sm text-gray-600 mb-4">
+                Configure multiple follow‑up emails to be sent after the initial outreach. Each step's delay is in days from the initial email.
+              </p>
+
+              <div className="mb-4">
+                <label className="block text-sm text-gray-600 mb-1">Send time (UTC hour)</label>
+                <select
+                  value={sendHourUTC}
+                  onChange={(e) => handleSendHourChange(parseInt(e.target.value))}
+                  className="border rounded-md px-3 py-2 text-sm"
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={i}>{i.toString().padStart(2, '0')}:00 UTC</option>
+                  ))}
+                </select>
+              </div>
+
+              {followUpSteps.map((step, index) => (
+                <div key={index} className="flex items-center space-x-2 mb-2 border-b pb-2">
+                  <span className="text-sm font-medium w-16">Step {step.stepNumber}</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={step.delayDays}
+                    onChange={(e) => handleStepChange(index, 'delayDays', parseInt(e.target.value) || 1)}
+                    className="w-20 px-2 py-1 border rounded-md text-sm"
+                  />
+                  <span className="text-sm text-gray-600">days after initial</span>
+                  <select
+                    value={step.draftId || ''}
+                    onChange={(e) => handleStepChange(index, 'draftId', e.target.value || null)}
+                    className="flex-1 px-2 py-1 border rounded-md text-sm"
+                  >
+                    <option value="">Select a draft</option>
+                    {followUpDrafts.map((d: any) => (
+                      <option key={d.id} value={d.id}>{d.subject.substring(0, 40)}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => handleRemoveStep(index)}
+                    className="text-red-600 hover:text-red-800"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+
+              <button
+                onClick={handleAddStep}
+                className="mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+              >
+                + Add Follow‑up Step
+              </button>
+
+              <div className="flex justify-end mt-4">
+                <button
+                  onClick={saveSteps}
+                  disabled={loadingSteps}
+                  className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
+                >
+                  {loadingSteps ? 'Saving...' : 'Save Steps'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 border-t pt-4">
+          <button
+            onClick={() => setShowActiveHours(!showActiveHours)}
+            className="flex items-center justify-between w-full text-left"
+          >
+            <h3 className="text-lg font-medium text-gray-900">Active Sending Hours</h3>
+            <svg className={`h-5 w-5 transform transition-transform ${showActiveHours ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {showActiveHours && (
+            <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
+              <p className="text-sm text-gray-600 mb-4">
+                Emails will only be sent during this time window (UTC). Leave blank to send anytime.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-600">Start Hour (UTC)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="23"
+                    value={campaign.activeStartHour ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value ? parseInt(e.target.value) : null;
+                      setCampaign({ ...campaign, activeStartHour: val });
+                    }}
+                    className="mt-1 w-full px-3 py-2 border rounded-md"
+                    placeholder="e.g., 9"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600">End Hour (UTC)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="23"
+                    value={campaign.activeEndHour ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value ? parseInt(e.target.value) : null;
+                      setCampaign({ ...campaign, activeEndHour: val });
+                    }}
+                    className="mt-1 w-full px-3 py-2 border rounded-md"
+                    placeholder="e.g., 17"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600">Timezone</label>
+                  <select
+                    value={campaign.timezone || 'UTC'}
+                    onChange={(e) => setCampaign({ ...campaign, timezone: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 border rounded-md"
+                  >
+                    <option value="UTC">UTC</option>
+                    <option value="America/New_York">America/New_York</option>
+                    <option value="America/Chicago">America/Chicago</option>
+                    <option value="America/Denver">America/Denver</option>
+                    <option value="America/Los_Angeles">America/Los_Angeles</option>
+                    <option value="Europe/London">Europe/London</option>
+                    <option value="Europe/Paris">Europe/Paris</option>
+                    <option value="Asia/Tokyo">Asia/Tokyo</option>
+                    <option value="Asia/Shanghai">Asia/Shanghai</option>
+                    <option value="Australia/Sydney">Australia/Sydney</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-end mt-4">
+                <button
+                  onClick={async () => {
+                    try {
+                      await campaignAPI.updateActiveHours(campaign.id, {
+                        activeStartHour: campaign.activeStartHour,
+                        activeEndHour: campaign.activeEndHour,
+                        timezone: campaign.timezone,
+                      });
+                      alert('Active hours updated');
+                    } catch (err) {
+                      alert('Failed to update');
+                    }
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+                >
+                  Save Hours
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Tabs */}

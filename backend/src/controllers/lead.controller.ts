@@ -15,11 +15,12 @@ const upload = multer({
       'text/plain',
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/json', // 👈 added JSON support
     ];
     if (allowedMimeTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only CSV, TXT, XLSX allowed.'));
+      cb(new Error('Invalid file type. Only CSV, TXT, XLSX, JSON allowed.'));
     }
   },
 });

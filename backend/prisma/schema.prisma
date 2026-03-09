@@ -18,6 +18,7 @@ model User {
   drafts        Draft[]
   outboundEmails OutboundEmail[]
   settings      UserSettings?
+  pendingEmails PendingEmail[]
 
   @@map("User")
 }
@@ -39,11 +40,13 @@ model Lead {
   campaign       Campaign? @relation(fields: [campaignId], references: [id])
   sentEmails     OutboundEmail[]
   replyDrafts    Draft[]         @relation("LeadDrafts")
+  pendingEmails  PendingEmail[]
 
   @@unique([userId, email])
   @@index([status])
   @@index([campaignId])
   @@index([userId])
+  @@map("Lead")
 }
 
 model Campaign {
@@ -60,16 +63,28 @@ model Campaign {
   startedAt   DateTime? @map("started_at")
   completedAt DateTime? @map("completed_at")
 
-  sendHourUTC Int      @default(9) @map("send_hour_utc")
-
-  // relation to follow‑up steps
+  // Follow‑up steps (multi‑step)
   followUpSteps FollowUpStep[]
 
+  // Auto‑reply
   autoReplyEnabled Boolean @default(false) @map("auto_reply_enabled")
+
+  // Scheduling
+  sendHourUTC Int @default(9) @map("send_hour_utc") // hour of day (UTC) to send follow‑ups
+
+  // Active sending window (Phase A)
+  activeStartHour Int?     @map("active_start_hour") // 0-23 UTC
+  activeEndHour   Int?     @map("active_end_hour")   // 0-23 UTC, exclusive
+  timezone        String?  // e.g., "America/New_York" – for future use
 
   leads  Lead[]
   emails OutboundEmail[]
   drafts Draft[]
+  pendingEmails PendingEmail[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("Campaign")
 }
 
 model Draft {
@@ -96,13 +111,15 @@ model Draft {
   replyCount Int @default(0) @map("reply_count")
 
   emails OutboundEmail[]
-	followUpSteps FollowUpStep[]
+  followUpSteps FollowUpStep[]
+  pendingEmails PendingEmail[]
 
   @@index([isActive])
   @@index([tone, useCase])
   @@index([campaignId])
   @@index([leadId])
   @@index([userId])
+  @@map("Draft")
 }
 
 model OutboundEmail {
@@ -145,25 +162,11 @@ model OutboundEmail {
   @@index([sentAt])
   @@index([messageId])
   @@index([userId])
-}
-
-model FollowUpStep {
-  id         String   @id @default(cuid())
-  campaignId String   @map("campaign_id")
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-  stepNumber Int      // 1,2,3...
-  delayDays  Int      // days after initial outreach
-  draftId    String?  @map("draft_id") // optional specific draft
-  draft      Draft?   @relation(fields: [draftId], references: [id])
-  enabled    Boolean  @default(true)
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-
-  @@unique([campaignId, stepNumber])
+  @@map("OutboundEmail")
 }
 
 model UserSettings {
-  userId        String   @id @map("user_id") @db.Uuid   // 👈 added @db.Uuid
+  userId        String   @id @map("user_id") @db.Uuid
   user          User     @relation(fields: [userId], references: [id])
   emailFrom     String?  @map("email_from")
   smtpHost      String?  @map("smtp_host")
@@ -176,8 +179,57 @@ model UserSettings {
   imapSecure    Boolean? @map("imap_secure")
   imapUser      String?  @map("imap_user")
   imapPass      String?  @map("imap_pass")
+
+  // Send limit settings
+  sendLimit     Int      @default(50)
+  sendPeriod    String   @default("day") // "day", "week", "month"
+  sentCount     Int      @default(0)
+  lastSentReset DateTime @default(now()) @map("last_sent_reset")
+  lastSend      DateTime? @map("last_send") // last email send time
+
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@map("UserSettings")
+}
+
+model FollowUpStep {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  stepNumber Int
+  delayDays  Int
+  draftId    String?  @map("draft_id")
+  draft      Draft?   @relation(fields: [draftId], references: [id])
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([campaignId, stepNumber])
+  @@map("FollowUpStep")
+}
+
+model PendingEmail {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id") @db.Uuid
+  user       User     @relation(fields: [userId], references: [id])
+  leadId     String   @map("lead_id")
+  lead       Lead     @relation(fields: [leadId], references: [id])
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  draftId    String?  @map("draft_id")
+  draft      Draft?   @relation(fields: [draftId], references: [id])
+
+  subject    String
+  body       String
+  inReplyTo  String?  @map("in_reply_to")
+  scheduledAt DateTime? @map("scheduled_at")
+  status     String   @default("PENDING") // PENDING, SENT, FAILED
+  error      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  priority   Int      @default(2) // 1 = high (follow‑ups), 2 = normal (outreach)
+
+  @@index([userId, status])
+  @@index([scheduledAt])
+  @@map("PendingEmail")
 }

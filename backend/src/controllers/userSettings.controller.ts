@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import prisma from '../lib/prisma';
 import { encrypt, decrypt } from '../lib/encryption';
-import { emailService } from '../services/email.service'; // 👈 IMPORT ADDED
 import { logger } from '../config/logger';
 
 /**
@@ -51,6 +50,8 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       imapSecure,
       imapUser,
       imapPass,
+      sendLimit,
+      sendPeriod,
     } = req.body;
 
     const data: any = {
@@ -63,6 +64,8 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       imapPort: imapPort ? parseInt(imapPort) : undefined,
       imapSecure: imapSecure === 'true' ? true : imapSecure === 'false' ? false : undefined,
       imapUser,
+      sendLimit: sendLimit !== undefined ? parseInt(sendLimit) : undefined,
+      sendPeriod,
     };
 
     // Encrypt passwords if provided
@@ -75,8 +78,7 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       create: { userId, ...data },
     });
 
-    // Clear email service cache for this user so next send picks up new settings
-    emailService.clearCache(userId); // 👈 NOW WORKS
+    // No need to clear email cache anymore – the queue service handles it.
 
     // Return safe version
     const { smtpPass: _, imapPass: __, ...safeSettings } = settings;

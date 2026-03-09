@@ -115,6 +115,8 @@ export const campaignAPI = {
     api.post(`/campaigns/${campaignId}/drafts/custom`, data),
   generateDraft: (campaignId: string) =>
     api.post(`/campaigns/${campaignId}/drafts/generate`),
+	updateActiveHours: (id: string, data: { activeStartHour?: number | null; activeEndHour?: number | null; timezone?: string }) =>
+		api.put(`/campaigns/${id}/active-hours`, data),
 
   // Legacy update (rename, etc.)
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),

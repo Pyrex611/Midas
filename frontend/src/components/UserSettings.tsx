@@ -3,7 +3,7 @@ import { userSettingsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export const UserSettings: React.FC = () => {
-  const { settings, updateSettings } = useAuth();
+  const { settings: contextSettings, updateSettings } = useAuth();
   const [localSettings, setLocalSettings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -15,22 +15,27 @@ export const UserSettings: React.FC = () => {
   const [email, setEmail] = useState('');
   const [appPassword, setAppPassword] = useState('');
 
-  // Initialize local state from settings (only once on mount)
+  // Send limit fields
+  const [sendLimit, setSendLimit] = useState(50);
+  const [sendPeriod, setSendPeriod] = useState('day');
+
   useEffect(() => {
-    if (settings) {
-      setLocalSettings(settings);
-      if (settings.emailFrom) {
-        const match = settings.emailFrom.match(/^"?([^"<]*)?"?\s*<(.+)>$/);
+    if (contextSettings) {
+      setLocalSettings(contextSettings);
+      if (contextSettings.emailFrom) {
+        const match = contextSettings.emailFrom.match(/^"?([^"<]*)?"?\s*<(.+)>$/);
         if (match) {
           setDisplayName(match[1].trim() || '');
           setEmail(match[2].trim());
         } else {
-          setEmail(settings.emailFrom);
+          setEmail(contextSettings.emailFrom);
         }
       }
-      if (settings.smtpPass) setAppPassword('********');
+      if (contextSettings.smtpPass) setAppPassword('********');
+      setSendLimit(contextSettings.sendLimit ?? 50);
+      setSendPeriod(contextSettings.sendPeriod ?? 'day');
     }
-  }, []); // only once
+  }, [contextSettings]);
 
   const handleAdvancedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
@@ -40,29 +45,20 @@ export const UserSettings: React.FC = () => {
     }));
   };
 
-  /**
-   * Build payload for the API – only include fields that have changed or are new.
-   * Do not send placeholder passwords.
-   */
   const buildPayload = () => {
     const payload: Record<string, any> = {};
 
-    // Basic fields always included if email is present
     if (email) {
       payload.emailFrom = displayName ? `"${displayName}" <${email}>` : email;
       payload.smtpUser = email;
       payload.imapUser = email;
     }
 
-    // Handle app password – only if a new password was entered
     if (appPassword && appPassword !== '********') {
       payload.smtpPass = appPassword;
       payload.imapPass = appPassword;
     }
 
-    // Advanced fields – only include if they differ from defaults or were manually set
-    // We'll include all advanced fields that are present in localSettings
-    // This includes overrides from the advanced section.
     const advancedFields = [
       'smtpHost', 'smtpPort', 'smtpSecure',
       'imapHost', 'imapPort', 'imapSecure',
@@ -73,6 +69,10 @@ export const UserSettings: React.FC = () => {
       }
     }
 
+    // Include send limit settings
+    payload.sendLimit = sendLimit;
+    payload.sendPeriod = sendPeriod;
+
     return payload;
   };
 
@@ -82,15 +82,9 @@ export const UserSettings: React.FC = () => {
     setError('');
 
     const payload = buildPayload();
-    console.log('Saving settings:', payload); // DEBUG
-
     try {
       await userSettingsAPI.update(payload);
-
-      // Update local state and context with the new values (including the new email/name)
-      // We need to merge with existing settings, but keep passwords as '********' in local state.
-      const updatedSettings = { ...settings, ...payload };
-      // Mask passwords in local state
+      const updatedSettings = { ...contextSettings, ...payload };
       if (payload.smtpPass) {
         updatedSettings.smtpPass = '********';
         updatedSettings.imapPass = '********';
@@ -98,7 +92,6 @@ export const UserSettings: React.FC = () => {
       setLocalSettings(updatedSettings);
       updateSettings(updatedSettings);
 
-      // Mask password field after save
       if (appPassword && appPassword !== '********') {
         setAppPassword('********');
       }
@@ -163,6 +156,38 @@ export const UserSettings: React.FC = () => {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Send Limit Settings */}
+        <div className="bg-gray-50 p-4 rounded-lg">
+          <h4 className="font-medium text-gray-800 mb-3">Send Limits</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-600">Maximum emails per period</label>
+              <input
+                type="number"
+                min="1"
+                value={sendLimit}
+                onChange={(e) => setSendLimit(parseInt(e.target.value) || 1)}
+                className="mt-1 w-full px-3 py-2 border rounded-md"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600">Period</label>
+              <select
+                value={sendPeriod}
+                onChange={(e) => setSendPeriod(e.target.value)}
+                className="mt-1 w-full px-3 py-2 border rounded-md"
+              >
+                <option value="day">Daily</option>
+                <option value="week">Weekly</option>
+                <option value="month">Monthly</option>
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Emails will be sent at a rate that respects this limit. Replies are sent immediately.
+          </p>
         </div>
 
         {/* Advanced Settings Toggle */}

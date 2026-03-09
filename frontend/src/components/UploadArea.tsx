@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { leadAPI } from '../services/api';
-import { UploadSummary, UploadPreviewResponse } from '../types/lead';
+import { UploadSummary, Lead } from '../types/lead';
 
 interface Props {
   onUploadComplete: (summary: UploadSummary, leadIds: string[]) => void;
@@ -43,6 +43,7 @@ export const UploadArea: React.FC<Props> = ({ onUploadComplete }) => {
       'text/plain': ['.txt'],
       'application/vnd.ms-excel': ['.xls'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/json': ['.json'], // 👈 added JSON support
     },
     maxFiles: 5,
     maxSize: 10 * 1024 * 1024,
@@ -56,7 +57,7 @@ export const UploadArea: React.FC<Props> = ({ onUploadComplete }) => {
 
     try {
       const res = await leadAPI.upload(fileItem.file, skipDuplicates);
-      const data: UploadPreviewResponse = res.data;
+      const data = res.data;
 
       setSelectedFiles(prev =>
         prev.map(f => f.id === fileItem.id ? { 
@@ -66,11 +67,9 @@ export const UploadArea: React.FC<Props> = ({ onUploadComplete }) => {
         } : f)
       );
 
-      // Pass created lead IDs to parent
       if (data.createdLeadIds) {
         onUploadComplete(data.summary, data.createdLeadIds);
       } else {
-        // Fallback (should not happen)
         onUploadComplete(data.summary, []);
       }
       return true;
@@ -131,7 +130,7 @@ export const UploadArea: React.FC<Props> = ({ onUploadComplete }) => {
         <p className="mt-2 text-sm text-gray-600">
           {isDragActive ? 'Drop the files here' : 'Drag & drop or click to select'}
         </p>
-        <p className="mt-1 text-xs text-gray-500">CSV, TXT, XLSX up to 10MB each (max 5 files)</p>
+        <p className="mt-1 text-xs text-gray-500">CSV, TXT, XLSX, JSON up to 10MB each (max 5 files)</p>
       </div>
 
       {selectedFiles.length > 0 && (
