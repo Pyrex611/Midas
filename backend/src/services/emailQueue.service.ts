@@ -4,9 +4,6 @@ import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
 import { getNextActiveTime } from '../utils/timezone';
 
-// Limit how many emails we process per user per queue run (safety)
-const MAX_EMAILS_PER_RUN_PER_USER = 20;
-
 export class EmailQueueService {
   private interval: NodeJS.Timeout | null = null;
   private isProcessing = false;
@@ -97,135 +94,131 @@ export class EmailQueueService {
     }
 
     const limit = settings.sendLimit;
-    let sentToday = settings.sentCount;
+    const sentToday = settings.sentCount;
 
-    // If limit reached, skip
     if (sentToday >= limit) {
       logger.debug({ userId }, 'Send limit reached');
       return;
     }
 
-    // Calculate minimum interval between sends (in ms)
     const intervalMs = this.getSendIntervalMs(settings);
 
-    // Enforce last send time
+    // If we have a lastSend, check if we need to wait
     if (settings.lastSend) {
       const timeSinceLast = now.getTime() - new Date(settings.lastSend).getTime();
       if (timeSinceLast < intervalMs) {
-        logger.debug({ userId }, `Last send was ${timeSinceLast}ms ago, need ${intervalMs}ms – skipping this cycle`);
-        return;
+        logger.debug({ userId, timeSinceLast, intervalMs }, 'Interval not yet elapsed, skipping this user for now');
+        return; // do not process any emails for this user this cycle
       }
     }
 
-    // Process up to MAX_EMAILS_PER_RUN_PER_USER (safety)
-    const emailsToProcess = emails.slice(0, MAX_EMAILS_PER_RUN_PER_USER);
+    // Find the oldest pending email (already sorted by createdAt)
+    const email = emails[0];
+    if (!email) return;
 
-    for (const email of emailsToProcess) {
-      // Check campaign active window
-      const campaign = email.campaign;
-      if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
-        const nextTime = getNextActiveTime(now, campaign.activeStartHour, campaign.activeEndHour);
-        if (nextTime.getTime() > now.getTime()) {
-          // Not in window; reschedule
-          await prisma.pendingEmail.update({
-            where: { id: email.id },
-            data: { scheduledAt: nextTime },
-          });
-          continue;
-        }
-      }
-
-      // Double‑check limit (may have been reached by previous sends in same cycle)
-      if (sentToday >= limit) break;
-
-      try {
-        // Personalise
-        const { subject, body } = personalisationService.personalise(
-          email.lead,
-          email.subject,
-          email.body,
-          email.campaign.reference,
-          email.campaign.senderName
-        );
-
-        const result = await emailService.sendEmailNow(
-          userId,
-          email.lead.email,
-          subject,
-          body.replace(/\n/g, '<br>'),
-          body,
-          email.campaign.senderName,
-          email.inReplyTo
-        );
-
-        if (result.success) {
-          // Record sent email
-          await prisma.outboundEmail.create({
-            data: {
-              userId,
-              leadId: email.leadId,
-              campaignId: email.campaignId,
-              draftId: email.draftId,
-              subject,
-              body,
-              status: 'SENT',
-              sentAt: new Date(),
-              messageId: result.messageId,
-              replyToId: email.inReplyTo ? undefined : undefined,
-            },
-          });
-
-          // Update lead status
-          await prisma.lead.update({
-            where: { id: email.leadId },
-            data: { outreachStatus: 'SENT', status: 'CONTACTED' },
-          });
-
-          // Increment draft sent count
-          if (email.draftId) {
-            await prisma.draft.update({
-              where: { id: email.draftId },
-              data: { sentCount: { increment: 1 } },
-            });
-          }
-
-          // Delete pending email
-          await prisma.pendingEmail.delete({ where: { id: email.id } });
-
-          sentToday++;
-          // Update user's sentCount and lastSend
-          await prisma.userSettings.update({
-            where: { userId },
-            data: {
-              sentCount: { increment: 1 },
-              lastSend: new Date(),
-            },
-          });
-
-          logger.info({ leadId: email.leadId, pendingId: email.id }, 'Email sent from queue');
-        } else {
-          // Mark as failed
-          await prisma.pendingEmail.update({
-            where: { id: email.id },
-            data: { status: 'FAILED', error: result.error },
-          });
-          await prisma.lead.update({
-            where: { id: email.leadId },
-            data: { outreachStatus: 'FAILED' },
-          });
-        }
-      } catch (error: any) {
-        logger.error({ error, pendingId: email.id }, 'Failed to process queued email');
+    // Check campaign active window
+    const campaign = email.campaign;
+    if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
+      const nextTime = getNextActiveTime(now, campaign.activeStartHour, campaign.activeEndHour);
+      if (nextTime.getTime() > now.getTime()) {
+        // Not in window; reschedule
         await prisma.pendingEmail.update({
           where: { id: email.id },
-          data: { status: 'FAILED', error: error.message },
+          data: { scheduledAt: nextTime },
+        });
+        logger.debug({ userId, emailId: email.id, nextTime }, 'Email rescheduled due to active hours');
+        return; // skip this user for now (other emails will be processed in future cycles)
+      }
+    }
+
+    try {
+      // Personalise
+      const { subject, body } = personalisationService.personalise(
+        email.lead,
+        email.subject,
+        email.body,
+        email.campaign.reference,
+        email.campaign.senderName
+      );
+
+      const result = await emailService.sendEmailNow(
+        userId,
+        email.lead.email,
+        subject,
+        body.replace(/\n/g, '<br>'),
+        body,
+        email.campaign.senderName,
+        email.inReplyTo
+      );
+
+      if (result.success) {
+        // Record sent email
+        await prisma.outboundEmail.create({
+          data: {
+            userId,
+            leadId: email.leadId,
+            campaignId: email.campaignId,
+            draftId: email.draftId,
+            subject,
+            body,
+            status: 'SENT',
+            sentAt: new Date(),
+            messageId: result.messageId,
+            replyToId: email.inReplyTo ? undefined : undefined,
+          },
+        });
+
+        // Update lead status
+        await prisma.lead.update({
+          where: { id: email.leadId },
+          data: { outreachStatus: 'SENT', status: 'CONTACTED' },
+        });
+
+        // Increment draft sent count
+        if (email.draftId) {
+          await prisma.draft.update({
+            where: { id: email.draftId },
+            data: { sentCount: { increment: 1 } },
+          });
+        }
+
+        // Delete pending email
+        await prisma.pendingEmail.delete({ where: { id: email.id } });
+
+        // Update user's sentCount and lastSend
+        await prisma.userSettings.update({
+          where: { userId },
+          data: {
+            sentCount: { increment: 1 },
+            lastSend: new Date(),
+          },
+        });
+
+        logger.info({ leadId: email.leadId, userId, sentCount: sentToday + 1 }, 'Email sent from queue');
+      } else {
+        // Mark as failed
+        await prisma.pendingEmail.update({
+          where: { id: email.id },
+          data: { status: 'FAILED', error: result.error },
         });
         await prisma.lead.update({
           where: { id: email.leadId },
           data: { outreachStatus: 'FAILED' },
         });
+        logger.error({ userId, emailId: email.id, error: result.error }, 'Email sending failed');
       }
+    } catch (error: any) {
+      logger.error({ error, pendingId: email.id }, 'Failed to process queued email');
+      await prisma.pendingEmail.update({
+        where: { id: email.id },
+        data: { status: 'FAILED', error: error.message },
+      });
+      await prisma.lead.update({
+        where: { id: email.leadId },
+        data: { outreachStatus: 'FAILED' },
+      });
     }
+    // After sending (or failing) one email, we exit. The next email will be picked up in the next cycle.
   }
 
   private getPeriodMinutes(period: string): number {
@@ -237,12 +230,8 @@ export class EmailQueueService {
     }
   }
 
-  private getPeriodSeconds(period: string): number {
-    return this.getPeriodMinutes(period) * 60;
-  }
-
   private getSendIntervalMs(settings: any): number {
-    const periodSec = this.getPeriodSeconds(settings.sendPeriod);
+    const periodSec = this.getPeriodMinutes(settings.sendPeriod) * 60;
     return (periodSec * 1000) / settings.sendLimit;
   }
 }
