@@ -694,36 +694,6 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
 };
 
 /**
- * PUT /api/campaigns/:id/active-hours
- * Update campaign's active sending hours.
- */
-export const updateActiveHours = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const { id } = req.params;
-    const { activeStartHour, activeEndHour, timezone } = req.body;
-
-    if (activeStartHour !== undefined && (activeStartHour < 0 || activeStartHour > 23)) {
-      return res.status(400).json({ error: 'activeStartHour must be 0-23' });
-    }
-    if (activeEndHour !== undefined && (activeEndHour < 0 || activeEndHour > 23)) {
-      return res.status(400).json({ error: 'activeEndHour must be 0-23' });
-    }
-
-    const updated = await campaignService.updateActiveHours(
-      userId,
-      id,
-      activeStartHour,
-      activeEndHour,
-      timezone
-    );
-    res.json(updated);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
  * POST /api/campaigns/:campaignId/steps/:stepNumber/generate-draft
  * Generate a new follow‑up draft for a specific step.
  */
@@ -751,6 +721,36 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
     }
 
     res.status(201).json(drafts[0]);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/campaigns/:id/active-hours
+ * Update campaign's active sending hours.
+ */
+export const updateActiveHours = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { activeStartHour, activeEndHour, timezone } = req.body;
+
+    if (activeStartHour !== undefined && (activeStartHour < 0 || activeStartHour > 23)) {
+      return res.status(400).json({ error: 'activeStartHour must be 0-23' });
+    }
+    if (activeEndHour !== undefined && (activeEndHour < 0 || activeEndHour > 23)) {
+      return res.status(400).json({ error: 'activeEndHour must be 0-23' });
+    }
+
+    const updated = await campaignService.updateActiveHours(
+      userId,
+      id,
+      activeStartHour,
+      activeEndHour,
+      timezone
+    );
+    res.json(updated);
   } catch (error) {
     next(error);
   }

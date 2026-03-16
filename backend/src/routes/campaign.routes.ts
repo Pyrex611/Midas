@@ -24,6 +24,7 @@ import {
   deleteFollowUpStep,
   updateSendHour,
 	generateStepDraft,
+	updateActiveHours,
 } from '../controllers/campaign.controller';
 
 const router = Router();
@@ -34,6 +35,7 @@ router.post('/', createCampaign);
 // Specific campaign actions (must come before generic :id routes)
 router.put('/:id/followup', updateFollowUpSettings);
 router.put('/:id/auto-reply', updateAutoReply);
+router.put('/:id/active-hours', updateActiveHours);
 router.get('/:id/followup-steps', getFollowUpSteps);
 router.post('/:id/followup-steps', setFollowUpSteps);
 router.delete('/:id/followup-steps/:stepId', deleteFollowUpStep);

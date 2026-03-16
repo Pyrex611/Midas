@@ -91,18 +91,24 @@ export const CampaignDetail: React.FC = () => {
   };
 
   const handleGenerateDraft = async () => {
-    if (!campaign?.id) return;
-    setGeneratingDraft(true);
-    try {
-      await campaignAPI.generateDraft(campaign.id);
-      fetchCampaign();
-    } catch (error) {
-      console.error('Failed to generate draft', error);
-      alert('Could not generate new draft');
-    } finally {
-      setGeneratingDraft(false);
-    }
-  };
+		if (!campaign?.id) return;
+		setGeneratingDraft(true);
+		try {
+			if (typeof draftFilter === 'number') {
+				// Generate follow‑up draft for the selected step
+				await campaignAPI.generateStepDraft(campaign.id, draftFilter);
+			} else {
+				// Generate outreach draft
+				await campaignAPI.generateDraft(campaign.id);
+			}
+			fetchCampaign();
+		} catch (error) {
+			console.error('Failed to generate draft', error);
+			alert('Could not generate draft');
+		} finally {
+			setGeneratingDraft(false);
+		}
+	};
 
   const handleEditDraft = async (draftId: string, data: { subject: string; body: string }) => {
     if (!campaign?.id) return;
