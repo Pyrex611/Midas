@@ -723,10 +723,16 @@ export const updateActiveHours = async (req: AuthRequest, res: Response, next: N
   }
 };
 
+/**
+ * POST /api/campaigns/:campaignId/steps/:stepNumber/generate-draft
+ * Generate a new follow‑up draft for a specific step.
+ */
 export const generateStepDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
     const { campaignId, stepNumber } = req.params;
+    const stepNum = parseInt(stepNumber);
+
     const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
@@ -736,10 +742,15 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
       campaign.context || undefined,
       campaign.reference || undefined,
       campaign.senderName || undefined,
-      parseInt(stepNumber),
+      stepNum,
       1
     );
-    res.status(201).json(drafts);
+
+    if (!drafts || drafts.length === 0) {
+      return res.status(500).json({ error: 'Failed to generate draft' });
+    }
+
+    res.status(201).json(drafts[0]);
   } catch (error) {
     next(error);
   }

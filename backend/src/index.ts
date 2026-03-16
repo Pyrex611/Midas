@@ -10,4 +10,5 @@ app.listen(port, () => {
 	imapService.startPolling();
   logger.info(`🚀 Backend running on port ${port} in ${env.NODE_ENV} mode`);
 	emailQueueService.start();
+	followUpService.start();
 });
