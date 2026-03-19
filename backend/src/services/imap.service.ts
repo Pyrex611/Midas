@@ -1,12 +1,11 @@
 import Imap from 'imap';
 import { simpleParser } from 'mailparser';
 import EmailReplyParser from 'email-reply-parser';
-import { env } from '../config/env';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
-import dns from 'dns';
 import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
+import { mailboxService } from './mailbox.service'; // 🔥 Needed for decryption
 
 function isBounceMessage(parsed: any): boolean {
   const from = parsed.from?.value[0]?.address?.toLowerCase() || '';
@@ -23,44 +22,63 @@ function isBounceMessage(parsed: any): boolean {
 export class ImapService {
   private isPolling = false;
   private pollInterval: NodeJS.Timeout | null = null;
-  private consecutiveErrors = 0;
-  private readonly maxConsecutiveErrors = 5;
 
   startPolling() {
     if (this.isPolling) return;
     this.isPolling = true;
-    this.schedulePoll();
-  }
-
-  private schedulePoll() {
-    this.poll().catch(err => logger.error({ err }, 'Initial IMAP poll error'));
-    this.pollInterval = setInterval(() => {
-      this.poll().catch(err => logger.error({ err }, 'IMAP poll interval error'));
-    }, env.IMAP_POLL_INTERVAL);
+    
+    // Run every 5 minutes (standard interval)
+    this.pollInterval = setInterval(() => this.poll(), 300000); 
+    this.poll(); // Initial run
   }
 
   async poll() {
-    if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
-      this.stopPolling();
-      return;
-    }
+    logger.info('Starting Multi-Mailbox IMAP Polling Cycle...');
+    
     try {
-      await prisma.$queryRaw`SELECT 1`;
-      await this.connectAndProcess(await this.getSinceDate());
-      this.consecutiveErrors = 0;
-    } catch (error: any) {
-      this.consecutiveErrors++;
-      logger.error('IMAP poll failed logic');
-    }
-  }
+      // 1. Fetch all active mailboxes that have IMAP configured
+      const mailboxes = await prisma.mailbox.findMany({
+        where: { 
+          isActive: true,
+          imapHost: { not: null },
+          imapUser: { not: null }
+        }
+      });
 
-  private async getSinceDate(): Promise<string> {
-    const oldestCampaign = await prisma.campaign.findFirst({
-      orderBy: { createdAt: 'asc' },
-      select: { createdAt: true },
-    });
-    const sinceDate = oldestCampaign?.createdAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    return this.formatImapDate(sinceDate);
+      if (mailboxes.length === 0) {
+        logger.warn('No mailboxes configured for IMAP polling.');
+        return;
+      }
+
+      // 2. Iterate through each mailbox sequentially
+      for (const mb of mailboxes) {
+        try {
+          // Decrypt credentials using our trusted service
+          const decrypted = await mailboxService.getMailboxForSending(mb.id);
+          const sinceDate = this.formatImapDate(mb.lastPolledAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+          
+          logger.debug({ user: decrypted.email }, 'Polling mailbox...');
+          
+          await this.connectAndProcess(decrypted, sinceDate);
+          
+          // 🔥 Update the lastPolledAt on success
+          await prisma.mailbox.update({
+            where: { id: mb.id },
+            data: { lastPolledAt: new Date(), status: 'HEALTHY' }
+          });
+          
+        } catch (err: any) {
+          logger.error({ err: err.message, mailbox: mb.email }, 'Failed to poll individual mailbox');
+          // We continue to the next mailbox even if one fails
+          await prisma.mailbox.update({
+            where: { id: mb.id },
+            data: { status: 'DEGRADED', lastError: `IMAP Error: ${err.message}` }
+          });
+        }
+      }
+    } catch (error) {
+      logger.error({ error }, 'Critical error in global poll loop');
+    }
   }
 
   private formatImapDate(date: Date): string {
@@ -68,25 +86,22 @@ export class ImapService {
     return `${date.getDate()}-${months[date.getMonth()]}-${date.getFullYear()}`;
   }
 
-  private connectAndProcess(sinceDate: string): Promise<void> {
+  private connectAndProcess(mailbox: any, sinceDate: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const imap = new Imap({
-        user: env.IMAP_USER,
-        password: env.IMAP_PASS,
-        host: env.IMAP_HOST,
-        port: env.IMAP_PORT,
-        tls: env.IMAP_TLS === 'true',
+        user: mailbox.imapUser,
+        password: mailbox.imapPass, // Plaintext via decryption
+        host: mailbox.imapHost,
+        port: mailbox.imapPort || 993,
+        tls: mailbox.imapSecure ?? true,
         tlsOptions: { rejectUnauthorized: false },
-        connTimeout: env.IMAP_CONN_TIMEOUT,
+        connTimeout: 30000,
       });
 
       let resolved = false;
-      imap.once('ready', () => {
-        if (resolved) return;
-        resolved = true;
-        logger.info({ user: env.IMAP_USER }, 'IMAP connection established');
 
-        imap.openBox(env.IMAP_MAILBOX, false, (err, box) => {
+      imap.once('ready', () => {
+        imap.openBox('INBOX', false, (err, box) => {
           if (err) { imap.end(); return reject(err); }
 
           imap.search(['UNSEEN', ['SINCE', sinceDate]], (err, results) => {
@@ -95,28 +110,35 @@ export class ImapService {
 
             const fetch = imap.fetch(results, { bodies: '', struct: true });
             let processed = 0;
+
             fetch.on('message', (msg) => {
               msg.on('body', (stream) => {
-                this.processMessage(stream).then(() => { processed++; }).catch(e => logger.error(e));
+                this.processMessage(mailbox, stream).then(() => {
+                  processed++;
+                }).catch(e => logger.error(e));
               });
             });
-            fetch.once('end', () => { imap.end(); resolve(); });
+
+            fetch.once('end', () => {
+              if (processed > 0) logger.info({ user: mailbox.email, count: processed }, 'Processed messages');
+              imap.end();
+              resolve();
+            });
           });
         });
       });
+
       imap.once('error', (err) => { if (!resolved) { resolved = true; imap.end(); reject(err); } });
       imap.connect();
     });
   }
 
-  private async processMessage(stream: any) {
+  private async processMessage(mailbox: any, stream: any) {
     const parsed = await simpleParser(stream);
     const messageId = parsed.messageId?.trim();
     const inReplyTo = parsed.inReplyTo?.trim();
-    const from = parsed.from?.value[0]?.address;
     const text = parsed.text || '';
 
-    // Search IDs for threading
     const searchIds = [];
     if (inReplyTo) searchIds.push(inReplyTo);
     if (parsed.references) {
@@ -127,71 +149,75 @@ export class ImapService {
     let originalEmail = null;
     if (searchIds.length > 0) {
         originalEmail = await prisma.outboundEmail.findFirst({
-            where: { messageId: { in: searchIds }, isIncoming: false },
+            where: { messageId: { in: searchIds } },
             select: { id: true, leadId: true, campaignId: true, userId: true, mailboxId: true },
         });
     }
 
+    // 1. Handle Bounces
     if (isBounceMessage(parsed)) {
       if (originalEmail) {
-        // 🔥 UPDATE ANALYTICS ON BOUNCE
-        if (originalEmail.mailboxId) {
-            await prisma.mailbox.update({
-                where: { id: originalEmail.mailboxId },
-                data: { bounceCount: { increment: 1 }, status: 'DEGRADED', lastError: `Bounce from: ${from}` }
-            });
-        }
-        await prisma.lead.update({
-          where: { id: originalEmail.leadId },
-          data: { outreachStatus: 'BOUNCED', status: 'NEW' },
-        });
+        await prisma.$transaction([
+          prisma.mailbox.update({
+            where: { id: mailbox.id },
+            data: { bounceCount: { increment: 1 }, status: 'DEGRADED', lastError: `Bounce detected in ${mailbox.email}` }
+          }),
+          prisma.lead.update({
+            where: { id: originalEmail.leadId },
+            data: { outreachStatus: 'BOUNCED', status: 'NEW' }
+          })
+        ]);
       }
       return;
     }
 
-    if (!from || !messageId || !originalEmail) return;
+    if (!messageId || !originalEmail) return;
 
     const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
     if (existing) return;
 
-    // 🔥 UPDATE ANALYTICS ON REPLY
-    if (originalEmail.mailboxId) {
-        await prisma.mailbox.update({
-            where: { id: originalEmail.mailboxId },
-            data: { replyCount: { increment: 1 } }
-        });
-    }
+    // 2. Handle Replies
+    await prisma.$transaction([
+      prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: { replyCount: { increment: 1 } }
+      }),
+      prisma.outboundEmail.create({
+        data: {
+          userId: originalEmail.userId,
+          leadId: originalEmail.leadId,
+          campaignId: originalEmail.campaignId,
+          mailboxId: mailbox.id, // 🔥 Correctly attribute to the mailbox being polled
+          subject: parsed.subject || '',
+          body: new EmailReplyParser().parseReply(text) || text,
+          isIncoming: true,
+          messageId,
+          replyToId: originalEmail.id,
+          sentAt: parsed.date || new Date(),
+          status: 'SENT',
+        }
+      }),
+      prisma.outboundEmail.update({
+        where: { id: originalEmail.id },
+        data: { repliedAt: new Date() }
+      })
+    ]);
 
-    const newEmail = await prisma.outboundEmail.create({
-      data: {
-        userId: originalEmail.userId,
-        leadId: originalEmail.leadId,
-        campaignId: originalEmail.campaignId,
-        mailboxId: originalEmail.mailboxId,
-        subject: parsed.subject || '',
-        body: new EmailReplyParser().parseReply(text) || text,
-        isIncoming: true,
-        messageId,
-        replyToId: originalEmail.id,
-        sentAt: parsed.date || new Date(),
-        status: 'SENT',
-      },
-    });
-
-    await prisma.outboundEmail.update({ where: { id: originalEmail.id }, data: { repliedAt: new Date() } });
-
+    // 3. AI Sentiment & Auto-Reply
     try {
-      const analysis = await aiService.analyzeReply(newEmail.body);
+      const analysis = await aiService.analyzeReply(parsed.text || '');
       await prisma.outboundEmail.update({
-        where: { id: newEmail.id },
-        data: { sentiment: analysis.sentiment, intent: analysis.intent, analysis: JSON.stringify(analysis) },
+        where: { messageId },
+        data: { sentiment: analysis.sentiment, intent: analysis.intent, analysis: JSON.stringify(analysis) }
       });
-      autoReplyService.processReply(newEmail.id).catch(e => logger.error(e));
+      autoReplyService.processReply(messageId).catch(e => logger.error(e));
     } catch (e) { logger.error(e); }
   }
 
-  manualPoll() { this.consecutiveErrors = 0; return this.poll(); }
-  stopPolling() { if (this.pollInterval) clearInterval(this.pollInterval); this.isPolling = false; }
+  stopPolling() {
+    if (this.pollInterval) clearInterval(this.pollInterval);
+    this.isPolling = false;
+  }
 }
 
 export const imapService = new ImapService();
