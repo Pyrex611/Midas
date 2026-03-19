@@ -68,21 +68,17 @@ export class EmailService {
           user: mailbox.smtpUser,
           pass: mailbox.smtpPass,
         },
-				connectionTimeout: 20000, // 20 seconds
-				greetingTimeout: 20000,
-				socketTimeout: 20000,
-				dnsV_ : 4, // Force IPv4
-        logger: env.NODE_ENV === 'development',
-        debug: env.NODE_ENV === 'development',
+        // 🔥 STABILITY SETTINGS:
+        connectionTimeout: 30000, // 30 seconds
+        greetingTimeout: 30000,
+        socketTimeout: 30000,
+        dnsV_ : 4, // Force IPv4 to avoid IPv6 routing issues on cloud providers
+        pool: false // Use a single-use connection for cold outreach to avoid stale sockets
       });
 
       let from = mailbox.email;
-      if (mailbox.senderName) {
-        from = `"${mailbox.senderName}" <${mailbox.email}>`;
-      }
-      if (senderName) {
-        // Override sender name if provided (e.g., from campaign)
-        from = `"${senderName}" <${mailbox.email}>`;
+      if (senderName || mailbox.senderName) {
+        from = `"${senderName || mailbox.senderName}" <${mailbox.email}>`;
       }
 
       const mailOptions: any = {
@@ -99,21 +95,10 @@ export class EmailService {
       }
 
       const info = await transporter.sendMail(mailOptions);
-      const messageId = info.messageId;
-
-      if (env.EMAIL_SERVICE === 'ethereal') {
-        const previewUrl = nodemailer.getTestMessageUrl(info);
-        logger.info({ previewUrl, to, subject, messageId }, 'Email preview generated');
-        return { success: true, previewUrl, messageId };
-      } else {
-        if (!messageId) {
-          throw new Error('No messageId returned from SMTP server');
-        }
-        logger.info({ messageId, to, subject }, 'Email sent via SMTP');
-        return { success: true, messageId };
-      }
+      return { success: true, messageId: info.messageId };
+      
     } catch (error: any) {
-      logger.error({ error, to, subject }, 'Email sending failed');
+      logger.error({ error: error.message, to, subject }, 'SMTP Execution failed');
       return { success: false, error: error.message };
     }
   }

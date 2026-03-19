@@ -5,7 +5,7 @@ import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
-import { mailboxService } from './mailbox.service'; // 🔥 Needed for decryption
+import { mailboxService } from './mailbox.service';
 
 function isBounceMessage(parsed: any): boolean {
   const from = parsed.from?.value[0]?.address?.toLowerCase() || '';
@@ -26,58 +26,39 @@ export class ImapService {
   startPolling() {
     if (this.isPolling) return;
     this.isPolling = true;
-    
-    // Run every 5 minutes (standard interval)
     this.pollInterval = setInterval(() => this.poll(), 300000); 
-    this.poll(); // Initial run
+    this.poll(); 
   }
 
   async poll() {
     logger.info('Starting Multi-Mailbox IMAP Polling Cycle...');
-    
     try {
-      // 1. Fetch all active mailboxes that have IMAP configured
       const mailboxes = await prisma.mailbox.findMany({
-        where: { 
-          isActive: true,
-          imapHost: { not: null },
-          imapUser: { not: null }
-        }
+        where: { isActive: true, imapHost: { not: null } }
       });
 
-      if (mailboxes.length === 0) {
-        logger.warn('No mailboxes configured for IMAP polling.');
-        return;
-      }
-
-      // 2. Iterate through each mailbox sequentially
       for (const mb of mailboxes) {
         try {
-          // Decrypt credentials using our trusted service
           const decrypted = await mailboxService.getMailboxForSending(mb.id);
-          const sinceDate = this.formatImapDate(mb.lastPolledAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
           
-          logger.debug({ user: decrypted.email }, 'Polling mailbox...');
+          // Use lastPolledAt or fallback to 30 days
+          const lookback = decrypted.lastPolledAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+          const sinceDate = this.formatImapDate(lookback);
           
+          logger.debug({ user: decrypted.email }, 'Connecting to IMAP...');
           await this.connectAndProcess(decrypted, sinceDate);
-          
-          // 🔥 Update the lastPolledAt on success
+
           await prisma.mailbox.update({
             where: { id: mb.id },
             data: { lastPolledAt: new Date(), status: 'HEALTHY' }
           });
           
         } catch (err: any) {
-          logger.error({ err: err.message, mailbox: mb.email }, 'Failed to poll individual mailbox');
-          // We continue to the next mailbox even if one fails
-          await prisma.mailbox.update({
-            where: { id: mb.id },
-            data: { status: 'DEGRADED', lastError: `IMAP Error: ${err.message}` }
-          });
+          logger.error({ mailbox: mb.email, error: err.message }, 'Mailbox poll failed');
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Critical error in global poll loop');
+      logger.error({ error }, 'Global poll loop error');
     }
   }
 
@@ -90,16 +71,22 @@ export class ImapService {
     return new Promise((resolve, reject) => {
       const imap = new Imap({
         user: mailbox.imapUser,
-        password: mailbox.imapPass, // Plaintext via decryption
+        password: mailbox.imapPass,
         host: mailbox.imapHost,
         port: mailbox.imapPort || 993,
         tls: mailbox.imapSecure ?? true,
-				tlsOptions: { 
-					rejectUnauthorized: false,
-					servername: mailbox.imapHost // Helps with SNI issues
-				},
-				connTimeout: 60000, // Give the server 60s to shake hands with Google
-				authTimeout: 30000
+        // 🔥 CRITICAL FOR SERVERS:
+        tlsOptions: { 
+          rejectUnauthorized: false,
+          servername: mailbox.imapHost // Ensures SNI matches for Gmail
+        },
+        connTimeout: 60000,   // Wait longer for initial connection
+        authTimeout: 45000,   // Wait longer for Gmail to accept App Password
+        keepalive: {
+            interval: 10000,
+            idleInterval: 30000,
+            forceNoop: true
+        }
       });
 
       let resolved = false;
@@ -124,7 +111,6 @@ export class ImapService {
             });
 
             fetch.once('end', () => {
-              if (processed > 0) logger.info({ user: mailbox.email, count: processed }, 'Processed messages');
               imap.end();
               resolve();
             });
@@ -132,7 +118,19 @@ export class ImapService {
         });
       });
 
-      imap.once('error', (err) => { if (!resolved) { resolved = true; imap.end(); reject(err); } });
+      // Handle Errors and Timeouts
+      imap.once('error', (err) => { 
+        if (!resolved) { 
+          resolved = true; 
+          imap.end(); 
+          reject(err); 
+        } 
+      });
+
+      imap.once('end', () => {
+        if (!resolved) { resolved = true; resolve(); }
+      });
+
       imap.connect();
     });
   }
@@ -158,7 +156,6 @@ export class ImapService {
         });
     }
 
-    // 1. Handle Bounces
     if (isBounceMessage(parsed)) {
       if (originalEmail) {
         await prisma.$transaction([
@@ -180,7 +177,6 @@ export class ImapService {
     const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
     if (existing) return;
 
-    // 2. Handle Replies
     await prisma.$transaction([
       prisma.mailbox.update({
         where: { id: mailbox.id },
@@ -191,7 +187,7 @@ export class ImapService {
           userId: originalEmail.userId,
           leadId: originalEmail.leadId,
           campaignId: originalEmail.campaignId,
-          mailboxId: mailbox.id, // 🔥 Correctly attribute to the mailbox being polled
+          mailboxId: mailbox.id,
           subject: parsed.subject || '',
           body: new EmailReplyParser().parseReply(text) || text,
           isIncoming: true,
@@ -207,7 +203,6 @@ export class ImapService {
       })
     ]);
 
-    // 3. AI Sentiment & Auto-Reply
     try {
       const analysis = await aiService.analyzeReply(parsed.text || '');
       await prisma.outboundEmail.update({
