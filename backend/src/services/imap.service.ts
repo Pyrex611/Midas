@@ -7,18 +7,6 @@ import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
 import { mailboxService } from './mailbox.service';
 
-function isBounceMessage(parsed: any): boolean {
-  const from = parsed.from?.value[0]?.address?.toLowerCase() || '';
-  const subject = parsed.subject?.toLowerCase() || '';
-  return (
-    from.includes('mailer-daemon') ||
-    from.includes('postmaster') ||
-    subject.includes('delivery status notification') ||
-    subject.includes('failure') ||
-    subject.includes('undeliverable')
-  );
-}
-
 export class ImapService {
   private isPolling = false;
   private pollInterval: NodeJS.Timeout | null = null;
@@ -31,35 +19,64 @@ export class ImapService {
   }
 
   async poll() {
-    logger.info('Starting Multi-Mailbox IMAP Polling Cycle...');
+    logger.info('IMAP_CYCLE: Starting Multi-Mailbox Polling...');
+    
     try {
       const mailboxes = await prisma.mailbox.findMany({
         where: { isActive: true, imapHost: { not: null } }
       });
 
+      logger.info(`IMAP_CYCLE: Found ${mailboxes.length} active mailboxes in database.`);
+
+      if (mailboxes.length === 0) return;
+
       for (const mb of mailboxes) {
+        logger.info(`IMAP_SYNC: Starting sync for [${mb.email}]`);
+        
         try {
           const decrypted = await mailboxService.getMailboxForSending(mb.id);
-          
-          // Use lastPolledAt or fallback to 30 days
           const lookback = decrypted.lastPolledAt || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
           const sinceDate = this.formatImapDate(lookback);
           
-          logger.debug({ user: decrypted.email }, 'Connecting to IMAP...');
-          await this.connectAndProcess(decrypted, sinceDate);
+          logger.debug(`IMAP_SYNC: Connecting to ${decrypted.imapHost} for ${decrypted.email}...`);
+          
+          // Execute connection with a hard 60s safety timeout to prevent hanging the whole loop
+          await this.withTimeout(
+            this.connectAndProcess(decrypted, sinceDate),
+            60000,
+            `Connection to ${decrypted.email} timed out after 60s`
+          );
 
           await prisma.mailbox.update({
             where: { id: mb.id },
-            data: { lastPolledAt: new Date(), status: 'HEALTHY' }
+            data: { lastPolledAt: new Date(), status: 'HEALTHY', lastError: null }
           });
+
+          logger.info(`IMAP_SYNC: Successfully finished sync for [${mb.email}]`);
           
         } catch (err: any) {
-          logger.error({ mailbox: mb.email, error: err.message }, 'Mailbox poll failed');
+          logger.error({ mailbox: mb.email, error: err.message }, 'IMAP_SYNC_ERROR: Mailbox-specific failure');
+          await prisma.mailbox.update({
+            where: { id: mb.id },
+            data: { status: 'DEGRADED', lastError: err.message }
+          }).catch(() => {}); // Prevent double crash
         }
       }
-    } catch (error) {
-      logger.error({ error }, 'Global poll loop error');
+      logger.info('IMAP_CYCLE: Completed all mailboxes.');
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'IMAP_CYCLE_CRITICAL: Global loop failure');
     }
+  }
+
+  /**
+   * Helper to prevent the entire service from hanging if a single socket gets stuck
+   */
+  private withTimeout(promise: Promise<any>, ms: number, exception: string) {
+    let timeoutId: NodeJS.Timeout;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(exception)), ms);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
   }
 
   private formatImapDate(date: Date): string {
@@ -75,30 +92,39 @@ export class ImapService {
         host: mailbox.imapHost,
         port: mailbox.imapPort || 993,
         tls: mailbox.imapSecure ?? true,
-        // 🔥 CRITICAL FOR SERVERS:
         tlsOptions: { 
           rejectUnauthorized: false,
-          servername: mailbox.imapHost // Ensures SNI matches for Gmail
+          servername: mailbox.imapHost 
         },
-        connTimeout: 60000,   // Wait longer for initial connection
-        authTimeout: 45000,   // Wait longer for Gmail to accept App Password
-        keepalive: {
-            interval: 10000,
-            idleInterval: 30000,
-            forceNoop: true
-        }
+        connTimeout: 30000,
+        authTimeout: 30000,
+        keepalive: false // Disable keepalive for short polling bursts
       });
 
-      let resolved = false;
+      let hasFinished = false;
+
+      const cleanup = () => {
+        if (!hasFinished) {
+          hasFinished = true;
+          imap.end();
+        }
+      };
 
       imap.once('ready', () => {
+        logger.debug(`IMAP_STATE: Ready [${mailbox.email}]`);
         imap.openBox('INBOX', false, (err, box) => {
-          if (err) { imap.end(); return reject(err); }
+          if (err) { cleanup(); return reject(err); }
 
           imap.search(['UNSEEN', ['SINCE', sinceDate]], (err, results) => {
-            if (err) { imap.end(); return reject(err); }
-            if (!results || results.length === 0) { imap.end(); return resolve(); }
+            if (err) { cleanup(); return reject(err); }
+            
+            if (!results || results.length === 0) {
+              logger.debug(`IMAP_STATE: No new messages for [${mailbox.email}]`);
+              cleanup();
+              return resolve();
+            }
 
+            logger.info(`IMAP_STATE: Fetching ${results.length} new messages for [${mailbox.email}]`);
             const fetch = imap.fetch(results, { bodies: '', struct: true });
             let processed = 0;
 
@@ -106,29 +132,34 @@ export class ImapService {
               msg.on('body', (stream) => {
                 this.processMessage(mailbox, stream).then(() => {
                   processed++;
-                }).catch(e => logger.error(e));
+                  if (processed === results.length) {
+                    cleanup();
+                    resolve();
+                  }
+                }).catch(e => logger.error(`IMAP_MSG_ERR: ${e.message}`));
               });
             });
 
-            fetch.once('end', () => {
-              imap.end();
-              resolve();
+            fetch.once('error', (fetchErr) => {
+              cleanup();
+              reject(fetchErr);
             });
           });
         });
       });
 
-      // Handle Errors and Timeouts
-      imap.once('error', (err) => { 
-        if (!resolved) { 
-          resolved = true; 
-          imap.end(); 
-          reject(err); 
-        } 
+      imap.once('error', (err) => {
+        logger.error(`IMAP_SOCKET_ERR: [${mailbox.email}] ${err.message}`);
+        cleanup();
+        reject(err);
       });
 
       imap.once('end', () => {
-        if (!resolved) { resolved = true; resolve(); }
+        logger.debug(`IMAP_STATE: Closed [${mailbox.email}]`);
+        if (!hasFinished) {
+          hasFinished = true;
+          resolve();
+        }
       });
 
       imap.connect();
@@ -138,9 +169,12 @@ export class ImapService {
   private async processMessage(mailbox: any, stream: any) {
     const parsed = await simpleParser(stream);
     const messageId = parsed.messageId?.trim();
+    if (!messageId) return;
+
     const inReplyTo = parsed.inReplyTo?.trim();
     const text = parsed.text || '';
 
+    // Search for original email context
     const searchIds = [];
     if (inReplyTo) searchIds.push(inReplyTo);
     if (parsed.references) {
@@ -156,12 +190,18 @@ export class ImapService {
         });
     }
 
-    if (isBounceMessage(parsed)) {
+    // 1. Bounce Detection
+    const from = parsed.from?.value[0]?.address?.toLowerCase() || '';
+    const subject = (parsed.subject || '').toLowerCase();
+    const isBounce = from.includes('mailer-daemon') || from.includes('postmaster') || subject.includes('delivery status notification') || subject.includes('failure');
+
+    if (isBounce) {
       if (originalEmail) {
+        logger.warn(`IMAP_EVENT: Bounce detected for lead ${originalEmail.leadId}`);
         await prisma.$transaction([
           prisma.mailbox.update({
             where: { id: mailbox.id },
-            data: { bounceCount: { increment: 1 }, status: 'DEGRADED', lastError: `Bounce detected in ${mailbox.email}` }
+            data: { bounceCount: { increment: 1 }, status: 'DEGRADED', lastError: `Bounce from: ${from}` }
           }),
           prisma.lead.update({
             where: { id: originalEmail.leadId },
@@ -172,16 +212,16 @@ export class ImapService {
       return;
     }
 
-    if (!messageId || !originalEmail) return;
+    if (!originalEmail) return;
 
     const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
     if (existing) return;
 
+    // 2. Reply Recording
+    logger.info(`IMAP_EVENT: Valid reply detected from [${from}] for campaign [${originalEmail.campaignId}]`);
+    
     await prisma.$transaction([
-      prisma.mailbox.update({
-        where: { id: mailbox.id },
-        data: { replyCount: { increment: 1 } }
-      }),
+      prisma.mailbox.update({ where: { id: mailbox.id }, data: { replyCount: { increment: 1 } } }),
       prisma.outboundEmail.create({
         data: {
           userId: originalEmail.userId,
@@ -197,20 +237,20 @@ export class ImapService {
           status: 'SENT',
         }
       }),
-      prisma.outboundEmail.update({
-        where: { id: originalEmail.id },
-        data: { repliedAt: new Date() }
-      })
+      prisma.outboundEmail.update({ where: { id: originalEmail.id }, data: { repliedAt: new Date() } })
     ]);
 
+    // 3. AI Intelligence
     try {
       const analysis = await aiService.analyzeReply(parsed.text || '');
       await prisma.outboundEmail.update({
         where: { messageId },
         data: { sentiment: analysis.sentiment, intent: analysis.intent, analysis: JSON.stringify(analysis) }
       });
-      autoReplyService.processReply(messageId).catch(e => logger.error(e));
-    } catch (e) { logger.error(e); }
+      autoReplyService.processReply(messageId).catch(e => logger.error(`AUTO_REPLY_ERR: ${e.message}`));
+    } catch (e: any) { 
+      logger.error(`AI_ANALYSIS_ERR: ${e.message}`); 
+    }
   }
 
   stopPolling() {
