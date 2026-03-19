@@ -22,44 +22,67 @@ export class PromptManager {
   buildPrompt(params: PromptParams): string {
     const { useCase, tone, objective, microObjective, targetTool, reference, variationSeed, stepNumber, campaignContext } = params;
 
-    let prompt = `ROLE: Elite B2B SDR. 
-STYLE: Concise, human-centric. No corporate fluff.
-CAMPAIGN CONTEXT: "${campaignContext}"
-GOAL: "${objective}"\n\n`;
+    let prompt = `ROLE: You are an Elite B2B Sales Strategist and Copywriter. 
+EXPERTISE: High-ticket outreach, psychological pattern interrupts, and conversion optimization.
+MISSION: Convert a cold lead into a "${objective}" using a multi-step sequence.
 
-    prompt += `## PLACEHOLDER RESTRICTIONS (CRITICAL)
-You are ONLY allowed to use these exact placeholders. Do NOT invent your own:
-1. {{firstName}} - The prospect's first name.
-2. {{company}} - The prospect's company name.
-3. {{senderName}} - Your name.
-4. {{targetTool}} - The phone number or link provided for the close.
-5. {{reference_company}} - ONLY if a reference story is provided.
+## THE CAMPAIGN CONTEXT (FOR INFORMATION ONLY)
+"${campaignContext}"
 
-## LOGICAL INFERENCE RULE
-If you want to mention a specific department, pain point, or area of the business (e.g., "front desk", "missed calls", "intake process"), do NOT use a placeholder. Instead, look at the CAMPAIGN CONTEXT and hardcode the most logical term into the sentence. \n\n`;
+## ⛔ STRICT NEGATIVE CONSTRAINTS (DO NOT VIOLATE)
+1. DO NOT copy any examples provided in the context verbatim. If an example is present, use it only to understand the product; write your own original copy.
+2. DO NOT use corporate clichés: "I hope this finds you well", "Just checking in", "Touching base", "Revolutionary", "Game-changer".
+3. DO NOT invent placeholders. You are strictly limited to: {{firstName}}, {{company}}, {{senderName}}, {{targetTool}}, and {{reference_company}}.
+4. NO "Running Blind" or generic analogies unless they are logically specific to the niche.\n\n`;
 
-    if (useCase === 'followup') {
-      prompt += `\n## FOLLOW-UP STRATEGY (STEP ${stepNumber})
-OBJ: ${microObjective}
-- Logic: Do not repeat previous points. 
-- The Stitch: Subtly reference the previous thread context: "${params.lastEmailContent?.substring(0, 100)}..."\n`;
-    }
+    prompt += `## LOGICAL INFERENCE ENGINE
+You must analyze the CAMPAIGN CONTEXT. If you need to mention a business area (e.g., 'front desk', 'intake', 'missed calls'), do NOT use a placeholder like {{area}}. You must hardcode the correct terminology based on the context provided.\n\n`;
 
-    // Task Logic
+    prompt += `## STRATEGIC ALIGNMENT
+- Global Goal: ${objective}
+- Tool Available: ${targetTool || 'None'}
+- Variation Seed: ${variationSeed}\n\n`;
+
+    // Task Selection
     if (useCase === 'initial') {
-        prompt += `\n### TASK: INITIAL REACH
-Write a pattern-interrupt email. Use a hook related to {{company}} and the problem defined in the context.`;
+        prompt += this.buildInitialReachLogic();
     } else if (useCase === 'followup') {
-        prompt += `\n### TASK: FOLLOW-UP ${stepNumber}
-Acknowledge they are busy. Pivot to the specific goal of this step.`;
+        prompt += this.buildFollowupLogic(params);
     } else {
-        prompt += `\n### TASK: ADAPTIVE REPLY
-Sentiment: ${params.sentiment}. Lead said: "${params.originalEmail}". Pivot to the goal using {{targetTool}}.`;
+        prompt += this.buildReplyLogic(params);
     }
 
-    prompt += `\n\n## OUTPUT: Valid JSON {"subject": "...", "body": "..."} | Seed: ${variationSeed}`;
+    prompt += `\n\n## FINAL FORMATTING
+- Output strictly raw JSON: {"subject": "...", "body": "..."}
+- Subject: Maximum 5 words. Curiosity-driven.
+- Body: Mobile-optimized. Max 3 paragraphs. Short, punchy sentences.`;
 
     return prompt;
+  }
+
+  private buildInitialReachLogic(): string {
+    return `### TASK: INITIAL OUTREACH (Pattern Interrupt)
+1. The Hook: A specific, slightly provocative observation about {{company}}'s industry.
+2. The Pivot: Connect the observation to the GLOBAL GOAL.
+3. The Soft Ask: A low-friction question that is easy to answer with a 'Yes' or 'No'.`;
+  }
+
+  private buildFollowupLogic(p: PromptParams): string {
+    const vossLogic = p.stepNumber && p.stepNumber >= 3 
+      ? `Use Chris Voss 'No-Oriented' logic. Example: "Would it be a bad idea to...?" or "Have you given up on...?"` 
+      : `Provide a fresh insight not mentioned in the previous email.`;
+
+    return `### TASK: FOLLOW-UP STEP ${p.stepNumber}
+Objective: ${p.microObjective}
+Stitch: Refer to the previous context ("${p.lastEmailContent?.substring(0, 60)}...") without saying "I'm following up."
+Psychology: ${vossLogic}`;
+  }
+
+  private buildReplyLogic(p: PromptParams): string {
+    return `### TASK: ADAPTIVE REPLY
+Lead Status: ${p.sentiment}. 
+Content: Answer their question briefly, then pivot to the conversion tool: {{targetTool}}.
+Thread History: ${p.conversationHistory}`;
   }
 }
 

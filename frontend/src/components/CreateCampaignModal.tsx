@@ -18,35 +18,51 @@ export const CreateCampaignModal: React.FC<Props> = ({
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [objective, setObjective] = useState(''); // Part of Phase 4.5d
   const [context, setContext] = useState('');
   const [reference, setReference] = useState('');
   const [senderName, setSenderName] = useState(defaultSenderName || '');
+  
   const [submitting, setSubmitting] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
+
+  // --- Optimization State Logic ---
+  const [originalContext, setOriginalContext] = useState('');
+  const [isOptimized, setIsOptimized] = useState(false);
 
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen) {
       setName('');
       setDescription('');
+      setObjective('');
       setContext('');
       setReference('');
+      setOriginalContext('');
+      setIsOptimized(false);
       setSenderName(defaultSenderName || '');
     }
   }, [isOpen, defaultSenderName]);
 
   const handleOptimize = async () => {
     if (!context.trim()) return;
+    setOriginalContext(context); // Save user input
     setOptimizing(true);
     try {
       const res = await aiAPI.optimizeContext(context);
       setContext(res.data.optimized);
+      setIsOptimized(true);
     } catch (error) {
       console.error('Failed to optimize context', error);
       alert('Could not optimize context. Please try again.');
     } finally {
       setOptimizing(false);
     }
+  };
+
+  const handleRevert = () => {
+    setContext(originalContext);
+    setIsOptimized(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -58,6 +74,7 @@ export const CreateCampaignModal: React.FC<Props> = ({
       await campaignAPI.create({
         name,
         description,
+        objective,
         context,
         reference,
         senderName,
@@ -107,25 +124,56 @@ export const CreateCampaignModal: React.FC<Props> = ({
             />
           </div>
 
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Primary Objective <span className="text-red-600">*</span>
+            </label>
+            <input
+              type="text"
+              value={objective}
+              onChange={(e) => setObjective(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              placeholder="e.g. Book a 15-minute discovery call"
+              required
+            />
+          </div>
+
           <div className="mb-4 relative">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Campaign Goal / Context <span className="text-gray-500 text-xs">(Crucial for AI drafting)</span>
             </label>
             <textarea
               value={context}
-              onChange={(e) => setContext(e.target.value)}
+              onChange={(e) => {
+                setContext(e.target.value);
+                if (isOptimized) setIsOptimized(false);
+              }}
               rows={3}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               placeholder="e.g., Propose my services as a senior software engineer, emphasize value I can add to their team."
+              required
             />
-            <button
-              type="button"
-              onClick={handleOptimize}
-              disabled={optimizing || !context.trim()}
-              className="absolute right-2 top-8 px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 disabled:opacity-50"
-            >
-              {optimizing ? 'Optimizing...' : '✨ Optimize'}
-            </button>
+            
+            <div className="absolute right-2 top-8">
+              {!isOptimized ? (
+                <button
+                  type="button"
+                  onClick={handleOptimize}
+                  disabled={optimizing || !context.trim()}
+                  className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 disabled:opacity-50 transition-all"
+                >
+                  {optimizing ? 'Optimizing...' : '✨ Optimize'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleRevert}
+                  className="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-all"
+                >
+                  ↩ Revert
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="mb-4">
@@ -155,9 +203,6 @@ export const CreateCampaignModal: React.FC<Props> = ({
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               placeholder="e.g., John Doe"
             />
-            <p className="mt-1 text-xs text-gray-500">
-              This name will appear in the "From" field of sent emails. Prefilled from your profile.
-            </p>
           </div>
 
           {initialLeadIds && initialLeadIds.length > 0 && (

@@ -1,6 +1,8 @@
 import { OutreachStatus, CampaignRole } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { DraftService } from './draft.service';
+import { personalisationService } from './personalisation.service';
+import { emailService } from './email.service';
 import { logger } from '../config/logger';
 
 const draftService = new DraftService();

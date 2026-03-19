@@ -3,23 +3,36 @@ import { aiService } from '../services/ai.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
 
-/**
- * POST /api/ai/optimize-context
- * Optimize a campaign context string using AI.
- */
 export const optimizeContext = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { context } = req.body;
-    if (!context || typeof context !== 'string') {
-      return res.status(400).json({ error: 'Context string required' });
+    if (!context || typeof context !== 'string' || context.length < 5) {
+      return res.status(400).json({ error: 'Please provide a more detailed context to optimize.' });
     }
 
-    const prompt = `You are an expert sales copywriter, strategist and prompt engineer. The following is a user‑provided campaign context for a cold email outreach. Please refine and expand it to be more specific, compelling, and likely to generate high‑quality emails. Return ONLY the optimized context as plain text to be used as a prompt for the email generation agent, no extra commentary. Original context: "${context}"`;
+    // This prompt forces the AI to analyze the "Who, What, Why" of the user's goal
+    const prompt = `You are an elite Sales Strategy Consultant. 
+    Take the following raw campaign context and transform it into a high-fidelity "SDR Context Brief" that will be used by an AI to write cold emails.
+    
+    ORIGINAL CONTEXT: "${context}"
 
-    const system = 'You are an expert copywriter. Output only the optimized text.';
+    YOUR TASK:
+    1. Identify the core Value Proposition.
+    2. Identify the specific Pain Point being solved.
+    3. Specify the Target Persona's likely goals.
+    4. Rewrite the context to be descriptive, professional, and analytical.
+    
+    RULES:
+    - Return ONLY the optimized text. 
+    - Do not include headers like "Optimized Context:".
+    - Do not include conversational filler.
+    - Max 150 words.
+    - Focus on results and outcomes.`;
+
+    const system = 'You are a Senior SDR Manager. Output only the refined strategy text.';
     const optimized = await aiService.complete(prompt, system);
 
-    // Trim and clean
+    // Clean up any stray quotes the AI might return
     const cleaned = optimized.replace(/^["']|["']$/g, '').trim();
 
     res.json({ optimized: cleaned });

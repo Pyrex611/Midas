@@ -10,44 +10,32 @@ export class DraftService {
   async generateAndSaveDraft(
     userId: string,
     tone: string = 'professional',
-    useCase: string = 'initial',
+    useCase: 'initial' | 'followup' | 'reply' = 'initial',
     campaignId?: string,
     campaignContext?: string,
     reference?: string,
     companyContext?: string,
     senderName?: string,
-    stepNumber?: number // for follow‑up steps
+    stepNumber?: number,
+    objective?: string | null,
+    targetTool?: string | null,
+    microObjective?: string | null,
+    lastEmailContent?: string | null
   ) {
     try {
       const { subject, body } = await aiService.generateDraft(
-        tone,
-        useCase as any,
-        campaignContext,
-        reference,
-        companyContext,
-        undefined,
-        undefined,
-        stepNumber // pass step number for context
+        tone, useCase, campaignContext, reference, companyContext, 
+        undefined, undefined, stepNumber, objective, microObjective, targetTool, lastEmailContent
       );
 
-      const draft = await prisma.draft.create({
+      return await prisma.draft.create({
         data: {
-          userId,
-          subject,
-          body,
-          tone,
-          useCase,
-          version: 1,
-          isActive: true,
-          campaignId,
-          stepNumber, // store step number
+          userId, subject, body, tone, useCase,
+          isActive: true, campaignId, stepNumber
         },
       });
-
-      logger.info({ draftId: draft.id, campaignId, stepNumber }, 'New draft generated and saved');
-      return draft;
     } catch (error) {
-      logger.error({ error, tone, useCase, campaignId, stepNumber }, 'Failed to generate draft');
+      logger.error({ error }, 'Individual Draft Generation Failed');
       return null;
     }
   }
@@ -67,28 +55,22 @@ export class DraftService {
     senderName?: string,
     stepNumber?: number,
     objective?: string | null,
+    targetTool?: string | null,
     microObjective?: string | null
   ) {
-    const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
     const drafts = [];
-    const delayMs = env.AI_REQUEST_DELAY_MS;
-
     for (let i = 0; i < count; i++) {
-      // Pass a different variation seed for each to ensure variety
       const draft = await this.generateAndSaveDraft(
         userId, tone, useCase, campaignId, campaignContext, reference, 
-        companyContext, senderName, stepNumber, objective, microObjective
+        companyContext, senderName, stepNumber, objective, targetTool, microObjective
       );
       if (draft) drafts.push(draft);
-			
-      if (i < count - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
+      // Brief delay to ensure variations in clock-based random seeds if applicable
+      await new Promise(r => setTimeout(r, 200));
     }
-		logger.info({ campaignId, generated: drafts.length, requested: count, stepNumber }, 'Generated multiple drafts');
     return drafts;
   }
-
+	
   /**
    * Generate follow‑up drafts for a specific step.
    * @param count Number of drafts to generate (default 3 for step 1, 1 for others)
