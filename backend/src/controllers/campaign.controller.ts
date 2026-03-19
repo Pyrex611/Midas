@@ -14,16 +14,29 @@ const draftService = new DraftService();
 
 /**
  * POST /api/campaigns
- * Create a new campaign.
+ * Create a new campaign and assign the current user as Owner.
  */
 export const createCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    logger.debug({ userId }, 'Creating campaign for user');
+    const { 
+      name, 
+      description, 
+      context, 
+      reference, 
+      senderName, 
+      leadIds, 
+      autoReplyEnabled, 
+      sendHourUTC 
+    } = req.body;
 
-    const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC } = req.body;
-    if (!name) return res.status(400).json({ error: 'Campaign name is required' });
+    if (!name) {
+      return res.status(400).json({ error: 'Campaign name is required' });
+    }
 
+    logger.info({ userId, name }, 'Received request to create campaign');
+
+    // Call the service which now handles both the Campaign and the Membership
     const campaign = await campaignService.createCampaign(
       userId,
       name,
@@ -39,9 +52,12 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
     res.status(201).json({
       success: true,
       campaignId: campaign.id,
-      message: leadIds?.length ? `Campaign started with ${leadIds.length} leads` : 'Campaign created',
+      message: leadIds?.length 
+        ? `Campaign created with ${leadIds.length} leads` 
+        : 'Campaign created in draft mode',
     });
   } catch (error) {
+    // Pass errors to the central error middleware
     next(error);
   }
 };
@@ -225,7 +241,7 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
     );
 
     // Queue the email
-    await emailService.queueEmail(userId, leadId, campaignId, draft.id, subject, body);
+    await emailService.queueEmail(userId, campaignId, leadId, draft.id, subject, body);
     await prisma.lead.update({
       where: { id: leadId },
       data: { outreachStatus: 'QUEUED' },
@@ -579,17 +595,53 @@ export const updateCampaign = async (req: AuthRequest, res: Response, next: Next
 
 /**
  * DELETE /api/campaigns/:id
- * Delete a campaign.
+ * Delete a campaign and its associated links/steps.
  */
 export const deleteCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
     const { id } = req.params;
+
     const campaign = await prisma.campaign.findFirst({ where: { id, userId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
-    await prisma.campaign.delete({ where: { id } });
+
+    // We use a transaction to ensure all cleanup happens together
+    await prisma.$transaction([
+      // 1. Remove mailbox links (The error you encountered)
+      prisma.campaignMailbox.deleteMany({ where: { campaignId: id } }),
+
+      // 2. Remove follow-up steps
+      prisma.followUpStep.deleteMany({ where: { campaignId: id } }),
+
+      // 3. Remove pending emails in the queue
+      prisma.pendingEmail.deleteMany({ where: { campaignId: id } }),
+
+      // 4. Handle Leads associated with this campaign
+      // We don't delete the leads themselves (to keep the contact info),
+      // but we de-associate them from this campaign.
+      prisma.lead.updateMany({
+        where: { campaignId: id },
+        data: { campaignId: null, outreachStatus: null }
+      }),
+
+      // 5. De-associate historical sent emails so we keep the history 
+      // but remove the link to the campaign being deleted
+      prisma.outboundEmail.updateMany({
+        where: { campaignId: id },
+        data: { campaignId: null }
+      }),
+
+      // 6. Remove campaign-specific drafts
+      prisma.draft.deleteMany({ where: { campaignId: id } }),
+
+      // 7. Finally, delete the campaign
+      prisma.campaign.delete({ where: { id } }),
+    ]);
+
+    logger.info({ campaignId: id, userId }, 'Campaign and related data deleted successfully');
     res.status(204).send();
   } catch (error) {
+    logger.error({ error, campaignId: req.params.id }, 'Failed to delete campaign');
     next(error);
   }
 };
@@ -751,6 +803,74 @@ export const updateActiveHours = async (req: AuthRequest, res: Response, next: N
       timezone
     );
     res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/campaigns/:id/mailboxes
+ * List mailboxes linked to a campaign.
+ */
+export const getCampaignMailboxes = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const mailboxes = await campaignService.getCampaignMailboxes(userId, id);
+    res.json(mailboxes);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/campaigns/:id/mailboxes
+ * Link a mailbox to the campaign.
+ */
+export const addMailboxToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { mailboxId } = req.body;
+    if (!mailboxId) return res.status(400).json({ error: 'mailboxId required' });
+    const link = await campaignService.addMailboxToCampaign(userId, id, mailboxId);
+    res.status(201).json(link);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/campaigns/:id/mailboxes/:mailboxId
+ * Unlink a mailbox from the campaign.
+ */
+export const removeMailboxFromCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id, mailboxId } = req.params;
+    await campaignService.removeMailboxFromCampaign(userId, id, mailboxId);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateStrategy = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const { objective, extendedObjective, targetTool, context, reference } = req.body;
+
+    // Use the Service to update data and re-run the Strategist
+    const campaign = await campaignService.updateStrategy(id, userId, {
+      objective,
+      extendedObjective,
+      targetTool,
+      context,
+      reference
+    });
+
+    res.json({ success: true, campaign });
   } catch (error) {
     next(error);
   }

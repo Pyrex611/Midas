@@ -80,7 +80,7 @@ export const campaignAPI = {
   updateAutoReply: (id: string, data: { autoReplyEnabled: boolean }) =>
     api.put(`/campaigns/${id}/auto-reply`, data),
 
-  // NEW: Follow‑up step management
+  // Follow‑up step management
   getFollowUpSteps: (id: string) => api.get(`/campaigns/${id}/followup-steps`),
   setFollowUpSteps: (id: string, steps: any[]) => api.post(`/campaigns/${id}/followup-steps`, { steps }),
   deleteFollowUpStep: (id: string, stepId: string) => api.delete(`/campaigns/${id}/followup-steps/${stepId}`),
@@ -120,7 +120,30 @@ export const campaignAPI = {
 	generateStepDraft: (campaignId: string, stepNumber: number) =>
 		api.post(`/campaigns/${campaignId}/steps/${stepNumber}/generate-draft`),
 
-  // Legacy update (rename, etc.)
+  getCampaignMailboxes: (campaignId: string) => api.get(`/campaigns/${campaignId}/mailboxes`),
+	addMailboxToCampaign: (campaignId: string, mailboxId: string) => api.post(`/campaigns/${campaignId}/mailboxes`, { mailboxId }),
+	removeMailboxFromCampaign: (campaignId: string, mailboxId: string) => api.delete(`/campaigns/${campaignId}/mailboxes/${mailboxId}`),
+	
+	// Collaboration Endpoints
+  getMembers: (id: string) => api.get(`/campaigns/${id}/members`),
+  createInvite: (id: string, data: { email: string, role: string }) => 
+    api.post(`/campaigns/${id}/invites`, data),
+  getInvites: (id: string) => api.get(`/campaigns/${id}/invites`),
+  acceptInvite: (token: string) => api.post('/campaigns/accept-invite', { token }),
+  removeMember: (campaignId: string, userId: string) => 
+    api.delete(`/campaigns/${campaignId}/members/${userId}`),
+		
+  getMyInvites: () => api.get('/campaigns/invites/me'),
+	
+	updateStrategy: (id: string, data: { 
+		objective?: string; 
+		extendedObjective?: string; 
+		targetTool?: string;
+		context?: string;
+		reference?: string;
+	}) => api.put(`/campaigns/${id}/strategy`, data),
+	
+	// Legacy update (rename, etc.)
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),
 };
@@ -133,6 +156,14 @@ export const aiAPI = {
 // ===== IMAP API =====
 export const imapAPI = {
   poll: () => api.post('/imap/poll'),
+};
+
+export const mailboxAPI = {
+  getAll: () => api.get('/mailboxes'),
+  get: (id: string) => api.get(`/mailboxes/${id}`),
+  create: (data: any) => api.post('/mailboxes', data),
+  update: (id: string, data: any) => api.put(`/mailboxes/${id}`, data),
+  delete: (id: string) => api.delete(`/mailboxes/${id}`),
 };
 
 // ===== DIAGNOSTICS API =====

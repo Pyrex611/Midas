@@ -2,19 +2,26 @@ import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
+import { mailboxService } from './mailbox.service';
 import { getNextActiveTime } from '../utils/timezone';
 
 export class EmailQueueService {
   private interval: NodeJS.Timeout | null = null;
   private isProcessing = false;
 
+  /**
+   * Start the queue processor loop.
+   */
   start(intervalMs: number = 60 * 1000) {
     if (this.interval) return;
     logger.info(`Email queue processor started (interval: ${intervalMs}ms)`);
     this.interval = setInterval(() => this.processQueue(), intervalMs);
-    this.processQueue(); // run immediately
+    this.processQueue(); // Run immediately on start
   }
 
+  /**
+   * Stop the queue processor loop.
+   */
   stop() {
     if (this.interval) {
       clearInterval(this.interval);
@@ -23,202 +30,251 @@ export class EmailQueueService {
     }
   }
 
+  /**
+   * Primary loop: Fetches all PENDING emails and groups them by campaign for processing.
+   */
   async processQueue() {
     if (this.isProcessing) return;
     this.isProcessing = true;
+
     try {
-      // Get all pending emails that are due now (scheduledAt <= now or null)
+      // 1. CONNECTION GUARD: Ensure DB is reachable before pulling large datasets
+      await prisma.$queryRaw`SELECT 1`.catch(() => { throw new Error('CONNECTION_LIMIT_HIT') });
+
       const now = new Date();
       const pending = await prisma.pendingEmail.findMany({
         where: {
           status: 'PENDING',
-          OR: [
-            { scheduledAt: null },
-            { scheduledAt: { lte: now } },
-          ],
+          OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }],
         },
-        orderBy: [
-          { priority: 'asc' },
-          { createdAt: 'asc' },
-        ],
+        orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
         include: {
-          user: {
-            include: { settings: true },
+          campaign: {
+            include: {
+              mailboxLinks: { include: { mailbox: true } },
+            },
           },
-          campaign: true,
           lead: true,
           draft: true,
+          preferredMailbox: true,
         },
       });
 
-      // Group by user
-      const byUser = new Map();
-      for (const email of pending) {
-        if (!byUser.has(email.userId)) byUser.set(email.userId, []);
-        byUser.get(email.userId).push(email);
+      if (pending.length === 0) {
+        this.isProcessing = false;
+        return;
       }
 
-      for (const [userId, emails] of byUser) {
-        await this.processUserEmails(userId, emails);
+      // 2. GROUPING: Batch emails by campaign to avoid redundant mailbox selection lookups
+      const byCampaign = new Map<string, any[]>();
+      for (const email of pending) {
+        if (!byCampaign.has(email.campaignId)) byCampaign.set(email.campaignId, []);
+        byCampaign.get(email.campaignId)!.push(email);
       }
-    } catch (error) {
-      logger.error({ error }, 'Email queue processing error');
+
+      // 3. EXECUTION: Process each campaign batch
+      for (const [campaignId, emails] of byCampaign) {
+        await this.processCampaignEmails(campaignId, emails);
+      }
+
+    } catch (error: any) {
+      if (error.message === 'CONNECTION_LIMIT_HIT' || error.message.includes('MaxClients')) {
+        logger.warn('Queue: Database pool exhausted. Skipping cycle to allow cooldown.');
+      } else {
+        logger.error({ error }, 'Email queue processing error');
+      }
     } finally {
       this.isProcessing = false;
     }
   }
 
-  private async processUserEmails(userId: string, emails: any[]) {
-    const settings = emails[0]?.user.settings;
-    if (!settings) {
-      logger.warn({ userId }, 'No email settings, skipping');
-      return;
+  /**
+   * Process all pending emails for a specific campaign.
+   */
+  private async processCampaignEmails(campaignId: string, emails: any[]) {
+    const campaign = emails[0].campaign;
+
+    // GUARD: SILENT SKIP if no mailboxes are attached (Phase 4.5a fix)
+    if (!campaign.mailboxLinks || campaign.mailboxLinks.length === 0) {
+      logger.debug({ campaignId }, 'Skipping cycle: No mailboxes linked to campaign.');
+      return; 
     }
 
-    // Reset sent count and lastSend if period has passed
-    const now = new Date();
-    const lastReset = new Date(settings.lastSentReset);
-    const periodMinutes = this.getPeriodMinutes(settings.sendPeriod);
-    const minutesSinceReset = (now.getTime() - lastReset.getTime()) / (1000 * 60);
-    if (minutesSinceReset >= periodMinutes) {
-      await prisma.userSettings.update({
-        where: { userId },
-        data: {
-          sentCount: 0,
-          lastSentReset: now,
-          lastSend: null, // allow immediate sending after reset
-        },
-      });
-      settings.sentCount = 0;
-      settings.lastSend = null;
-    }
-
-    const limit = settings.sendLimit;
-    const sentToday = settings.sentCount;
-
-    if (sentToday >= limit) {
-      logger.debug({ userId }, 'Send limit reached');
-      return;
-    }
-
-    const intervalMs = this.getSendIntervalMs(settings);
-
-    // If we have a lastSend, check if we need to wait
-    if (settings.lastSend) {
-      const timeSinceLast = now.getTime() - new Date(settings.lastSend).getTime();
-      if (timeSinceLast < intervalMs) {
-        logger.debug({ userId, timeSinceLast, intervalMs }, 'Interval not yet elapsed, skipping this user for now');
-        return; // do not process any emails for this user this cycle
+    for (const email of emails) {
+      // 1. ACTIVE HOURS CHECK: Skip and reschedule if outside professional window
+      if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
+        const now = new Date();
+        const nextTime = getNextActiveTime(now, campaign.activeStartHour, campaign.activeEndHour);
+        if (nextTime.getTime() > now.getTime()) {
+          await prisma.pendingEmail.update({ 
+            where: { id: email.id }, 
+            data: { scheduledAt: nextTime } 
+          });
+          continue; 
+        }
       }
-    }
 
-    // Find the oldest pending email (already sorted by createdAt)
-    const email = emails[0];
-    if (!email) return;
-
-    // Check campaign active window
-    const campaign = email.campaign;
-    if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
-      const nextTime = getNextActiveTime(now, campaign.activeStartHour, campaign.activeEndHour);
-      if (nextTime.getTime() > now.getTime()) {
-        // Not in window; reschedule
-        await prisma.pendingEmail.update({
-          where: { id: email.id },
-          data: { scheduledAt: nextTime },
-        });
-        logger.debug({ userId, emailId: email.id, nextTime }, 'Email rescheduled due to active hours');
-        return; // skip this user for now (other emails will be processed in future cycles)
+      // 2. MAILBOX SELECTION: Rounds-robin or Preferred (Thread Consistency)
+      const selection = await mailboxService.selectMailboxForCampaign(campaignId, email.preferredMailboxId);
+      if (!selection) {
+        logger.warn({ campaignId }, 'No eligible mailbox found. Emails remain PENDING.');
+        return; 
       }
-    }
 
-    try {
-      // Personalise
-      const { subject, body } = personalisationService.personalise(
-        email.lead,
-        email.subject,
-        email.body,
-        email.campaign.reference,
-        email.campaign.senderName
-      );
+      // 3. CREDENTIALS & LIMITS: Decrypt SMTP and check daily quotas
+      const decryptedMailbox = await mailboxService.getMailboxForSending(selection.mailbox.id);
+      const mailboxWithStats = await this.prepareMailboxStats(decryptedMailbox);
+      
+      if (!mailboxWithStats.canSend) {
+        logger.debug({ mailboxId: decryptedMailbox.id }, 'Mailbox at daily/interval limit. Skipping.');
+        continue; 
+      }
 
-      const result = await emailService.sendEmailNow(
-        userId,
-        email.lead.email,
-        subject,
-        body.replace(/\n/g, '<br>'),
-        body,
-        email.campaign.senderName,
-        email.inReplyTo
-      );
-
-      if (result.success) {
-        // Record sent email
-        await prisma.outboundEmail.create({
-          data: {
-            userId,
-            leadId: email.leadId,
-            campaignId: email.campaignId,
-            draftId: email.draftId,
-            subject,
-            body,
-            status: 'SENT',
-            sentAt: new Date(),
-            messageId: result.messageId,
-            replyToId: email.inReplyTo ? undefined : undefined,
+      try {
+        // 🔥 NEW PHASE 5b: FETCH NARRATIVE "STITCH" CONTEXT
+        // We look for the most recent outbound email to this lead to ensure continuity.
+        const lastEmail = await prisma.outboundEmail.findFirst({
+          where: { 
+            leadId: email.leadId, 
+            campaignId: campaign.id, 
+            isIncoming: false 
           },
+          orderBy: { sentAt: 'desc' }
         });
 
-        // Update lead status
-        await prisma.lead.update({
-          where: { id: email.leadId },
-          data: { outreachStatus: 'SENT', status: 'CONTACTED' },
-        });
+        // 4. PERSONALISATION: Inject Lead Data, Target Tool (Phone/Link), and Stitch context
+        const { subject, body } = personalisationService.personalise(
+          email.lead,
+          email.subject,
+          email.body,
+          campaign.reference,
+          campaign.senderName,
+          campaign.targetTool, // 🔥 Pass the Dynamic Tool (Phase 5a)
+          lastEmail?.body      // 🔥 Pass the Stitch Context (Phase 5b)
+        );
 
-        // Increment draft sent count
-        if (email.draftId) {
-          await prisma.draft.update({
-            where: { id: email.draftId },
-            data: { sentCount: { increment: 1 } },
+        // 5. DELIVERY: SMTP Transmission via Nodemailer
+        const result = await emailService.sendEmailNow(
+          decryptedMailbox,
+          email.lead.email,
+          subject,
+          body.replace(/\n/g, '<br>'), // HTML Version
+          body,                         // Plaintext Version
+          campaign.senderName,
+          email.inReplyTo
+        );
+
+        if (result.success) {
+          // 6. ATOMIC TRANSACTION: Prevent sending duplicate emails if database flickers.
+          // We record the sent email, delete the pending record, and update analytics in one unit.
+          await prisma.$transaction([
+            prisma.outboundEmail.create({
+              data: {
+                userId: email.userId,
+                mailboxId: decryptedMailbox.id,
+                leadId: email.leadId,
+                campaignId,
+                draftId: email.draftId,
+                subject,
+                body,
+                status: 'SENT',
+                sentAt: new Date(),
+                messageId: result.messageId,
+                inReplyTo: email.inReplyTo,
+              },
+            }),
+            prisma.pendingEmail.delete({ where: { id: email.id } }),
+            prisma.lead.update({
+              where: { id: email.leadId },
+              data: { 
+                outreachStatus: 'SENT', 
+                status: 'CONTACTED',
+                updatedAt: new Date()
+              },
+            }),
+            // Update Lifetime Analytics (Phase 4.5c)
+            prisma.mailbox.update({
+              where: { id: decryptedMailbox.id },
+              data: {
+                totalSent: { increment: 1 },
+                status: 'HEALTHY',
+                lastError: null
+              }
+            })
+          ]);
+
+          // Optional: Update Draft success counts
+          if (email.draftId) {
+            await prisma.draft.update({
+              where: { id: email.draftId },
+              data: { sentCount: { increment: 1 } },
+            }).catch(() => null);
+          }
+
+          // 7. STATS RECORDING: Record successful send for throttling
+          await this.updateMailboxStats(decryptedMailbox.id);
+          logger.info({ leadId: email.leadId, mailbox: decryptedMailbox.email }, 'Strategic outreach delivered successfully.');
+
+          // Only process ONE email per campaign per cycle to respect send intervals accurately
+          break; 
+        } else {
+          // SMTP Failure Handling
+          await prisma.mailbox.update({
+            where: { id: decryptedMailbox.id },
+            data: { 
+                status: 'DEGRADED',
+                lastError: result.error || 'Unknown SMTP error'
+            }
+          });
+
+          await prisma.pendingEmail.update({
+            where: { id: email.id },
+            data: { status: 'FAILED', error: result.error },
           });
         }
-
-        // Delete pending email
-        await prisma.pendingEmail.delete({ where: { id: email.id } });
-
-        // Update user's sentCount and lastSend
-        await prisma.userSettings.update({
-          where: { userId },
-          data: {
-            sentCount: { increment: 1 },
-            lastSend: new Date(),
-          },
-        });
-
-        logger.info({ leadId: email.leadId, userId, sentCount: sentToday + 1 }, 'Email sent from queue');
-      } else {
-        // Mark as failed
-        await prisma.pendingEmail.update({
-          where: { id: email.id },
-          data: { status: 'FAILED', error: result.error },
-        });
-        await prisma.lead.update({
-          where: { id: email.leadId },
-          data: { outreachStatus: 'FAILED' },
-        });
-        logger.error({ userId, emailId: email.id, error: result.error }, 'Email sending failed');
+      } catch (error: any) {
+        logger.error({ error, pendingId: email.id }, 'Critical failure processing pending email.');
       }
-    } catch (error: any) {
-      logger.error({ error, pendingId: email.id }, 'Failed to process queued email');
-      await prisma.pendingEmail.update({
-        where: { id: email.id },
-        data: { status: 'FAILED', error: error.message },
-      });
-      await prisma.lead.update({
-        where: { id: email.leadId },
-        data: { outreachStatus: 'FAILED' },
-      });
+      break; // Exit campaign batch after one attempt to maintain smooth intervals
     }
-    // After sending (or failing) one email, we exit. The next email will be picked up in the next cycle.
+  }
+
+  /**
+   * Ensures the mailbox is within its daily send limits and respects the spacing interval.
+   */
+  private async prepareMailboxStats(mailbox: any): Promise<{ canSend: boolean; mailbox: any }> {
+    const now = new Date();
+    const lastReset = new Date(mailbox.lastSentReset);
+    const periodMinutes = this.getPeriodMinutes(mailbox.sendPeriod);
+    const minutesSinceReset = (now.getTime() - lastReset.getTime()) / (1000 * 60);
+    
+    // Auto-Reset Quota if the period (day/week/month) has passed
+    if (minutesSinceReset >= periodMinutes) {
+      await prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: { sentCount: 0, lastSentReset: now, lastSend: null },
+      });
+      mailbox.sentCount = 0;
+      mailbox.lastSend = null;
+    }
+
+    // Check Hard Limit
+    if (mailbox.sentCount >= mailbox.sendLimit) return { canSend: false, mailbox };
+
+    // Check Spacing Interval (e.g. if limit is 50/day, only send every ~28 mins)
+    const intervalMs = this.getSendIntervalMs(mailbox);
+    if (mailbox.lastSend) {
+      const timeSinceLast = now.getTime() - new Date(mailbox.lastSend).getTime();
+      if (timeSinceLast < intervalMs) return { canSend: false, mailbox };
+    }
+    return { canSend: true, mailbox };
+  }
+
+  private async updateMailboxStats(mailboxId: string) {
+    await prisma.mailbox.update({
+      where: { id: mailboxId },
+      data: { sentCount: { increment: 1 }, lastSend: new Date() },
+    });
   }
 
   private getPeriodMinutes(period: string): number {
@@ -230,9 +286,12 @@ export class EmailQueueService {
     }
   }
 
-  private getSendIntervalMs(settings: any): number {
-    const periodSec = this.getPeriodMinutes(settings.sendPeriod) * 60;
-    return (periodSec * 1000) / settings.sendLimit;
+  private getSendIntervalMs(mailbox: any): number {
+    const periodSec = this.getPeriodMinutes(mailbox.sendPeriod) * 60;
+    // Calculate total seconds in period / limit. Add jitter to look human.
+    const baseInterval = (periodSec * 1000) / mailbox.sendLimit;
+    const jitter = Math.random() * 0.1 * baseInterval; // 10% jitter
+    return baseInterval + jitter;
   }
 }
 

@@ -1,11 +1,7 @@
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
-import { DraftService } from './draft.service';
-import { personalisationService } from './personalisation.service';
 import { emailService } from './email.service';
-import { env } from '../config/env';
-
-const draftService = new DraftService();
+import { personalisationService } from './personalisation.service';
 
 export class FollowUpService {
   private interval: NodeJS.Timeout | null = null;
@@ -22,192 +18,110 @@ export class FollowUpService {
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
-      logger.info('Follow‑up scheduler stopped');
     }
   }
 
   async checkFollowUps() {
-    if (this.isRunning) {
-      logger.debug('Follow‑up check already running, skipping');
-      return;
-    }
+    if (this.isRunning) return;
     this.isRunning = true;
     try {
-      // Get all campaigns with at least one follow‑up step enabled
       const campaigns = await prisma.campaign.findMany({
-        where: {
-          status: 'ACTIVE',
-          followUpSteps: { some: { enabled: true } },
-        },
-        include: {
-          followUpSteps: {
-            where: { enabled: true },
-            orderBy: { stepNumber: 'asc' },
-          },
-        },
+        where: { status: 'ACTIVE', followUpSteps: { some: { enabled: true } } },
+        include: { followUpSteps: { where: { enabled: true }, orderBy: { stepNumber: 'asc' } } },
       });
 
       for (const campaign of campaigns) {
-        const userId = campaign.userId;
-        // Get all leads in this campaign that have been contacted (initial email sent)
+        // 🔥 PHASE 5c: Strict Guard
+        // We only fetch leads that are NOT satisfied and have NOT explicitly replied
         const leads = await prisma.lead.findMany({
           where: {
             campaignId: campaign.id,
             outreachStatus: 'SENT',
+            status: 'CONTACTED',
+            isSatisfied: false, // Must not be satisfied
           },
           include: {
             sentEmails: {
               where: { isIncoming: false },
-              orderBy: { sentAt: 'asc' },
-              take: 1, // initial email
+              orderBy: { sentAt: 'desc' },
+              take: 1, // Look at the most recent sent email
             },
           },
         });
 
         for (const lead of leads) {
-          const initialEmail = lead.sentEmails[0];
-          if (!initialEmail) continue;
+          const lastEmail = lead.sentEmails[0];
+          if (!lastEmail) continue;
 
-          // Check if lead has replied since initial email
-          const hasReplied = await prisma.outboundEmail.findFirst({
+          // Double Check: Has lead replied *since* that last email?
+          const freshReply = await prisma.outboundEmail.findFirst({
             where: {
               leadId: lead.id,
-              campaignId: campaign.id,
               isIncoming: true,
-              sentAt: { gt: initialEmail.sentAt },
+              sentAt: { gt: lastEmail.sentAt },
             },
           });
-          if (hasReplied) continue; // replied, no further follow‑ups needed
 
-          // Determine which follow‑up steps have already been sent for this lead
-          const sentSteps = await prisma.outboundEmail.findMany({
-            where: {
-              leadId: lead.id,
-              campaignId: campaign.id,
-              isIncoming: false,
-              NOT: { id: initialEmail.id },
-            },
-            orderBy: { sentAt: 'asc' },
-          });
+          if (freshReply) {
+             // If they replied, we update status and stop follow-ups
+             await prisma.lead.update({
+               where: { id: lead.id },
+               data: { status: 'REPLIED' }
+             });
+             continue; 
+          }
 
-          const sentStepNumbers = new Set<number>();
-          // We need to know which step each sent email corresponds to.
-          // We can infer by counting them in order (step1 = first sent follow-up, step2 = second, etc.)
-          // This assumes steps are sent sequentially without skipping.
-          sentSteps.forEach((_, index) => {
-            sentStepNumbers.add(index + 1); // first follow-up is step1
+          // Step Determination
+          const sentFollowupsCount = await prisma.outboundEmail.count({
+            where: { leadId: lead.id, campaignId: campaign.id, isIncoming: false, NOT: { id: lastEmail.id } }
           });
 
           for (const step of campaign.followUpSteps) {
-            // If this step already sent, skip
-            if (sentStepNumbers.has(step.stepNumber)) continue;
+            if (sentFollowupsCount >= step.stepNumber) continue;
 
-            // Calculate target time: initialEmail.sentAt + step.delayDays days, adjusted to sendHourUTC
-            const targetDate = new Date(initialEmail.sentAt);
+            const targetDate = new Date(lastEmail.sentAt);
             targetDate.setDate(targetDate.getDate() + step.delayDays);
             targetDate.setUTCHours(campaign.sendHourUTC, 0, 0, 0);
 
-            const now = new Date();
-
-            if (now >= targetDate) {
-              // Send this step
-              await this.sendFollowUp(userId, lead.id, campaign.id, step, initialEmail);
-              // Once sent, we'll break? Actually we should send only the next step that is due, but if multiple steps are due, send them in order.
-              // Since we are iterating in ascending step order, and we check >= targetDate, we may send multiple steps if they are all due.
-              // That's acceptable – but to avoid sending too many at once, we could add a small buffer.
-              // For now, we'll send all due steps.
+            if (new Date() >= targetDate) {
+              await this.sendFollowUp(campaign, lead, step, lastEmail);
+              break; // Only one step per check
             }
           }
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Follow‑up check failed');
+      logger.error({ error }, 'Follow‑up cycle failed');
     } finally {
       this.isRunning = false;
     }
   }
 
-  private async sendFollowUp(userId: string, leadId: string, campaignId: string, step: any, initialEmail: any) {
-		try {
-			const [lead, campaign] = await Promise.all([
-				prisma.lead.findUnique({ where: { id: leadId } }),
-				prisma.campaign.findUnique({ where: { id: campaignId } }),
-			]);
-			if (!lead || !campaign) return;
+  private async sendFollowUp(campaign: any, lead: any, step: any, lastEmail: any) {
+    try {
+      // Find the best draft for this specific step
+      const draft = await prisma.draft.findFirst({
+        where: { campaignId: campaign.id, stepNumber: step.stepNumber, isActive: true },
+        orderBy: { replyCount: 'desc' }
+      });
 
-			// Get all active drafts for this step
-			const drafts = await prisma.draft.findMany({
-				where: {
-					userId,
-					campaignId,
-					useCase: 'followup',
-					stepNumber: step.stepNumber,
-					isActive: true,
-				},
-			});
+      if (!draft) return;
 
-			let draft;
-			if (drafts.length === 0) {
-				// Fallback: try any follow‑up draft for this campaign (older method)
-				const anyDraft = await prisma.draft.findFirst({
-					where: { userId, campaignId, useCase: 'followup', isActive: true },
-				});
-				if (!anyDraft) {
-					logger.warn({ leadId, campaignId, step }, 'No follow‑up draft available');
-					return;
-				}
-				draft = anyDraft;
-			} else {
-				// Pick a random draft from the available ones
-				const randomIndex = Math.floor(Math.random() * drafts.length);
-				draft = drafts[randomIndex];
-			}
+      const { subject, body } = personalisationService.personalise(
+        lead, draft.subject, draft.body, campaign.reference, 
+        campaign.senderName, campaign.targetTool, lastEmail.body
+      );
 
-			const { subject, body } = personalisationService.personalise(
-				lead as any,
-				draft.subject,
-				draft.body,
-				campaign.reference,
-				campaign.senderName
-			);
+      await emailService.queueEmail(
+        campaign.userId, campaign.id, lead.id, draft.id, 
+        subject, body, lastEmail.messageId, lastEmail.mailboxId
+      );
 
-			const result = await emailService.sendEmail(
-				lead.email,
-				subject,
-				body.replace(/\n/g, '<br>'),
-				body,
-				campaign.senderName,
-				initialEmail.messageId,
-				userId
-			);
-
-			if (!result.success) throw new Error(result.error || 'Email sending failed');
-
-			await prisma.outboundEmail.create({
-				data: {
-					userId,
-					leadId,
-					campaignId,
-					draftId: draft.id,
-					subject,
-					body,
-					status: 'SENT',
-					sentAt: new Date(),
-					messageId: result.messageId,
-					replyToId: initialEmail.id,
-				},
-			});
-
-			await prisma.draft.update({
-				where: { id: draft.id },
-				data: { sentCount: { increment: 1 } },
-			});
-
-			logger.info({ leadId, campaignId, step: step.stepNumber, draftId: draft.id }, 'Follow‑up sent');
-		} catch (error) {
-			logger.error({ error, leadId, campaignId }, 'Failed to send follow‑up');
-		}
-	}
+      logger.info({ leadId: lead.id, step: step.stepNumber }, 'Follow-up queued.');
+    } catch (error) {
+      logger.error({ error, leadId: lead.id }, 'Failed to queue follow-up');
+    }
+  }
 }
 
 export const followUpService = new FollowUpService();

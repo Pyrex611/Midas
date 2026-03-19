@@ -7,6 +7,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CampaignRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
 model User {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email         String    @unique
@@ -15,12 +21,132 @@ model User {
   updatedAt     DateTime  @updatedAt @map("updated_at")
   leads         Lead[]
   campaigns     Campaign[]
+  memberships   CampaignMember[]
+  invitesSent   CampaignInvite[] @relation("InvitesSent")
   drafts        Draft[]
-  outboundEmails OutboundEmail[]
   settings      UserSettings?
-  pendingEmails PendingEmail[]
+  mailboxes     Mailbox[]
+  outboundEmails OutboundEmail[]
+  pendingEmails  PendingEmail[]
 
   @@map("User")
+}
+
+model Campaign {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id") @db.Uuid
+  user             User     @relation(fields: [userId], references: [id])
+  name             String
+  description      String?
+  context          String?  @db.Text
+  reference        String?  @db.Text
+  senderName       String?  @map("sender_name")
+  objective         String?  @db.Text
+  extendedObjective String?  @db.Text
+  targetTool        String?  @db.Text 
+  status           String   @default("DRAFT")
+  createdAt        DateTime @default(now()) @map("created_at")
+  startedAt        DateTime? @map("started_at")
+  completedAt      DateTime? @map("completed_at")
+  lastMailboxIndex Int      @default(0) @map("last_mailbox_index")
+  autoReplyEnabled Boolean  @default(false) @map("auto_reply_enabled")
+  sendHourUTC      Int      @default(9) @map("send_hour_utc")
+  activeStartHour  Int?     @map("active_start_hour")
+  activeEndHour    Int?     @map("active_end_hour")
+  timezone         String?
+  members          CampaignMember[]
+  invites          CampaignInvite[]
+  leads            Lead[]
+  emails           OutboundEmail[]
+  drafts           Draft[]
+  pendingEmails    PendingEmail[]
+  mailboxLinks     CampaignMailbox[]
+  followUpSteps    FollowUpStep[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("Campaign")
+}
+
+model CampaignMember {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String       @map("user_id") @db.Uuid
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       CampaignRole @default(EDITOR)
+  joinedAt   DateTime     @default(now()) @map("joined_at")
+
+  @@unique([campaignId, userId])
+  @@map("CampaignMember")
+}
+
+model CampaignInvite {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  senderId   String       @map("sender_id") @db.Uuid
+  sender     User         @relation("InvitesSent", fields: [senderId], references: [id])
+  email      String
+  role       CampaignRole @default(EDITOR)
+  token      String       @unique
+  accepted   Boolean      @default(false)
+  expiresAt  DateTime     @map("expires_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@map("CampaignInvite")
+}
+
+model Mailbox {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id") @db.Uuid
+  user       User     @relation(fields: [userId], references: [id])
+  name       String
+  email      String
+  senderName String?  @map("sender_name")
+  smtpHost   String?
+  smtpPort   Int?
+  smtpSecure Boolean?
+  smtpUser   String?
+  smtpPass   String?
+  imapHost   String?
+  imapPort   Int?
+  imapSecure Boolean?
+  imapUser   String?
+  imapPass   String?
+  sendLimit     Int      @default(50)
+  sendPeriod    String   @default("day")
+  sentCount     Int      @default(0)
+  lastSentReset DateTime @default(now()) @map("last_sent_reset")
+  lastSend      DateTime? @map("last_send")
+  totalSent     Int      @default(0) @map("total_sent")
+  bounceCount   Int      @default(0) @map("bounce_count")
+  replyCount    Int      @default(0) @map("reply_count")
+  lastError     String?  @map("last_error")
+  status        String   @default("HEALTHY")
+  isActive    Boolean  @default(true)
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  campaigns   CampaignMailbox[]
+  outboundEmails         OutboundEmail[]  @relation("OutboundEmailMailbox")
+  pendingEmails          PendingEmail[]   @relation("PendingEmailMailbox")
+  preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferred")
+
+  @@index([userId])
+  @@map("Mailbox")
+}
+
+model CampaignMailbox {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  mailboxId  String   @map("mailbox_id")
+  mailbox    Mailbox  @relation(fields: [mailboxId], references: [id])
+  addedAt    DateTime @default(now()) @map("added_at")
+
+  @@unique([campaignId, mailboxId])
+  @@map("CampaignMailbox")
 }
 
 model Lead {
@@ -32,59 +158,21 @@ model Lead {
   company   String?
   position  String?
   status    String   @default("NEW")
+  
+  // 🔥 Phase 5c Kill-Switch
+  isSatisfied Boolean @default(false) @map("is_satisfied")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
-
-  outreachStatus String?  @map("outreach_status")
-  campaignId     String?  @map("campaign_id")
+  outreachStatus String? @map("outreach_status")
+  campaignId     String? @map("campaign_id")
   campaign       Campaign? @relation(fields: [campaignId], references: [id])
   sentEmails     OutboundEmail[]
   replyDrafts    Draft[]         @relation("LeadDrafts")
   pendingEmails  PendingEmail[]
 
   @@unique([userId, email])
-  @@index([status])
-  @@index([campaignId])
-  @@index([userId])
   @@map("Lead")
-}
-
-model Campaign {
-  id          String   @id @default(cuid())
-  userId      String   @map("user_id") @db.Uuid
-  user        User     @relation(fields: [userId], references: [id])
-  name        String
-  description String?
-  context     String?
-  reference   String?
-  senderName  String?  @map("sender_name")
-  status      String   @default("DRAFT")
-  createdAt   DateTime @default(now()) @map("created_at")
-  startedAt   DateTime? @map("started_at")
-  completedAt DateTime? @map("completed_at")
-
-  // Follow‑up steps (multi‑step)
-  followUpSteps FollowUpStep[]
-
-  // Auto‑reply
-  autoReplyEnabled Boolean @default(false) @map("auto_reply_enabled")
-
-  // Scheduling
-  sendHourUTC Int @default(9) @map("send_hour_utc") // hour of day (UTC) to send follow‑ups
-
-  // Active sending window (Phase A)
-  activeStartHour Int?     @map("active_start_hour") // 0-23 UTC
-  activeEndHour   Int?     @map("active_end_hour")   // 0-23 UTC, exclusive
-  timezone        String?  // e.g., "America/New_York" – for future use
-
-  leads  Lead[]
-  emails OutboundEmail[]
-  drafts Draft[]
-  pendingEmails PendingEmail[]
-
-  @@index([userId])
-  @@index([status])
-  @@map("Campaign")
 }
 
 model Draft {
@@ -99,54 +187,60 @@ model Draft {
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
-
-  campaignId String?  @map("campaign_id")
+  campaignId String? @map("campaign_id")
   campaign   Campaign? @relation(fields: [campaignId], references: [id])
-
-  leadId       String?  @map("lead_id")
-  lead         Lead?    @relation("LeadDrafts", fields: [leadId], references: [id])
-  isReplyDraft Boolean  @default(false) @map("is_reply_draft")
-
-  // Step number for follow‑up drafts (null for outreach/reply)
-  stepNumber   Int?     @map("step_number")
-
+  leadId       String? @map("lead_id")
+  lead         Lead?   @relation("LeadDrafts", fields: [leadId], references: [id])
+  isReplyDraft Boolean @default(false) @map("is_reply_draft")
+  stepNumber   Int?    @map("step_number")
   sentCount  Int @default(0) @map("sent_count")
   replyCount Int @default(0) @map("reply_count")
-
-  emails OutboundEmail[]
+  emails        OutboundEmail[]
   followUpSteps FollowUpStep[]
   pendingEmails PendingEmail[]
 
   @@index([isActive])
-  @@index([tone, useCase])
-  @@index([campaignId])
-  @@index([leadId])
-  @@index([userId])
-  @@index([stepNumber]) // optional index
+  @@map("Draft")
+}
+
+model FollowUpStep {
+  id             String   @id @default(cuid())
+  campaignId     String   @map("campaign_id")
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepNumber     Int
+  delayDays      Int
+  microObjective String?  @db.Text
+  draftId        String?  @map("draft_id")
+  draft      Draft?   @relation(fields: [draftId], references: [id])
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([campaignId, stepNumber])
+  @@map("FollowUpStep")
 }
 
 model OutboundEmail {
   id         String   @id @default(cuid())
   userId     String   @map("user_id") @db.Uuid
   user       User     @relation(fields: [userId], references: [id])
+  mailboxId  String?  @map("mailbox_id")
+  mailbox    Mailbox? @relation("OutboundEmailMailbox", fields: [mailboxId], references: [id])
   leadId     String   @map("lead_id")
   lead       Lead     @relation(fields: [leadId], references: [id])
   campaignId String?  @map("campaign_id")
   campaign   Campaign? @relation(fields: [campaignId], references: [id])
   draftId    String?  @map("draft_id")
-  draft      Draft?    @relation(fields: [draftId], references: [id])
-  
+  draft      Draft?   @relation(fields: [draftId], references: [id])
   subject    String
   body       String
   sentAt     DateTime @default(now()) @map("sent_at")
   status     String   @default("SENT")
   error      String?
-
   openedAt  DateTime? @map("opened_at")
   repliedAt DateTime? @map("replied_at")
   replyText String?   @map("reply_text")
-
-  replyToId   String?       @map("reply_to_id")
+  replyToId   String?        @map("reply_to_id")
   replyTo     OutboundEmail? @relation("Replies", fields: [replyToId], references: [id])
   replies     OutboundEmail[] @relation("Replies")
   isIncoming  Boolean        @default(false) @map("is_incoming")
@@ -155,17 +249,40 @@ model OutboundEmail {
   inReplyTo   String?        @map("in_reply_to")
   fromAddress String?        @map("from_address")
   toAddress   String?        @map("to_address")
-
   sentiment   String?
   intent      String?
   analysis    String?
 
   @@index([leadId])
-  @@index([campaignId])
-  @@index([sentAt])
-  @@index([messageId])
-  @@index([userId])
   @@map("OutboundEmail")
+}
+
+model PendingEmail {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id") @db.Uuid
+  user       User     @relation(fields: [userId], references: [id])
+  mailboxId  String?  @map("mailbox_id")
+  mailbox    Mailbox? @relation("PendingEmailMailbox", fields: [mailboxId], references: [id])
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  leadId     String   @map("lead_id")
+  lead       Lead     @relation(fields: [leadId], references: [id])
+  draftId    String?  @map("draft_id")
+  draft      Draft?   @relation(fields: [draftId], references: [id])
+  subject    String
+  body       String
+  inReplyTo  String?  @map("in_reply_to")
+  scheduledAt DateTime? @map("scheduled_at")
+  status     String   @default("PENDING")
+  error      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  priority   Int      @default(2)
+  preferredMailboxId String? @map("preferred_mailbox_id")
+  preferredMailbox   Mailbox? @relation("PendingEmailPreferred", fields: [preferredMailboxId], references: [id])
+
+  @@index([campaignId, status])
+  @@index([scheduledAt])
+  @@map("PendingEmail")
 }
 
 model UserSettings {
@@ -182,57 +299,13 @@ model UserSettings {
   imapSecure    Boolean? @map("imap_secure")
   imapUser      String?  @map("imap_user")
   imapPass      String?  @map("imap_pass")
-
-  // Send limit settings
   sendLimit     Int      @default(50)
-  sendPeriod    String   @default("day") // "day", "week", "month"
+  sendPeriod    String   @default("day")
   sentCount     Int      @default(0)
   lastSentReset DateTime @default(now()) @map("last_sent_reset")
-  lastSend      DateTime? @map("last_send") // last email send time
-
+  lastSend      DateTime? @map("last_send")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@map("UserSettings")
-}
-
-model FollowUpStep {
-  id         String   @id @default(cuid())
-  campaignId String   @map("campaign_id")
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-  stepNumber Int
-  delayDays  Int
-  draftId    String?  @map("draft_id")
-  draft      Draft?   @relation(fields: [draftId], references: [id])
-  enabled    Boolean  @default(true)
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-
-  @@unique([campaignId, stepNumber])
-  @@map("FollowUpStep")
-}
-
-model PendingEmail {
-  id         String   @id @default(cuid())
-  userId     String   @map("user_id") @db.Uuid
-  user       User     @relation(fields: [userId], references: [id])
-  leadId     String   @map("lead_id")
-  lead       Lead     @relation(fields: [leadId], references: [id])
-  campaignId String   @map("campaign_id")
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-  draftId    String?  @map("draft_id")
-  draft      Draft?   @relation(fields: [draftId], references: [id])
-
-  subject    String
-  body       String
-  inReplyTo  String?  @map("in_reply_to")
-  scheduledAt DateTime? @map("scheduled_at")
-  status     String   @default("PENDING") // PENDING, SENT, FAILED
-  error      String?
-  createdAt  DateTime @default(now()) @map("created_at")
-  priority   Int      @default(2) // 1 = high (follow‑ups), 2 = normal (outreach)
-
-  @@index([userId, status])
-  @@index([scheduledAt])
-  @@map("PendingEmail")
 }

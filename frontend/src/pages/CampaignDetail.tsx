@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { campaignAPI } from '../services/api';
+import { campaignAPI, mailboxAPI } from '../services/api';
 import { LeadEmailPreviewModal } from '../components/LeadEmailPreviewModal';
 import { RenameCampaignModal } from '../components/RenameCampaignModal';
 import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
 import { EditDraftModal } from '../components/EditDraftModal';
 import { CustomDraftModal } from '../components/CustomDraftModal';
+import { InviteCollaboratorModal } from '../components/InviteCollaboratorModal';
+import { EditStrategyModal } from '../components/EditStrategyModal';
 
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -15,7 +17,9 @@ export const CampaignDetail: React.FC = () => {
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'leads' | 'drafts'>('leads');
+	const [activeTab, setActiveTab] = useState<'leads' | 'drafts' | 'team' | 'strategy'>('leads');
+	const [showStrategyModal, setShowStrategyModal] = useState(false);
+	const [showInviteModal, setShowInviteModal] = useState(false);
   const [previewLead, setPreviewLead] = useState<{
     id: string;
     name: string;
@@ -38,8 +42,8 @@ export const CampaignDetail: React.FC = () => {
   const [followUpSteps, setFollowUpSteps] = useState<any[]>([]);
   const [sendHourUTC, setSendHourUTC] = useState(9);
   const [loadingSteps, setLoadingSteps] = useState(false);
-  const [showFollowUpSteps, setShowFollowUpSteps] = useState(false); // collapsed by default
-  const [showActiveHours, setShowActiveHours] = useState(false); // collapsed by default
+  const [showFollowUpSteps, setShowFollowUpSteps] = useState(false);
+  const [showActiveHours, setShowActiveHours] = useState(false);
 
   // Auto‑reply settings state
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
@@ -47,6 +51,11 @@ export const CampaignDetail: React.FC = () => {
 
   // Drafts filter state
   const [draftFilter, setDraftFilter] = useState<'all' | 'initial' | number>('all');
+
+  // Mailbox selection state
+  const [userMailboxes, setUserMailboxes] = useState<any[]>([]);
+  const [campaignMailboxIds, setCampaignMailboxIds] = useState<Set<string>>(new Set());
+  const [updatingMailbox, setUpdatingMailbox] = useState(false);
 
   const fetchCampaign = async () => {
     if (!id) return;
@@ -70,12 +79,51 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
+  const fetchUserMailboxes = async () => {
+    try {
+      const res = await mailboxAPI.getAll();
+      setUserMailboxes(res.data);
+    } catch (err) {
+      console.error('Failed to fetch user mailboxes', err);
+    }
+  };
+
+  const fetchCampaignMailboxes = async () => {
+    if (!id) return;
+    try {
+      const res = await campaignAPI.getCampaignMailboxes(id);
+      setCampaignMailboxIds(new Set(res.data.map((m: any) => m.id)));
+    } catch (err) {
+      console.error('Failed to fetch campaign mailboxes', err);
+    }
+  };
+
+  const fetchFollowUpSteps = async () => {
+    if (!campaign?.id) return;
+    try {
+      const res = await campaignAPI.getFollowUpSteps(campaign.id);
+      setFollowUpSteps(res.data);
+    } catch (err) {
+      console.error('Failed to load follow‑up steps', err);
+    }
+  };
+
   useEffect(() => {
     fetchCampaign();
+    fetchUserMailboxes();
   }, [id]);
+
+  useEffect(() => {
+    if (campaign) {
+      fetchCampaignMailboxes();
+      fetchFollowUpSteps();
+    }
+  }, [campaign]);
 
   const handleUpdate = () => {
     fetchCampaign();
+    fetchCampaignMailboxes();
+    fetchFollowUpSteps();
     setMenuOpen(false);
   };
 
@@ -91,24 +139,24 @@ export const CampaignDetail: React.FC = () => {
   };
 
   const handleGenerateDraft = async () => {
-		if (!campaign?.id) return;
-		setGeneratingDraft(true);
-		try {
-			if (typeof draftFilter === 'number') {
-				// Generate follow‑up draft for the selected step
-				await campaignAPI.generateStepDraft(campaign.id, draftFilter);
-			} else {
-				// Generate outreach draft
-				await campaignAPI.generateDraft(campaign.id);
-			}
-			fetchCampaign();
-		} catch (error) {
-			console.error('Failed to generate draft', error);
-			alert('Could not generate draft');
-		} finally {
-			setGeneratingDraft(false);
-		}
-	};
+    if (!campaign?.id) return;
+    setGeneratingDraft(true);
+    try {
+      if (typeof draftFilter === 'number') {
+        // Generate follow‑up draft for the selected step
+        await campaignAPI.generateStepDraft(campaign.id, draftFilter);
+      } else {
+        // Generate outreach draft
+        await campaignAPI.generateDraft(campaign.id);
+      }
+      fetchCampaign();
+    } catch (error) {
+      console.error('Failed to generate draft', error);
+      alert('Could not generate draft');
+    } finally {
+      setGeneratingDraft(false);
+    }
+  };
 
   const handleEditDraft = async (draftId: string, data: { subject: string; body: string }) => {
     if (!campaign?.id) return;
@@ -190,13 +238,39 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
+  const toggleMailbox = async (mailboxId: string, checked: boolean) => {
+    setUpdatingMailbox(true);
+    try {
+      if (checked) {
+        await campaignAPI.addMailboxToCampaign(id!, mailboxId);
+        setCampaignMailboxIds(prev => new Set(prev).add(mailboxId));
+      } else {
+        await campaignAPI.removeMailboxFromCampaign(id!, mailboxId);
+        setCampaignMailboxIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(mailboxId);
+          return newSet;
+        });
+      }
+    } catch (err) {
+      console.error('Failed to update campaign mailboxes', err);
+      alert('Could not update mailboxes');
+    } finally {
+      setUpdatingMailbox(false);
+    }
+  };
+
   // Helper to get draft label
   const getDraftLabel = (draft: any): string => {
     if (draft.useCase === 'initial') return 'Outreach';
     if (draft.useCase === 'followup') {
-      const step = followUpSteps.find(s => s.draftId === draft.id);
-      if (step) return `Follow‑up ${step.stepNumber}`;
-      return 'Follow‑up (global)';
+    if (draft.stepNumber) return `Follow-up ${draft.stepNumber}`;
+    
+    // Fallback for legacy step-linked drafts
+    const step = followUpSteps.find(s => s.draftId === draft.id);
+    if (step) return `Follow-up ${step.stepNumber}`;
+    
+    return 'Follow-up (Global)';
     }
     return 'Draft';
   };
@@ -205,8 +279,12 @@ export const CampaignDetail: React.FC = () => {
   const filteredDrafts = campaign?.drafts?.filter((draft: any) => {
     if (draftFilter === 'all') return true;
     if (draftFilter === 'initial') return draft.useCase === 'initial';
-    const step = followUpSteps.find(s => s.stepNumber === draftFilter && s.draftId === draft.id);
-    return !!step;
+		
+		if (typeof draftFilter === 'number') {
+			return draft.useCase === 'followup' && draft.stepNumber === draftFilter;
+		}
+		
+		return false;
   }) || [];
 
   // Get all follow‑up drafts for the dropdown
@@ -384,6 +462,32 @@ export const CampaignDetail: React.FC = () => {
           </div>
         )}
 
+        {/* Mailbox Selection Card */}
+        <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
+          <h3 className="text-lg font-medium text-gray-900 mb-3">Sending Mailboxes</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Select which mailboxes will be used to send emails from this campaign. The system will distribute emails among them (round‑robin).
+          </p>
+          {updatingMailbox && <p className="text-sm text-blue-600 mb-2">Updating...</p>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {userMailboxes.map((mb) => (
+              <label key={mb.id} className="flex items-center space-x-3 p-2 border rounded hover:bg-gray-50">
+                <input
+                  type="checkbox"
+                  checked={campaignMailboxIds.has(mb.id)}
+                  onChange={(e) => toggleMailbox(mb.id, e.target.checked)}
+                  disabled={updatingMailbox}
+                  className="h-4 w-4 text-blue-600"
+                />
+                <div>
+                  <p className="text-sm font-medium">{mb.name}</p>
+                  <p className="text-xs text-gray-500">{mb.email}</p>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
         {/* Stats */}
         <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
           <div className="bg-gray-50 p-4 rounded-lg">
@@ -456,25 +560,24 @@ export const CampaignDetail: React.FC = () => {
           </button>
           {showFollowUpSteps && (
             <div className="mt-4 p-4 bg-white border rounded-lg shadow-sm">
-							<h3 className="text-lg font-medium text-gray-900 mb-3">Follow‑up Steps</h3>
-							<p className="text-sm text-gray-600 mb-4">
-								Configure multiple follow‑up emails to be sent after the initial outreach. Each step's delay is in days from the initial email.
-							</p>
+              <p className="text-sm text-gray-600 mb-4">
+                Configure multiple follow‑up emails to be sent after the initial outreach. Each step's delay is in days from the initial email.
+              </p>
 
-							<div className="mb-4">
-								<label className="block text-sm text-gray-600 mb-1">Send time (UTC hour)</label>
-								<select
-									value={sendHourUTC}
-									onChange={(e) => handleSendHourChange(parseInt(e.target.value))}
-									className="border rounded-md px-3 py-2 text-sm"
-								>
-									{Array.from({ length: 24 }, (_, i) => (
-										<option key={i} value={i}>{i.toString().padStart(2, '0')}:00 UTC</option>
-									))}
-								</select>
-							</div>
+              <div className="mb-4">
+                <label className="block text-sm text-gray-600 mb-1">Send time (UTC hour)</label>
+                <select
+                  value={sendHourUTC}
+                  onChange={(e) => handleSendHourChange(parseInt(e.target.value))}
+                  className="border rounded-md px-3 py-2 text-sm"
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={i}>{i.toString().padStart(2, '0')}:00 UTC</option>
+                  ))}
+                </select>
+              </div>
 
-							{followUpSteps.map((step, index) => (
+              {followUpSteps.map((step, index) => (
 								<div key={index} className="flex items-center space-x-2 mb-2 border-b pb-2">
 									<span className="text-sm font-medium w-16">Step {step.stepNumber}</span>
 									<input
@@ -512,23 +615,23 @@ export const CampaignDetail: React.FC = () => {
 								</div>
 							))}
 
-							<button
-								onClick={handleAddStep}
-								className="mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-							>
-								+ Add Follow‑up Step
-							</button>
+              <button
+                onClick={handleAddStep}
+                className="mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+              >
+                + Add Follow‑up Step
+              </button>
 
-							<div className="flex justify-end mt-4">
-								<button
-									onClick={saveSteps}
-									disabled={loadingSteps}
-									className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
-								>
-									{loadingSteps ? 'Saving...' : 'Save Steps'}
-								</button>
-							</div>
-						</div>
+              <div className="flex justify-end mt-4">
+                <button
+                  onClick={saveSteps}
+                  disabled={loadingSteps}
+                  className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
+                >
+                  {loadingSteps ? 'Saving...' : 'Save Steps'}
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
@@ -644,6 +747,22 @@ export const CampaignDetail: React.FC = () => {
             >
               Email Drafts ({campaign.drafts?.length || 0})
             </button>
+						<button
+							onClick={() => setActiveTab('team')}
+							className={`py-2 px-1 border-b-2 font-medium text-sm ${
+								activeTab === 'team' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+							}`}
+						>
+							Team & Access
+						</button>
+						<button
+							onClick={() => setActiveTab('strategy')}
+							className={`py-4 px-1 border-b-2 font-bold text-xs uppercase tracking-widest transition-all ${
+								activeTab === 'strategy' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
+							}`}
+						>
+							Strategy & DNA
+						</button>
           </nav>
         </div>
 
@@ -727,45 +846,55 @@ export const CampaignDetail: React.FC = () => {
             {filteredDrafts.length > 0 ? (
               <div className="space-y-4">
                 {filteredDrafts.map((draft: any) => (
-                  <div key={draft.id} className="border rounded-lg p-4 relative">
-                    <div className="absolute top-2 right-2 bg-blue-100 text-blue-800 px-2 py-1 text-xs font-medium rounded">
-                      {getDraftLabel(draft)}
-                    </div>
-                    <div className="flex justify-between items-start pr-24">
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900">
-                          Subject: {draft.subject || '(no subject)'}
-                        </div>
-                        <div className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">
-                          {draft.body || '(empty)'}
-                        </div>
-                      </div>
-                      <div className="ml-4 flex flex-col items-end text-xs text-gray-500">
-                        <span>Tone: {draft.tone || 'custom'}</span>
-                        <span>Use: {draft.useCase || 'initial'}</span>
-                        <span>Sent: {draft.sentCount || 0}</span>
-                        <span>Replies: {draft.replyCount || 0}</span>
-                      </div>
-                    </div>
-                    {/* Draft action buttons */}
-                    <div className="mt-2 flex justify-end space-x-2">
-                      <button
-                        onClick={() => {
-                          setEditingDraft(draft);
-                          setShowEditDraftModal(true);
-                        }}
-                        className="text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteDraft(draft.id)}
-                        className="text-xs text-red-600 hover:text-red-800"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
+									<div key={draft.id} className="border rounded-xl p-4 bg-white shadow-sm hover:shadow-md transition-all relative">
+										{/* Header: Label and Tone - Improved for Small Screens */}
+										<div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+											<div className="flex items-center gap-2">
+												<span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+													{getDraftLabel(draft)}
+												</span>
+												<span className="text-gray-500 text-xs italic">{draft.tone}</span>
+											</div>
+											
+											{/* Stats pill - Visible on all screens */}
+											<div className="flex items-center bg-gray-100 rounded-lg px-2 py-1 text-[10px] text-gray-600 font-medium">
+												📤 {draft.sentCount} sent • 💬 {draft.replyCount} replies
+											</div>
+										</div>
+
+										{/* Content Area */}
+										<div className="space-y-2">
+											<h4 className="text-sm font-bold text-gray-900 leading-tight">
+												<span className="text-gray-400 font-normal mr-1 text-xs uppercase">Subject:</span> 
+												{draft.subject || '(No Subject)'}
+											</h4>
+											
+											{/* Body: Limit height on mobile, full on desktop */}
+											<div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+												<p className="text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed line-clamp-4 sm:line-clamp-none">
+													{draft.body}
+												</p>
+											</div>
+										</div>
+
+										{/* Actions: Floating or Bottom Bar for Mobile */}
+										<div className="mt-4 flex items-center justify-end gap-3 border-t pt-3">
+											<button
+												onClick={() => { setEditingDraft(draft); setShowEditDraftModal(true); }}
+												className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 p-2"
+											>
+												<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+												Edit
+											</button>
+											<button
+												onClick={() => handleDeleteDraft(draft.id)}
+												className="flex items-center gap-1.5 text-xs font-semibold text-red-500 hover:text-red-700 p-2"
+											>
+												<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+												Delete
+											</button>
+										</div>
+									</div>
                 ))}
               </div>
             ) : (
@@ -798,6 +927,96 @@ export const CampaignDetail: React.FC = () => {
           </div>
         )}
       </div>
+			
+			{/* Team Tab */}
+			{activeTab === 'team' && (
+				<div className="mt-6 space-y-6">
+					<div className="flex justify-between items-center">
+						<h3 className="text-lg font-medium">Campaign Members</h3>
+						<button 
+							onClick={() => setShowInviteModal(true)}
+							className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+						>
+							+ Invite Member
+						</button>
+					</div>
+					
+					<div className="bg-white border rounded-lg overflow-hidden">
+						<table className="min-w-full divide-y divide-gray-200">
+							<thead className="bg-gray-50">
+								<tr>
+									<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+									<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
+									<th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Action</th>
+								</tr>
+							</thead>
+							<tbody className="divide-y divide-gray-200">
+								{campaign.members?.map((member: any) => (
+									<tr key={member.id}>
+										<td className="px-6 py-4 text-sm">{member.user.email}</td>
+										<td className="px-6 py-4 text-sm font-semibold">{member.role}</td>
+										<td className="px-6 py-4 text-right">
+											{member.role !== 'OWNER' && (
+												<button className="text-red-600 hover:text-red-900 text-sm">Remove</button>
+											)}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			)}
+			
+			{activeTab === 'strategy' && (
+				<div className="mt-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+					<div className="bg-white border-2 border-gray-100 rounded-[2rem] p-8 shadow-sm relative overflow-hidden">
+						<div className="absolute top-0 right-0 p-8">
+							 <button 
+								 onClick={() => setShowStrategyModal(true)}
+								 className="bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black uppercase hover:bg-blue-100 transition-all"
+							 >
+								 Edit Strategy
+							 </button>
+						</div>
+
+						<div className="max-w-2xl">
+							<h3 className="text-2xl font-black text-gray-900 mb-6 italic">Campaign Blueprint</h3>
+							
+							<div className="space-y-8">
+								<section>
+									<h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Global Objective</h4>
+									<p className="text-xl font-bold text-gray-800">{campaign.objective || 'Not defined'}</p>
+								</section>
+
+								<section>
+									<h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Conversion Tool</h4>
+									<div className="inline-block bg-blue-600 text-white px-4 py-2 rounded-xl font-mono font-bold shadow-md shadow-blue-100">
+										{campaign.targetTool || 'None Provided'}
+									</div>
+								</section>
+
+								<section>
+									<h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Follow-up Methodology</h4>
+									<div className="space-y-3">
+										{campaign.followUpSteps?.map((step: any) => (
+											<div key={step.id} className="flex gap-4 items-start bg-gray-50 p-4 rounded-2xl border border-gray-100">
+												<div className="bg-white w-8 h-8 rounded-lg flex items-center justify-center font-black text-blue-600 shadow-sm border border-gray-100">
+													{step.stepNumber}
+												</div>
+												<div>
+													<p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">T+{step.delayDays} Days</p>
+													<p className="text-sm font-semibold text-gray-700 leading-snug">{step.microObjective}</p>
+												</div>
+											</div>
+										))}
+									</div>
+								</section>
+							</div>
+						</div>
+					</div>
+				</div>
+			)}
 
       <LeadEmailPreviewModal
         isOpen={!!previewLead}
@@ -806,6 +1025,20 @@ export const CampaignDetail: React.FC = () => {
         lead={previewLead}
         onSendSuccess={fetchCampaign}
       />
+			
+			<InviteCollaboratorModal 
+				isOpen={showInviteModal} 
+				onClose={() => setShowInviteModal(false)}
+				campaignId={campaign.id}
+				onSuccess={fetchCampaign}
+			/>
+			
+			<EditStrategyModal 
+				isOpen={showStrategyModal} 
+				onClose={() => setShowStrategyModal(false)}
+				campaign={campaign}
+				onSuccess={fetchCampaign}
+			/>
     </div>
   );
 };

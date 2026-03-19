@@ -59,47 +59,33 @@ export class DraftService {
     userId: string,
     count: number,
     tone: string = 'professional',
-    useCase: string = 'initial',
+    useCase: 'initial' | 'followup' = 'initial',
     campaignId?: string,
     campaignContext?: string,
     reference?: string,
     companyContext?: string,
     senderName?: string,
-    stepNumber?: number // for follow‑ups
+    stepNumber?: number,
+    objective?: string | null,
+    microObjective?: string | null
   ) {
     const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
     const drafts = [];
     const delayMs = env.AI_REQUEST_DELAY_MS;
 
     for (let i = 0; i < count; i++) {
-      const variedTone = tones[i % tones.length];
-      const variedContext = campaignContext
-        ? `${campaignContext} (Version ${i + 1}: ${variedTone} approach)`
-        : undefined;
-
+      // Pass a different variation seed for each to ensure variety
       const draft = await this.generateAndSaveDraft(
-        userId,
-        variedTone,
-        useCase,
-        campaignId,
-        variedContext,
-        reference,
-        companyContext,
-        senderName,
-        stepNumber // pass step number
+        userId, tone, useCase, campaignId, campaignContext, reference, 
+        companyContext, senderName, stepNumber, objective, microObjective
       );
-      if (draft) {
-        drafts.push(draft);
-      } else {
-        logger.warn({ campaignId, index: i }, 'Skipping failed draft');
-      }
-
+      if (draft) drafts.push(draft);
+			
       if (i < count - 1) {
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }
-
-    logger.info({ campaignId, generated: drafts.length, requested: count, stepNumber }, 'Generated multiple drafts');
+		logger.info({ campaignId, generated: drafts.length, requested: count, stepNumber }, 'Generated multiple drafts');
     return drafts;
   }
 
