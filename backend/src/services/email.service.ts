@@ -68,6 +68,10 @@ export class EmailService {
           user: mailbox.smtpUser,
           pass: mailbox.smtpPass,
         },
+				connectionTimeout: 20000, // 20 seconds
+				greetingTimeout: 20000,
+				socketTimeout: 20000,
+				dnsV_ : 4, // Force IPv4
         logger: env.NODE_ENV === 'development',
         debug: env.NODE_ENV === 'development',
       });

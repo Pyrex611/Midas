@@ -326,4 +326,34 @@ export class CampaignService {
     const link = await prisma.campaignMailbox.findFirst({ where: { campaignId, mailboxId } });
     if (link) await prisma.campaignMailbox.delete({ where: { id: link.id } });
   }
+	
+	/**
+   * Get all follow-up steps for a campaign, including the count of AI drafts
+   * available for each specific psychological step.
+   */
+  async getFollowUpSteps(userId: string, campaignId: string) {
+    const steps = await prisma.followUpStep.findMany({
+      where: { campaignId },
+      orderBy: { stepNumber: 'asc' },
+    });
+
+    // We enhance the database records with a real-time count of active drafts
+    const stepsWithCounts = await Promise.all(
+      steps.map(async (step) => {
+        const draftCount = await prisma.draft.count({
+          where: { 
+            campaignId, 
+            stepNumber: step.stepNumber, 
+            isActive: true 
+          },
+        });
+        return { 
+          ...step, 
+          draftCount 
+        };
+      })
+    );
+
+    return stepsWithCounts;
+  }
 }

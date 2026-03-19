@@ -93,15 +93,15 @@ export class EmailQueueService {
    */
   private async processCampaignEmails(campaignId: string, emails: any[]) {
     const campaign = emails[0].campaign;
-
-    // GUARD: SILENT SKIP if no mailboxes are attached (Phase 4.5a fix)
+    
+    // 1. Guard: Ensure campaign has mailboxes attached
     if (!campaign.mailboxLinks || campaign.mailboxLinks.length === 0) {
       logger.debug({ campaignId }, 'Skipping cycle: No mailboxes linked to campaign.');
       return; 
     }
 
     for (const email of emails) {
-      // 1. ACTIVE HOURS CHECK: Skip and reschedule if outside professional window
+      // 2. Active Hours Check
       if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
         const now = new Date();
         const nextTime = getNextActiveTime(now, campaign.activeStartHour, campaign.activeEndHour);
@@ -110,132 +110,131 @@ export class EmailQueueService {
             where: { id: email.id }, 
             data: { scheduledAt: nextTime } 
           });
+          logger.debug({ campaignId, emailId: email.id }, 'Rescheduled: Outside active hours.');
           continue; 
         }
       }
 
-      // 2. MAILBOX SELECTION: Rounds-robin or Preferred (Thread Consistency)
+      // 3. Mailbox Selection (Round-robin or Preferred)
       const selection = await mailboxService.selectMailboxForCampaign(campaignId, email.preferredMailboxId);
+      
       if (!selection) {
-        logger.warn({ campaignId }, 'No eligible mailbox found. Emails remain PENDING.');
-        return; 
+        logger.warn({ campaignId }, 'No healthy/available mailbox found in pool.');
+        return; // Pause processing for this campaign this cycle
       }
 
-      // 3. CREDENTIALS & LIMITS: Decrypt SMTP and check daily quotas
-      const decryptedMailbox = await mailboxService.getMailboxForSending(selection.mailbox.id);
+      // 4. 🔥 THE FIX: Explicitly fetch the decrypted mailbox credentials
+      // This ensures smtpPass is plain text, not the encrypted hex string.
+      let decryptedMailbox;
+      try {
+        decryptedMailbox = await mailboxService.getMailboxForSending(selection.mailbox.id);
+      } catch (err) {
+        logger.error({ mailboxId: selection.mailbox.id }, 'Failed to decrypt mailbox credentials');
+        continue;
+      }
+
+      // 5. Quota & Interval Check
       const mailboxWithStats = await this.prepareMailboxStats(decryptedMailbox);
-      
       if (!mailboxWithStats.canSend) {
-        logger.debug({ mailboxId: decryptedMailbox.id }, 'Mailbox at daily/interval limit. Skipping.');
+        logger.debug({ mailboxId: decryptedMailbox.id }, 'Mailbox at limit or waiting for interval.');
         continue; 
       }
 
       try {
-        // 🔥 NEW PHASE 5b: FETCH NARRATIVE "STITCH" CONTEXT
-        // We look for the most recent outbound email to this lead to ensure continuity.
-        const lastEmail = await prisma.outboundEmail.findFirst({
-          where: { 
-            leadId: email.leadId, 
-            campaignId: campaign.id, 
-            isIncoming: false 
-          },
-          orderBy: { sentAt: 'desc' }
-        });
-
-        // 4. PERSONALISATION: Inject Lead Data, Target Tool (Phone/Link), and Stitch context
+        // 6. Personalization
         const { subject, body } = personalisationService.personalise(
           email.lead,
           email.subject,
           email.body,
           campaign.reference,
-          campaign.senderName,
-          campaign.targetTool, // 🔥 Pass the Dynamic Tool (Phase 5a)
-          lastEmail?.body      // 🔥 Pass the Stitch Context (Phase 5b)
+          campaign.senderName
         );
 
-        // 5. DELIVERY: SMTP Transmission via Nodemailer
+        // 7. Execution: Attempt SMTP Send
         const result = await emailService.sendEmailNow(
-          decryptedMailbox,
+          decryptedMailbox, // Passing the decrypted object
           email.lead.email,
           subject,
-          body.replace(/\n/g, '<br>'), // HTML Version
-          body,                         // Plaintext Version
+          body.replace(/\n/g, '<br>'),
+          body,
           campaign.senderName,
           email.inReplyTo
         );
 
         if (result.success) {
-          // 6. ATOMIC TRANSACTION: Prevent sending duplicate emails if database flickers.
-          // We record the sent email, delete the pending record, and update analytics in one unit.
+          // 8. Atomic Transaction: Record outcome and cleanup
           await prisma.$transaction([
             prisma.outboundEmail.create({
               data: {
-                userId: email.userId,
                 mailboxId: decryptedMailbox.id,
                 leadId: email.leadId,
                 campaignId,
                 draftId: email.draftId,
+                userId: email.userId,
                 subject,
                 body,
                 status: 'SENT',
                 sentAt: new Date(),
                 messageId: result.messageId,
-                inReplyTo: email.inReplyTo,
               },
             }),
             prisma.pendingEmail.delete({ where: { id: email.id } }),
             prisma.lead.update({
               where: { id: email.leadId },
-              data: { 
-                outreachStatus: 'SENT', 
-                status: 'CONTACTED',
-                updatedAt: new Date()
-              },
+              data: { outreachStatus: 'SENT', status: 'CONTACTED' },
             }),
-            // Update Lifetime Analytics (Phase 4.5c)
+            // Increment lifetime metrics (Phase 4.5c)
             prisma.mailbox.update({
               where: { id: decryptedMailbox.id },
-              data: {
+              data: { 
                 totalSent: { increment: 1 },
                 status: 'HEALTHY',
-                lastError: null
+                lastError: null 
               }
             })
           ]);
 
-          // Optional: Update Draft success counts
-          if (email.draftId) {
-            await prisma.draft.update({
-              where: { id: email.draftId },
-              data: { sentCount: { increment: 1 } },
-            }).catch(() => null);
-          }
-
-          // 7. STATS RECORDING: Record successful send for throttling
+          // Update volatile stats (daily counts)
           await this.updateMailboxStats(decryptedMailbox.id);
-          logger.info({ leadId: email.leadId, mailbox: decryptedMailbox.email }, 'Strategic outreach delivered successfully.');
+          
+          logger.info({ 
+            lead: email.lead.email, 
+            mailbox: decryptedMailbox.email 
+          }, 'Email dispatched successfully.');
 
-          // Only process ONE email per campaign per cycle to respect send intervals accurately
+          // BREAK: Process only one email per campaign per cycle to respect intervals
           break; 
         } else {
-          // SMTP Failure Handling
-          await prisma.mailbox.update({
-            where: { id: decryptedMailbox.id },
-            data: { 
-                status: 'DEGRADED',
-                lastError: result.error || 'Unknown SMTP error'
-            }
-          });
+          // 9. Failure Handling: Check for Authentication Errors
+          const isAuthError = result.error?.includes('535') || result.error?.toLowerCase().includes('invalid login');
+
+          if (isAuthError) {
+            await prisma.mailbox.update({
+              where: { id: decryptedMailbox.id },
+              data: { 
+                status: 'LOCKED', 
+                lastError: 'Authentication Failed: Re-check App Password on Server.' 
+              }
+            });
+            logger.error({ mailbox: decryptedMailbox.email }, 'Mailbox LOCKED due to Bad Credentials.');
+          }
 
           await prisma.pendingEmail.update({
             where: { id: email.id },
-            data: { status: 'FAILED', error: result.error },
+            data: { 
+              status: 'FAILED', 
+              error: result.error || 'Unknown SMTP error' 
+            }
           });
         }
       } catch (error: any) {
-        logger.error({ error, pendingId: email.id }, 'Critical failure processing pending email.');
+        logger.error({ error, pendingId: email.id }, 'Fatal error in queue dispatch loop');
+        await prisma.pendingEmail.update({
+          where: { id: email.id },
+          data: { status: 'FAILED', error: error.message },
+        });
       }
-      break; // Exit campaign batch after one attempt to maintain smooth intervals
+      break; 
     }
   }
 

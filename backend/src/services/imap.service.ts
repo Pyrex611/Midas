@@ -94,8 +94,12 @@ export class ImapService {
         host: mailbox.imapHost,
         port: mailbox.imapPort || 993,
         tls: mailbox.imapSecure ?? true,
-        tlsOptions: { rejectUnauthorized: false },
-        connTimeout: 30000,
+				tlsOptions: { 
+					rejectUnauthorized: false,
+					servername: mailbox.imapHost // Helps with SNI issues
+				},
+				connTimeout: 60000, // Give the server 60s to shake hands with Google
+				authTimeout: 30000
       });
 
       let resolved = false;
