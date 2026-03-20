@@ -103,17 +103,24 @@ export class EmailQueueService {
     for (const email of emails) {
       // 2. Active Hours Check
       if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
-        const now = new Date();
-        const nextTime = getNextActiveTime(now, campaign.activeStartHour, campaign.activeEndHour);
-        if (nextTime.getTime() > now.getTime()) {
-          await prisma.pendingEmail.update({ 
-            where: { id: email.id }, 
-            data: { scheduledAt: nextTime } 
-          });
-          logger.debug({ campaignId, emailId: email.id }, 'Rescheduled: Outside active hours.');
-          continue; 
-        }
-      }
+				const now = new Date();
+				
+				// 🔥 Passing the 4th parameter: campaign.timezone
+				const nextTime = getNextActiveTime(
+					now, 
+					campaign.activeStartHour, 
+					campaign.activeEndHour, 
+					campaign.timezone || 'UTC' 
+				);
+
+				if (nextTime.getTime() > now.getTime()) {
+					await prisma.pendingEmail.update({ 
+						where: { id: email.id }, 
+						data: { scheduledAt: nextTime } 
+					});
+					continue; 
+				}
+			}
 
       // 3. Mailbox Selection (Round-robin or Preferred)
       const selection = await mailboxService.selectMailboxForCampaign(campaignId, email.preferredMailboxId);

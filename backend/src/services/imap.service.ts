@@ -7,6 +7,24 @@ import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
 import { mailboxService } from './mailbox.service';
 
+/**
+ * STRICT BOUNCE DETECTION
+ * Only triggers if the 'From' is a known mailer daemon AND the subject matches bounce patterns.
+ */
+function isBounceMessage(parsed: any): boolean {
+  const from = (parsed.from?.value[0]?.address || '').toLowerCase();
+  const subject = (parsed.subject || '').toLowerCase();
+  
+  const bounceSenders = ['mailer-daemon@', 'postmaster@', 'mtaoutbound'];
+  const bounceKeywords = ['delivery status notification', 'failed', 'undeliverable', 'returning message to sender'];
+
+  const isFromDaemon = bounceSenders.some(daemon => from.includes(daemon));
+  const hasBounceSubject = bounceKeywords.some(kw => subject.includes(kw));
+
+  // It's only a bounce if it's from a daemon AND has bounce-like text
+  return isFromDaemon && hasBounceSubject;
+}
+
 export class ImapService {
   private isPolling = false;
   private pollInterval: NodeJS.Timeout | null = null;
@@ -205,19 +223,23 @@ export class ImapService {
     // 1. Bounce Detection
     const from = parsed.from?.value[0]?.address?.toLowerCase() || '';
     const subject = (parsed.subject || '').toLowerCase();
-    const isBounce = from.includes('mailer-daemon') || from.includes('postmaster') || subject.includes('delivery status notification') || subject.includes('failure');
-
-    if (isBounce) {
+		
+    if (from === mailbox.email.toLowerCase() || from.includes('accounts.google.com')) {
+      return; 
+    }
+		
+    if (isBounceMessage(parsed)) {
       if (originalEmail) {
-        logger.warn(`IMAP_EVENT: Bounce detected for lead ${originalEmail.leadId}`);
+        // Only record as bounce if we found the original email it belongs to
+        logger.warn(`BOUNCE_CONFIRMED: Lead ${originalEmail.leadId} from Mailbox ${mailbox.email}`);
         await prisma.$transaction([
           prisma.mailbox.update({
             where: { id: mailbox.id },
-            data: { bounceCount: { increment: 1 }, status: 'DEGRADED', lastError: `Bounce from: ${from}` }
+            data: { bounceCount: { increment: 1 }, status: 'DEGRADED' }
           }),
           prisma.lead.update({
             where: { id: originalEmail.leadId },
-            data: { outreachStatus: 'BOUNCED', status: 'NEW' }
+            data: { outreachStatus: 'BOUNCED' }
           })
         ]);
       }
