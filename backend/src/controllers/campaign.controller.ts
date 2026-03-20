@@ -178,13 +178,13 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
 export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { campaignId, leadId, draftId } = req.params;
-    const userId = req.user!.id;
 
-    const [lead, campaign, draft] = await Promise.all([
-      prisma.lead.findFirst({ where: { id: leadId, userId } }),
-      prisma.campaign.findFirst({ where: { id: campaignId, userId } }),
-      prisma.draft.findFirst({ where: { id: draftId, userId } }),
-    ]);
+    const lead = await prisma.lead.findFirst({ 
+      where: { id: leadId, campaignId } 
+    });
+    
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+    const draft = await prisma.draft.findUnique({ where: { id: draftId } });
 
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -261,7 +261,6 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
 export const getReplyDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { campaignId, leadId } = req.params;
-    const userId = req.user!.id;
     const draft = await draftService.getReplyDraft(leadId, campaignId);
     if (!draft) return res.status(404).json({ error: 'No reply draft found' });
     res.json({

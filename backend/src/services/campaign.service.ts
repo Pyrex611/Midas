@@ -135,10 +135,13 @@ export class CampaignService {
   private async processCampaign(userId: string, campaignId: string, specificLeadIds?: string[]) {
     try {
       const drafts = await prisma.draft.findMany({
-        where: { userId, campaignId, isActive: true, useCase: 'initial' },
+        where: { campaignId, isActive: true, useCase: 'initial' },
       });
 
-      if (drafts.length === 0) return;
+      if (drafts.length === 0) {
+        logger.warn({ campaignId }, 'Process skipped: No initial drafts found for this campaign.');
+				return;
+			}
 
       const whereClause: any = { userId, campaignId };
       if (specificLeadIds) {
@@ -150,7 +153,7 @@ export class CampaignService {
       const leads = await prisma.lead.findMany({ where: whereClause });
       const campaign = await prisma.campaign.findFirst({ where: { id: campaignId } });
 
-      if (leads.length === 0) return;
+      if (!leads.length || !campaign) return;
 
       for (const lead of leads) {
         try {
@@ -162,7 +165,6 @@ export class CampaignService {
             data: { outreachStatus: 'PROCESSING' as OutreachStatus },
           });
 
-          // 🔥 This is where the ReferenceError was occurring
           const { subject, body } = personalisationService.personalise(
             lead as any,
             draft.subject,
@@ -201,10 +203,7 @@ export class CampaignService {
    * Add leads to an existing campaign.
    */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
-    const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId },
-      include: { leads: { select: { id: true } } },
-    });
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId } );
 
     if (!campaign) throw new Error('Campaign not found');
 
@@ -221,7 +220,7 @@ export class CampaignService {
       },
     });
 
-    this.processCampaign(userId, campaignId, newLeadIds).catch(err => {
+    this.processCampaign(campaignId, newLeadIds).catch(err => {
       logger.error({ err, userId, campaignId }, 'Background lead processing failed');
     });
 
