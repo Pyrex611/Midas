@@ -203,7 +203,7 @@ export class CampaignService {
    * Add leads to an existing campaign.
    */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId } );
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId } });
 
     if (!campaign) throw new Error('Campaign not found');
 
