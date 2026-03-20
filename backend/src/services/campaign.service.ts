@@ -231,42 +231,61 @@ export class CampaignService {
    * Add leads to an existing campaign.
    */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
-    // 1. Verify Campaign Access (already verified by middleware, but good for safety)
     const campaign = await prisma.campaign.findUnique({ 
       where: { id: campaignId },
-      include: { leads: { select: { email: true } } }
+      include: { leads: { select: { id: true, email: true } } }
     });
     if (!campaign) throw new Error('Campaign not found');
 
-    const leadsToUpdate = await prisma.lead.findMany({
-      where: {
-        id: { in: leadIds },
-        campaignId: campaignId,
-        NOT: {
-          outreachStatus: { in: ['SENT', 'QUEUED', 'PROCESSING', 'REPLIED', 'BOUNCED'] }
+    const inputLeads = await prisma.lead.findMany({ where: { id: { in: leadIds } } });
+    const actualUpdateIds: string[] = [];
+
+    for (const lead of inputLeads) {
+      const emailLower = lead.email.toLowerCase();
+
+      // 1. Identify existing lead records in this campaign with same email
+      const existingInCampaign = campaign.leads.find(
+        l => l.email.toLowerCase() === emailLower && l.id !== lead.id
+      );
+
+      if (existingInCampaign) {
+        // Unlink duplicate leadId to keep campaign unique by email
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { campaignId: null, outreachStatus: null }
+        });
+        continue; 
+      }
+
+      // 2. Check history (Has this email been contacted by anyone in this campaign?)
+      const history = await prisma.outboundEmail.findFirst({
+        where: {
+          campaignId: campaignId,
+          lead: { email: lead.email }, 
+          status: 'SENT'
         }
-      },
-      select: { id: true }
-    });
-
-    const updateIds = leadsToUpdate.map(l => l.id);
-
-    if (updateIds.length > 0) {
-      await prisma.lead.updateMany({
-        where: { id: { in: updateIds } },
-        data: { outreachStatus: 'PENDING' },
       });
 
-      // 3. Trigger worker for only the leads that need it
-      this.processCampaign(campaignId, updateIds).catch(err => 
-        logger.error({ err: err.message }, 'ProcessCampaign background failure')
-      );
+      if (history) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { outreachStatus: 'SENT', status: 'CONTACTED' }
+        });
+      } else if (!['SENT', 'QUEUED', 'PROCESSING', 'REPLIED'].includes(lead.outreachStatus || '')) {
+        actualUpdateIds.push(lead.id);
+      }
     }
 
-    return { 
-      added: leadIds.length, 
-      skippedReset: leadIds.length - updateIds.length 
-    };
+    if (actualUpdateIds.length > 0) {
+      await prisma.lead.updateMany({
+        where: { id: { in: actualUpdateIds } },
+        data: { outreachStatus: 'PENDING' }
+      });
+      // Pass only campaignId to trigger the pool-based worker
+      this.processCampaign(campaignId, actualUpdateIds).catch(err => logger.error(err));
+    }
+
+    return { added: leadIds.length, newlyQueued: actualUpdateIds.length };
   }
 
   async getCampaigns(userId: string) {
