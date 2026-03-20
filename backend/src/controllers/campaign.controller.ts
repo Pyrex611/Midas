@@ -261,7 +261,6 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
 export const getReplyDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { campaignId, leadId } = req.params;
-    const draft = await draftService.getReplyDraft(leadId, campaignId);
     const draft = await prisma.draft.findFirst({
       where: { 
         leadId, 
