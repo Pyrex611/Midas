@@ -1,14 +1,14 @@
-import nodemailer from 'nodemailer';
-import { env } from '../config/env';
-import { logger } from '../config/logger';
 import prisma from '../lib/prisma';
+import nodemailer from 'nodemailer';
+import { logger } from '../config/logger';
+import { env } from '../config/env';
 import { mailboxService } from './mailbox.service';
 import { personalisationService } from './personalisation.service';
 
 export class EmailService {
   /**
    * Queue an email to be sent later.
-   * IMPROVED: Includes a check to prevent duplicate scheduling for the same lead/campaign.
+   * Prevents duplicate scheduling for the same lead/campaign.
    */
   async queueEmail(
     userId: string,
@@ -20,42 +20,45 @@ export class EmailService {
     inReplyTo?: string | null,
     preferredMailboxId?: string | null
   ) {
-    // 🔥 IDEMPOTENCY CHECK:
-    // Check if there is already a PENDING email for this specific lead in this campaign.
-    const existingPending = await prisma.pendingEmail.findFirst({
-      where: {
-        leadId,
-        campaignId,
-        status: 'PENDING'
+    try {
+      // 1. IDEMPOTENCY CHECK
+      const existingPending = await prisma.pendingEmail.findFirst({
+        where: {
+          leadId,
+          campaignId,
+          status: 'PENDING'
+        }
+      });
+
+      if (existingPending) {
+        logger.debug({ leadId, campaignId }, 'Queueing skipped: Lead already has an email pending.');
+        return existingPending;
       }
-    });
 
-    if (existingPending) {
-      logger.debug({ leadId, campaignId }, 'Queueing skipped: Lead already has an email pending for this campaign.');
-      return existingPending;
+      // 2. Create the record
+      const pending = await prisma.pendingEmail.create({
+        data: {
+          userId,
+          campaignId,
+          leadId,
+          draftId,
+          subject,
+          body,
+          inReplyTo,
+          status: 'PENDING',
+          preferredMailboxId,
+        },
+      });
+
+      return pending;
+    } catch (error: any) {
+      logger.error({ error: error.message, leadId }, 'Failed to queue email in DB');
+      throw error;
     }
-
-    // Create the record if no duplicate exists
-    const pending = await prisma.pendingEmail.create({
-      data: {
-        userId,
-        campaignId,
-        leadId,
-        draftId,
-        subject,
-        body,
-        inReplyTo,
-        status: 'PENDING',
-        preferredMailboxId,
-      },
-    });
-
-    logger.info({ pendingId: pending.id, leadId }, 'Email successfully queued.');
-    return pending;
   }
 
   /**
-   * Actual SMTP send logic (Re-using stable version from previous turn)
+   * Actual SMTP send logic
    */
   async sendEmailNow(
     mailbox: any,
@@ -78,7 +81,7 @@ export class EmailService {
         connectionTimeout: 30000,
         greetingTimeout: 30000,
         socketTimeout: 30000,
-        dnsV_ : 4,
+        dnsV_: 4,
         pool: false
       });
 

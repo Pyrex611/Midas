@@ -159,17 +159,13 @@ export const LeadsTable: React.FC<Props> = ({
                     onChange={() => toggleSelect(lead.id)}
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
+									<div className="text-sm font-bold text-gray-900">{lead.name}</div>
+									<div className="text-[10px] text-gray-400 truncate max-w-[120px]">{lead.email}</div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {lead.name}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {lead.email}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <td className="hidden md:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {lead.company || '-'}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <td className="hidden md:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {lead.position || '-'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
