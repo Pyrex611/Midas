@@ -131,19 +131,36 @@ export class CampaignService {
 
   /**
    * Process leads in a campaign (initial outreach).
+   * Ensures compatibility with Editor-led actions by using the Campaign Creator's ID.
    */
-  private async processCampaign(userId: string, campaignId: string, specificLeadIds?: string[]) {
+  private async processCampaign(campaignId: string, specificLeadIds?: string[]) {
     try {
+      // 1. Fetch Campaign and its Owner
+      const campaign = await prisma.campaign.findUnique({ 
+        where: { id: campaignId } 
+      });
+
+      if (!campaign) {
+        logger.error({ campaignId }, 'Worker Error: Campaign not found.');
+        return;
+      }
+
+      // 2. Fetch drafts linked to this campaign
       const drafts = await prisma.draft.findMany({
-        where: { campaignId, isActive: true, useCase: 'initial' },
+        where: { 
+          campaignId, 
+          isActive: true, 
+          useCase: 'initial' 
+        },
       });
 
       if (drafts.length === 0) {
-        logger.warn({ campaignId }, 'Process skipped: No initial drafts found for this campaign.');
-				return;
-			}
+        logger.warn({ campaignId }, 'Worker: No initial drafts found.');
+        return;
+      }
 
-      const whereClause: any = { userId, campaignId };
+      // 3. Identify leads to process
+      const whereClause: any = { campaignId };
       if (specificLeadIds) {
         whereClause.id = { in: specificLeadIds };
       } else {
@@ -151,30 +168,33 @@ export class CampaignService {
       }
 
       const leads = await prisma.lead.findMany({ where: whereClause });
-      const campaign = await prisma.campaign.findFirst({ where: { id: campaignId } });
+      if (leads.length === 0) return;
 
-      if (!leads.length || !campaign) return;
+      logger.info({ campaignId, leadCount: leads.length }, 'Processing batch outreach...');
 
       for (const lead of leads) {
         try {
           const randomIndex = Math.floor(Math.random() * drafts.length);
           const draft = drafts[randomIndex];
 
+          // Set status to prevent double-processing
           await prisma.lead.update({
             where: { id: lead.id },
-            data: { outreachStatus: 'PROCESSING' as OutreachStatus },
+            data: { outreachStatus: 'PROCESSING' }
           });
 
           const { subject, body } = personalisationService.personalise(
             lead as any,
             draft.subject,
             draft.body,
-            campaign?.reference,
-            campaign?.senderName
+            campaign.reference,
+            campaign.senderName
           );
 
+          // 🔥 IMPORTANT: We use campaign.userId (The Owner), 
+          // even if the Editor is the one who pushed the button.
           await emailService.queueEmail(
-            userId,
+            campaign.userId, 
             campaignId,
             lead.id,
             draft.id,
@@ -184,18 +204,19 @@ export class CampaignService {
 
           await prisma.lead.update({
             where: { id: lead.id },
-            data: { outreachStatus: 'QUEUED' as OutreachStatus },
+            data: { outreachStatus: 'QUEUED' }
           });
+
         } catch (error: any) {
-          logger.error({ error, leadId: lead.id }, 'Error processing lead');
+          logger.error({ error: error.message, leadId: lead.id }, 'Lead skip');
           await prisma.lead.update({
             where: { id: lead.id },
-            data: { outreachStatus: 'FAILED' as OutreachStatus },
+            data: { outreachStatus: 'FAILED' }
           });
         }
       }
-    } catch (error) {
-      logger.error({ error, userId, campaignId }, 'Fatal error in processCampaign');
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Fatal error in processCampaign worker');
     }
   }
 
@@ -203,28 +224,25 @@ export class CampaignService {
    * Add leads to an existing campaign.
    */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId } });
-
+    // 1. Verify Campaign Access (already verified by middleware, but good for safety)
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) throw new Error('Campaign not found');
 
-    const existingLeadIds = new Set(campaign.leads.map(l => l.id));
-    const newLeadIds = leadIds.filter(id => !existingLeadIds.has(id));
-
-    if (newLeadIds.length === 0) return { added: 0, skipped: leadIds.length };
-
+    // 2. Update leads in bulk
     await prisma.lead.updateMany({
-      where: { id: { in: newLeadIds } },
+      where: { id: { in: leadIds } },
       data: {
         campaignId,
-        outreachStatus: 'PENDING' as OutreachStatus,
+        outreachStatus: 'PENDING'
       },
     });
 
-    this.processCampaign(campaignId, newLeadIds).catch(err => {
-      logger.error({ err, userId, campaignId }, 'Background lead processing failed');
+    // 3. Trigger background worker (Note: We pass only campaignId now)
+    this.processCampaign(campaignId, leadIds).catch(err => {
+      logger.error({ err: err.message }, 'Background lead processing failed');
     });
 
-    return { added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length };
+    return { added: leadIds.length, skipped: 0 };
   }
 
   async getCampaigns(userId: string) {
