@@ -67,6 +67,18 @@ export class ImapService {
       logger.error({ error: error.message }, 'IMAP_CYCLE_CRITICAL: Global loop failure');
     }
   }
+  
+  async manualPoll() {
+    logger.info('IMAP_MANUAL: Triggering out-of-band poll...');
+    this.consecutiveErrors = 0;
+    try {
+      await this.poll();
+      return { success: true };
+    } catch (err: any) {
+      logger.error({ err: err.message }, 'IMAP_MANUAL_ERROR');
+      throw err;
+    }
+  }
 
   /**
    * Helper to prevent the entire service from hanging if a single socket gets stuck

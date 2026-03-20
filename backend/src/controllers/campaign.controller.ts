@@ -262,7 +262,17 @@ export const getReplyDraft = async (req: AuthRequest, res: Response, next: NextF
   try {
     const { campaignId, leadId } = req.params;
     const draft = await draftService.getReplyDraft(leadId, campaignId);
+    const draft = await prisma.draft.findFirst({
+      where: { 
+        leadId, 
+        campaignId, 
+        isReplyDraft: true, 
+        isActive: true 
+      },
+    });
+
     if (!draft) return res.status(404).json({ error: 'No reply draft found' });
+	
     res.json({
       id: draft.id,
       subject: draft.subject,

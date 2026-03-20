@@ -84,10 +84,10 @@ export const LeadEmailPreviewModal: React.FC<Props> = ({
     try {
       const [threadRes, draftRes] = await Promise.all([
         campaignAPI.getLeadThread(campaignId, lead.id),
-        campaignAPI.getReplyDraft(campaignId, lead.id).catch(() => null)
+        campaignAPI.getReplyDraft(campaignId, lead.id).catch(() => ({ data: null }))
       ]);
       setThread(threadRes.data);
-      if (draftRes && draftRes.data) {
+      if (draftRes.data) {
         setReplyDraft(draftRes.data);
         setEditedSubject(draftRes.data.subject);
         setEditedBody(draftRes.data.body);
