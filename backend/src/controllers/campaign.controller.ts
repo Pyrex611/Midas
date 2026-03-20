@@ -214,10 +214,10 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
     const userId = req.user!.id;
 
     const [lead, campaign] = await Promise.all([
-      prisma.lead.findFirst({ where: { id: leadId, userId } }),
-      prisma.campaign.findFirst({
-        where: { id: campaignId, userId },
-        include: { drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' }, take: 1 } },
+      prisma.lead.findFirst({ where: { id: leadId, campaignId } }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
+        include: { drafts: { where: { isActive: true, useCase: 'initial' }, orderBy: { createdAt: 'desc' }, take: 1 } },
       }),
     ]);
 
@@ -241,7 +241,7 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
     );
 
     // Queue the email
-    await emailService.queueEmail(userId, campaignId, leadId, draft.id, subject, body);
+    await emailService.queueEmail(campaign.userId, campaignId, leadId, draft.id, subject, body);
     await prisma.lead.update({
       where: { id: leadId },
       data: { outreachStatus: 'QUEUED' },
