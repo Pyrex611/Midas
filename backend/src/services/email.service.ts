@@ -7,15 +7,8 @@ import { personalisationService } from './personalisation.service';
 
 export class EmailService {
   /**
-   * Queue an email to be sent later, with optional preferred mailbox.
-   * @param userId - The user who owns this email (required for backward compatibility)
-   * @param campaignId - Campaign this email belongs to
-   * @param leadId - Lead this email is for
-   * @param draftId - Draft used (optional)
-   * @param subject - Personalised subject
-   * @param body - Personalised body
-   * @param inReplyTo - Message ID to thread (for replies/follow‑ups)
-   * @param preferredMailboxId - Optional preferred mailbox
+   * Queue an email to be sent later.
+   * IMPROVED: Includes a check to prevent duplicate scheduling for the same lead/campaign.
    */
   async queueEmail(
     userId: string,
@@ -27,8 +20,22 @@ export class EmailService {
     inReplyTo?: string | null,
     preferredMailboxId?: string | null
   ) {
-    logger.debug({ userId, campaignId, leadId, subjectLength: subject.length }, 'Queueing email');
+    // 🔥 IDEMPOTENCY CHECK:
+    // Check if there is already a PENDING email for this specific lead in this campaign.
+    const existingPending = await prisma.pendingEmail.findFirst({
+      where: {
+        leadId,
+        campaignId,
+        status: 'PENDING'
+      }
+    });
 
+    if (existingPending) {
+      logger.debug({ leadId, campaignId }, 'Queueing skipped: Lead already has an email pending for this campaign.');
+      return existingPending;
+    }
+
+    // Create the record if no duplicate exists
     const pending = await prisma.pendingEmail.create({
       data: {
         userId,
@@ -42,16 +49,16 @@ export class EmailService {
         preferredMailboxId,
       },
     });
-    logger.info({ pendingId: pending.id, leadId }, 'Email queued');
+
+    logger.info({ pendingId: pending.id, leadId }, 'Email successfully queued.');
     return pending;
   }
 
   /**
-   * Actually send an email using a specific mailbox (decrypted).
-   * Called by the queue processor after mailbox selection.
+   * Actual SMTP send logic (Re-using stable version from previous turn)
    */
   async sendEmailNow(
-    mailbox: any, // already decrypted mailbox object
+    mailbox: any,
     to: string,
     subject: string,
     html: string,
@@ -68,12 +75,11 @@ export class EmailService {
           user: mailbox.smtpUser,
           pass: mailbox.smtpPass,
         },
-        // 🔥 STABILITY SETTINGS:
-        connectionTimeout: 30000, // 30 seconds
+        connectionTimeout: 30000,
         greetingTimeout: 30000,
         socketTimeout: 30000,
-        dnsV_ : 4, // Force IPv4 to avoid IPv6 routing issues on cloud providers
-        pool: false // Use a single-use connection for cold outreach to avoid stale sockets
+        dnsV_ : 4,
+        pool: false
       });
 
       let from = mailbox.email;
@@ -81,24 +87,15 @@ export class EmailService {
         from = `"${senderName || mailbox.senderName}" <${mailbox.email}>`;
       }
 
-      const mailOptions: any = {
-        from,
-        to,
-        subject,
-        text,
-        html,
-      };
+      const info = await transporter.sendMail({
+        from, to, subject, text, html,
+        inReplyTo: inReplyTo || undefined,
+        references: inReplyTo ? [inReplyTo] : undefined
+      });
 
-      if (inReplyTo) {
-        mailOptions.inReplyTo = inReplyTo;
-        mailOptions.references = [inReplyTo];
-      }
-
-      const info = await transporter.sendMail(mailOptions);
       return { success: true, messageId: info.messageId };
-      
     } catch (error: any) {
-      logger.error({ error: error.message, to, subject }, 'SMTP Execution failed');
+      logger.error({ error: error.message, to }, 'SMTP send failed');
       return { success: false, error: error.message };
     }
   }

@@ -356,4 +356,40 @@ export class CampaignService {
 
     return stepsWithCounts;
   }
+	
+	/**
+   * Remove a list of leads from a campaign.
+   * Ensures that any pending emails in the queue for these leads are also wiped.
+   */
+  async removeLeadsFromCampaign(userId: string, campaignId: string, leadIds: string[]) {
+    logger.info({ campaignId, count: leadIds.length }, 'Removing leads from campaign and clearing queue.');
+
+    return await prisma.$transaction(async (tx) => {
+      // 1. Delete all pending emails for these leads in this campaign
+      const deletedQueueItems = await tx.pendingEmail.deleteMany({
+        where: {
+          campaignId: campaignId,
+          leadId: { in: leadIds },
+          status: 'PENDING'
+        }
+      });
+
+      // 2. Unlink the leads from the campaign
+      const updatedLeads = await tx.lead.updateMany({
+        where: {
+          id: { in: leadIds },
+          campaignId: campaignId
+        },
+        data: {
+          campaignId: null,
+          outreachStatus: null
+        }
+      });
+
+      return {
+        leadsRemoved: updatedLeads.count,
+        queueItemsCleared: deletedQueueItems.count
+      };
+    });
+  }
 }
