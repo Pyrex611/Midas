@@ -17,10 +17,11 @@ export const Leads: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [pagination, setPagination] = useState({
     page: 1,
-    pageSize: 20,
+    pageSize: 20, // Default starts at 20
     total: 0,
     totalPages: 0,
   });
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [campaignStatus, setCampaignStatus] = useState<any>(null);
@@ -35,13 +36,16 @@ export const Leads: React.FC = () => {
     campaignAPI.getAll().then(res => setCampaigns(res.data)).catch(err => console.error(err));
   }, []);
 
-  const fetchLeads = async (page = pagination.page) => {
+  /**
+   * Modified fetchLeads to accept explicit page and size
+   */
+  const fetchLeads = async (page = pagination.page, size = pagination.pageSize) => {
     setLoading(true);
     setError(null);
     try {
       const res = await leadAPI.getAll(
         page,
-        pagination.pageSize,
+        size,
         undefined,
         campaignFilter !== 'all' ? campaignFilter : undefined
       );
@@ -55,7 +59,7 @@ export const Leads: React.FC = () => {
     }
   };
 
-  // Poll campaign status without full refresh
+  // Poll campaign status (unchanged)
   useEffect(() => {
     if (campaignIdParam) {
       const interval = setInterval(async () => {
@@ -76,15 +80,24 @@ export const Leads: React.FC = () => {
     }
   }, [campaignIdParam]);
 
+  /**
+   * Refetch when Campaign Filter OR Page Size changes
+   */
   useEffect(() => {
-    fetchLeads(1);
-  }, [campaignFilter]);
+    fetchLeads(1, pagination.pageSize);
+  }, [campaignFilter, pagination.pageSize]);
 
+  const handlePageSizeChange = (newSize: number) => {
+    setPagination(prev => ({ ...prev, pageSize: newSize, page: 1 }));
+    // The useEffect above will trigger the actual fetch
+  };
+
+  // Handlers (Delete, Bulk Delete, etc. - same as before)
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this lead?')) return;
+    if (!confirm('Are you sure?')) return;
     try {
       await leadAPI.delete(id);
-      fetchLeads(pagination.page);
+      fetchLeads(pagination.page, pagination.pageSize);
     } catch (error) {
       alert('Failed to delete lead');
     }
@@ -94,7 +107,7 @@ export const Leads: React.FC = () => {
     if (!confirm(`Delete ${ids.length} lead(s)?`)) return;
     try {
       await Promise.all(ids.map(id => leadAPI.delete(id)));
-      fetchLeads(pagination.page);
+      fetchLeads(pagination.page, pagination.pageSize);
     } catch (error) {
       alert('Failed to delete some leads');
     }
@@ -107,7 +120,6 @@ export const Leads: React.FC = () => {
       setAvailableCampaigns(res.data);
       setShowCampaignModal(true);
     } catch (error) {
-      console.error('Failed to fetch campaigns', error);
       alert('Could not load campaigns');
     }
   };
@@ -117,67 +129,77 @@ export const Leads: React.FC = () => {
     navigate(`/leads?campaign=${campaignId}`);
   };
 
-  const handleCampaignFilterChange = (value: string) => {
-    if (value === 'all') {
-      setSearchParams({});
-    } else {
-      setSearchParams({ campaign: value });
-    }
-  };
-
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-      <div className="flex justify-between items-center mb-8">
+    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20 pb-24">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <h1 className="text-3xl font-bold text-gray-900">All Leads</h1>
-        <div className="flex items-center space-x-4">
+        
+        <div className="flex flex-wrap items-center gap-4">
+          {/* Campaign Filter */}
           <div className="flex items-center space-x-2">
-            <label htmlFor="campaign-filter" className="text-sm text-gray-600">Filter:</label>
+            <label htmlFor="campaign-filter" className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Campaign:</label>
             <select
               id="campaign-filter"
               value={campaignFilter}
-              onChange={(e) => handleCampaignFilterChange(e.target.value)}
-              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === 'all') setSearchParams({});
+                else setSearchParams({ campaign: val });
+              }}
+              className="border-2 border-gray-100 rounded-xl px-3 py-1.5 text-sm focus:border-blue-500 outline-none transition-all font-medium text-gray-700 bg-white"
             >
               <option value="all">All Campaigns</option>
               {campaigns.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name} ({c._count?.leads || 0} leads)
+                  {c.name}
                 </option>
               ))}
             </select>
           </div>
-          <div className="text-sm text-gray-500">Total: {pagination.total} leads</div>
+
+          {/* 🔥 NEW: Page Size Dropdown */}
+          <div className="flex items-center space-x-2">
+            <label htmlFor="page-size" className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Show:</label>
+            <select
+              id="page-size"
+              value={pagination.pageSize}
+              onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+              className="border-2 border-gray-100 rounded-xl px-3 py-1.5 text-sm focus:border-blue-500 outline-none transition-all font-bold text-gray-700 bg-white"
+            >
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+
+          <div className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">
+            {pagination.total} Total
+          </div>
         </div>
       </div>
 
       {loading && (
-        <div className="bg-white shadow rounded-lg p-12 text-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <p className="mt-2 text-gray-600">Loading leads...</p>
+        <div className="bg-white shadow rounded-2xl p-12 text-center text-gray-400">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-2"></div>
+          <p className="text-sm font-medium">Fetching leads...</p>
         </div>
       )}
 
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          <p className="font-bold">Error loading leads</p>
-          <p className="text-sm">{error}</p>
-          <button
-            onClick={() => fetchLeads(1)}
-            className="mt-2 text-sm bg-red-200 px-3 py-1 rounded hover:bg-red-300"
-          >
-            Retry
-          </button>
+        <div className="bg-red-50 border border-red-100 text-red-600 px-6 py-4 rounded-2xl mb-4 flex justify-between items-center">
+          <span className="text-sm font-bold">{error}</span>
+          <button onClick={() => fetchLeads(1)} className="text-xs bg-red-600 text-white px-3 py-1 rounded-lg font-bold">Retry</button>
         </div>
       )}
 
       {!loading && !error && leads.length === 0 && (
-        <div className="bg-white shadow rounded-lg p-12 text-center">
-          <p className="text-gray-500">No leads found.</p>
+        <div className="bg-white shadow rounded-2xl p-12 text-center text-gray-400 border-2 border-dashed">
+          No leads found in this segment.
         </div>
       )}
 
       {!loading && !error && leads.length > 0 && (
-        <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div className="bg-white shadow-sm rounded-2xl border border-gray-100 overflow-hidden">
           <LeadsTable
             leads={leads}
             onDelete={handleDelete}
@@ -186,11 +208,13 @@ export const Leads: React.FC = () => {
             showOutreachStatus={true}
             campaignStatus={campaignStatus}
           />
-          <Pagination
-            currentPage={pagination.page}
-            totalPages={pagination.totalPages}
-            onPageChange={(page) => fetchLeads(page)}
-          />
+          <div className="p-4 border-t border-gray-50">
+            <Pagination
+              currentPage={pagination.page}
+              totalPages={pagination.totalPages}
+              onPageChange={(page) => fetchLeads(page, pagination.pageSize)}
+            />
+          </div>
         </div>
       )}
 
@@ -200,10 +224,6 @@ export const Leads: React.FC = () => {
         leadIds={selectedLeadIds}
         availableCampaigns={availableCampaigns}
         onSuccess={handleCampaignSuccess}
-        onRefresh={async () => {
-          const res = await campaignAPI.getAll();
-          setAvailableCampaigns(res.data);
-        }}
       />
     </div>
   );
