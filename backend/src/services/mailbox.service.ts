@@ -120,7 +120,9 @@ export class MailboxService {
   }
 
   /**
-   * Round-robin selection of a mailbox for a campaign.
+   * Selects an available mailbox from the SHARED campaign pool.
+   * IMPROVED: Now iterates through the pool to find a mailbox that is 
+   * NOT on cooldown, maximizing campaign throughput.
    */
   async selectMailboxForCampaign(campaignId: string, preferredMailboxId?: string | null) {
     const campaign = await prisma.campaign.findUnique({
@@ -128,34 +130,72 @@ export class MailboxService {
       include: {
         mailboxLinks: {
           include: { mailbox: true },
+          where: { mailbox: { isActive: true, status: 'HEALTHY' } }
         },
       },
     });
 
     if (!campaign || campaign.mailboxLinks.length === 0) return null;
 
-    const mailboxes = campaign.mailboxLinks
-      .map(link => link.mailbox)
-      .filter(m => m.isActive);
+    const pool = campaign.mailboxLinks.map(link => link.mailbox);
 
-    if (mailboxes.length === 0) return null;
-
-    // 1. Check Preferred
+    // 1. Thread Integrity (Follow-ups)
     if (preferredMailboxId) {
-      const preferred = mailboxes.find(m => m.id === preferredMailboxId);
-      if (preferred) return { mailbox: preferred, index: -1 };
+      const preferred = pool.find(m => m.id === preferredMailboxId);
+      if (preferred) {
+        // We still check if the preferred mailbox is within its specific interval
+        const stats = await this.getMailboxAvailability(preferred);
+        if (stats.canSend) return { mailbox: preferred, index: -1 };
+        return null; // Must wait for the specific mailbox for follow-ups
+      }
     }
 
-    // 2. Round-Robin
-    const index = campaign.lastMailboxIndex % mailboxes.length;
-    const selected = mailboxes[index];
+    // 2. High-Throughput Round-Robin
+    // We try each mailbox in the pool starting from the last index
+    for (let i = 0; i < pool.length; i++) {
+      const nextIndex = (campaign.lastMailboxIndex + i) % pool.length;
+      const candidate = pool[nextIndex];
+      
+      const stats = await this.getMailboxAvailability(candidate);
 
-    await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { lastMailboxIndex: (index + 1) % mailboxes.length },
-    });
+      if (stats.canSend) {
+        // We found a mailbox ready to go!
+        // Update the campaign index to the NEXT one for the next lead
+        await prisma.campaign.update({
+          where: { id: campaignId },
+          data: { lastMailboxIndex: (nextIndex + 1) % pool.length },
+        });
+        return { mailbox: candidate, index: nextIndex };
+      }
+    }
 
-    return { mailbox: selected, index };
+    // No mailboxes in the pool are ready yet (all on interval cooldown)
+    return null;
+  }
+
+  /**
+   * Helper to check if a mailbox has met its daily limit or interval cooldown
+   */
+  private async getMailboxAvailability(mailbox: any) {
+    const now = new Date();
+    
+    // Check Daily Limit
+    if (mailbox.sentCount >= mailbox.sendLimit) {
+      return { canSend: false };
+    }
+
+    // Check Interval (e.g. 50/day = 1 email every 28.8 minutes)
+    if (mailbox.lastSend) {
+      const periodMinutes = mailbox.sendPeriod === 'day' ? 1440 : 10080;
+      const intervalMs = (periodMinutes * 60 * 1000) / mailbox.sendLimit;
+      const timeSinceLast = now.getTime() - new Date(mailbox.lastSend).getTime();
+      
+      if (timeSinceLast < intervalMs) {
+        return { canSend: false };
+      }
+    }
+
+    return { canSend: true };
   }
 }
 

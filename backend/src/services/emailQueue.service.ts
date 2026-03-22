@@ -100,7 +100,12 @@ export class EmailQueueService {
       return; 
     }
 
+    // Track how many we've sent in this one loop to prevent infinite hammering
+    let sentInThisCycle = 0;
+    const maxBurst = campaign.mailboxLinks.length; 
+		
     for (const email of emails) {
+			if (sentInThisCycle >= maxBurst) break;
       // 2. Active Hours Check
       if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
 				const now = new Date();
@@ -203,14 +208,12 @@ export class EmailQueueService {
 
           // Update volatile stats (daily counts)
           await this.updateMailboxStats(decryptedMailbox.id);
+          sentInThisCycle++;
           
           logger.info({ 
             lead: email.lead.email, 
             mailbox: decryptedMailbox.email 
           }, 'Email dispatched successfully.');
-
-          // BREAK: Process only one email per campaign per cycle to respect intervals
-          break; 
         } else {
           // 9. Failure Handling: Check for Authentication Errors
           const isAuthError = result.error?.includes('535') || result.error?.toLowerCase().includes('invalid login');
