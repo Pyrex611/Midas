@@ -232,38 +232,50 @@ export class CampaignService {
    */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
     logger.info(`[ADD_LEADS] Request received for Campaign: ${campaignId}. Lead Count: ${leadIds.length}`);
-		
+
     const campaign = await prisma.campaign.findUnique({ 
       where: { id: campaignId },
-      include: { leads: { select: { id: true, email: true } } }
+      include: { 
+        leads: { select: { id: true, email: true, outreachStatus: true } } 
+      }
     });
-    if (!campaign) throw new Error('Campaign not found');
+
+    if (!campaign) {
+      logger.error(`[ADD_LEADS] Campaign ${campaignId} not found.`);
+      throw new Error('Campaign not found');
+    }
 
     const inputLeads = await prisma.lead.findMany({ where: { id: { in: leadIds } } });
-		logger.info(`[ADD_LEADS] Found ${inputLeads.length} leads in database to process.`);
-		
+    logger.info(`[ADD_LEADS] Found ${inputLeads.length} leads in database to process.`);
+
     const actualUpdateIds: string[] = [];
+    let duplicateCount = 0;
+    let historyCount = 0;
 
     for (const lead of inputLeads) {
       const emailLower = lead.email.toLowerCase();
 
-      // 1. Identify existing lead records in this campaign with same email
+      // 1. DUPLICATION GUARD: Check if this email is already assigned to this campaign
+      // under a DIFFERENT lead ID.
       const existingInCampaign = campaign.leads.find(
         l => l.email.toLowerCase() === emailLower && l.id !== lead.id
       );
 
       if (existingInCampaign) {
         duplicateCount++;
-        // Unlink duplicate leadId to keep campaign unique by email
-				logger.debug(`[ADD_LEADS] Skipping ${emailLower}: Email already exists in campaign (ID: ${existingInCampaign.id})`);
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: { campaignId: null, outreachStatus: null }
-        });
+        logger.debug(`[ADD_LEADS] Skipping ${emailLower}: Email already exists in campaign (ID: ${existingInCampaign.id})`);
+        
+        // If the new lead record was already pointed at this campaign, unlink it to clean up
+        if (lead.campaignId === campaignId) {
+            await prisma.lead.update({
+              where: { id: lead.id },
+              data: { campaignId: null, outreachStatus: null }
+            });
+        }
         continue; 
       }
 
-      // 2. Check history (Has this email been contacted by anyone in this campaign?)
+      // 2. HISTORY GUARD: Has this campaign ever sent an email to this address?
       const history = await prisma.outboundEmail.findFirst({
         where: {
           campaignId: campaignId,
@@ -277,9 +289,10 @@ export class CampaignService {
         logger.info(`[ADD_LEADS] ${emailLower} already contacted. Syncing status to SENT.`);
         await prisma.lead.update({
           where: { id: lead.id },
-          data: { outreachStatus: 'SENT', status: 'CONTACTED' }
+          data: { campaignId: campaignId, outreachStatus: 'SENT', status: 'CONTACTED' }
         });
-      } else if (!['SENT', 'QUEUED', 'PROCESSING', 'REPLIED'].includes(lead.outreachStatus || '')) {
+      } else {
+        // 3. VALID FOR QUEUE: Lead is new to this campaign
         actualUpdateIds.push(lead.id);
       }
     }
@@ -294,11 +307,19 @@ export class CampaignService {
             outreachStatus: 'PENDING' 
         }
       });
-      // Pass only campaignId to trigger the pool-based worker
-      this.processCampaign(campaignId, actualUpdateIds).catch(err => logger.error(err));
+
+      // Trigger background worker
+      this.processCampaign(campaignId, actualUpdateIds).catch(err => 
+        logger.error({ err: err.message }, 'ProcessCampaign background failure')
+      );
     }
 
-    return { added: leadIds.length, newlyQueued: actualUpdateIds.length };
+    return { 
+      totalProcessed: leadIds.length, 
+      duplicatesFound: duplicateCount,
+      historySynced: historyCount,
+      newlyQueued: actualUpdateIds.length 
+    };
   }
 
   async getCampaigns(userId: string) {
