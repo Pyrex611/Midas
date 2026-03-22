@@ -231,6 +231,8 @@ export class CampaignService {
    * Add leads to an existing campaign.
    */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
+    logger.info(`[ADD_LEADS] Request received for Campaign: ${campaignId}. Lead Count: ${leadIds.length}`);
+		
     const campaign = await prisma.campaign.findUnique({ 
       where: { id: campaignId },
       include: { leads: { select: { id: true, email: true } } }
@@ -238,6 +240,8 @@ export class CampaignService {
     if (!campaign) throw new Error('Campaign not found');
 
     const inputLeads = await prisma.lead.findMany({ where: { id: { in: leadIds } } });
+		logger.info(`[ADD_LEADS] Found ${inputLeads.length} leads in database to process.`);
+		
     const actualUpdateIds: string[] = [];
 
     for (const lead of inputLeads) {
@@ -249,7 +253,9 @@ export class CampaignService {
       );
 
       if (existingInCampaign) {
+        duplicateCount++;
         // Unlink duplicate leadId to keep campaign unique by email
+				logger.debug(`[ADD_LEADS] Skipping ${emailLower}: Email already exists in campaign (ID: ${existingInCampaign.id})`);
         await prisma.lead.update({
           where: { id: lead.id },
           data: { campaignId: null, outreachStatus: null }
@@ -267,6 +273,8 @@ export class CampaignService {
       });
 
       if (history) {
+        historyCount++;
+        logger.info(`[ADD_LEADS] ${emailLower} already contacted. Syncing status to SENT.`);
         await prisma.lead.update({
           where: { id: lead.id },
           data: { outreachStatus: 'SENT', status: 'CONTACTED' }
@@ -276,10 +284,15 @@ export class CampaignService {
       }
     }
 
+    logger.info(`[ADD_LEADS] Summary - Duplicates: ${duplicateCount}, History-Synced: ${historyCount}, To be Queued: ${actualUpdateIds.length}`);
+
     if (actualUpdateIds.length > 0) {
       await prisma.lead.updateMany({
         where: { id: { in: actualUpdateIds } },
-        data: { outreachStatus: 'PENDING' }
+        data: { 
+            campaignId: campaignId, // Ensure link is set
+            outreachStatus: 'PENDING' 
+        }
       });
       // Pass only campaignId to trigger the pool-based worker
       this.processCampaign(campaignId, actualUpdateIds).catch(err => logger.error(err));
