@@ -12,19 +12,31 @@ export const Signup: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+		setError('');
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
     }
     try {
-      await signUp(email, password);
-      // After successful signup, user may be automatically signed in or need confirmation.
-      // We'll navigate to home; if email confirmation is required, the auth context may handle it.
-      navigate('/');
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Signup failed');
-    }
-  };
+			const res = await signUp(email, password, name); // Assuming name is added to form
+			
+			// Check if the backend returned an immediate session (Email confirmation OFF)
+			if (res.data.session) {
+				// Save token for the AuthContext to pick up
+				localStorage.setItem('supabase.auth.token', res.data.session.access_token);
+				alert('Account created! Logging you in...');
+				navigate('/');
+				window.location.reload(); // Force context refresh
+			} else {
+				// Logic for when confirmation is ON
+				alert('Signup successful! Please check your email to confirm your account.');
+				navigate('/login');
+			}
+		} catch (err: any) {
+			setError(err.response?.data?.error || 'Signup failed');
+		}
+	};
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">

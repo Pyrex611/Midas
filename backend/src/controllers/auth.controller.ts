@@ -27,30 +27,27 @@ export const signUp = async (req: Request, res: Response, next: NextFunction) =>
     if (!data.user) throw new Error('User creation failed');
 
     // 2. Create corresponding user in our database with name
-    try {
-      await prisma.user.create({
-        data: {
-          id: data.user.id,
-          email: data.user.email!,
-          name: name || email.split('@')[0], // fallback
-        },
-      });
-      logger.info({ userId: data.user.id }, 'User record created in local DB');
-    } catch (dbError: any) {
-      if (dbError.code === 'P2002') {
-        logger.warn({ userId: data.user.id }, 'User already exists in local DB');
-      } else {
-        throw dbError;
-      }
-    }
+    const localUser = await prisma.user.upsert({
+      where: { id: data.user.id },
+      update: { name: name || email.split('@')[0] },
+      create: {
+        id: data.user.id,
+        email: data.user.email!,
+        name: name || email.split('@')[0],
+      },
+    });
 
-    logger.info({ userId: data.user.id }, 'User signed up');
+    logger.info({ userId: localUser.id }, 'User record synchronized in local DB');
+
+    
     res.status(201).json({
       user: data.user,
-      session: data.session,
+      session: data.session, // Will be null if confirmation is ON, populated if OFF
+      isConfirmed: !!data.session 
     });
+
   } catch (error: any) {
-    logger.error({ error }, 'Signup failed');
+    logger.error({ error: error.message }, 'Signup failure');
     res.status(400).json({ error: error.message });
   }
 };
