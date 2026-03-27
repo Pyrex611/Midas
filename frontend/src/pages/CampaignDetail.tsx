@@ -9,6 +9,7 @@ import { EditDraftModal } from '../components/EditDraftModal';
 import { CustomDraftModal } from '../components/CustomDraftModal';
 import { InviteCollaboratorModal } from '../components/InviteCollaboratorModal';
 import { EditStrategyModal } from '../components/EditStrategyModal';
+import { CampaignRepliesModal } from '../componendts/CampaignRepliesModal';
 
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
