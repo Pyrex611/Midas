@@ -20,6 +20,7 @@ export const CampaignDetail: React.FC = () => {
 	const [activeTab, setActiveTab] = useState<'leads' | 'drafts' | 'team' | 'strategy'>('leads');
 	const [showStrategyModal, setShowStrategyModal] = useState(false);
 	const [showInviteModal, setShowInviteModal] = useState(false);
+	const [showRepliesModal, setShowRepliesModal] = useState(false);
   const [previewLead, setPreviewLead] = useState<{
     id: string;
     name: string;
@@ -512,6 +513,15 @@ export const CampaignDetail: React.FC = () => {
             </div>
             <div className="text-sm text-gray-600">Delivered</div>
           </div>
+					<div 
+						className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm cursor-pointer hover:border-blue-500 transition-all group"
+						onClick={() => setShowRepliesModal(true)}
+					>
+						<div className="text-2xl font-black text-blue-600 group-hover:scale-110 transition-transform">
+							{campaign.replyCount || 0}
+						</div>
+						<div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Replies</div>
+					</div>
         </div>
 
         {/* Auto‑Reply Card */}
@@ -1038,6 +1048,24 @@ export const CampaignDetail: React.FC = () => {
 				onClose={() => setShowStrategyModal(false)}
 				campaign={campaign}
 				onSuccess={fetchCampaign}
+			/>
+			
+			<CampaignRepliesModal 
+				isOpen={showRepliesModal}
+				onClose={() => setShowRepliesModal(false)}
+				leads={campaign.leads || []}
+				onSelectLead={(lead) => {
+					// LeadEmailPreviewModal is triggered by setting previewLead
+					setPreviewLead(lead); 
+				}}
+			/>
+
+			<LeadEmailPreviewModal
+				isOpen={!!previewLead}
+				onClose={() => setPreviewLead(null)} // Automatically returns to underlying Replies modal
+				campaignId={campaign.id}
+				lead={previewLead}
+				onSendSuccess={fetchCampaign}
 			/>
     </div>
   );

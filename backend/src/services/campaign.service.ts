@@ -340,38 +340,67 @@ export class CampaignService {
 
   async getCampaignDetails(userId: string, campaignId: string) {
     const campaign = await prisma.campaign.findFirst({
-      where: {
-        id: campaignId,
-        OR: [
-          { userId: userId },
-          { members: { some: { userId: userId } } }
-        ]
+      // Access check: Owner or Member
+      where: { 
+        id: campaignId, 
+        OR: [{ userId }, { members: { some: { userId } } }] 
       },
       include: {
-        members: { include: { user: { select: { id: true, email: true, name: true } } } },
-        leads: { select: { id: true, name: true, email: true, company: true, status: true, outreachStatus: true } },
-        drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' } },
-        emails: { orderBy: { sentAt: 'desc' }, take: 50 },
-        followUpSteps: { orderBy: { stepNumber: 'asc' } },
+        members: { 
+          include: { 
+            user: { select: { id: true, email: true, name: true } } 
+          } 
+        },
+        leads: {
+          include: {
+            // Needed for the Replies Modal to show mailbox and start date
+            sentEmails: {
+              where: { isIncoming: false },
+              orderBy: { sentAt: 'asc' },
+              take: 1,
+              include: { mailbox: { select: { name: true, email: true } } }
+            }
+          }
+        },
+        _count: {
+          select: {
+            emails: true, // Total emails sent
+            leads: true   // Total leads in campaign
+          }
+        },
+        drafts: { 
+          where: { isActive: true }, 
+          orderBy: { createdAt: 'desc' } 
+        },
+        followUpSteps: { 
+          orderBy: { stepNumber: 'asc' } 
+        },
       },
     });
 
     if (!campaign) return null;
 
-    const stepsWithCounts = await Promise.all(
-      campaign.followUpSteps.map(async (step) => {
-        const draftCount = await prisma.draft.count({
-          where: { campaignId, stepNumber: step.stepNumber, isActive: true },
-        });
-        return { ...step, draftCount };
-      })
-    );
+    // Logic for calculating metrics
+    // We filter in-memory for the reply count to avoid an extra DB round-trip
+    const repliedLeadsCount = campaign.leads.filter(l => l.status === 'REPLIED').length;
 
-    const queuedCount = await prisma.pendingEmail.count({
-      where: { campaignId, status: 'PENDING' },
+    // Re-use our helper to get follow-up steps with their draft counts
+    const stepsWithCounts = await this.getFollowUpSteps(userId, campaignId);
+    
+    // Get real-time queue count
+    const queuedCount = await prisma.pendingEmail.count({ 
+      where: { campaignId, status: 'PENDING' } 
     });
 
-    return { ...campaign, followUpSteps: stepsWithCounts, queuedCount };
+    return { 
+      ...campaign, 
+      followUpSteps: stepsWithCounts, 
+      queuedCount,
+      // Mapping for the UI Header
+      totalSent: campaign._count.emails,
+      totalLeads: campaign._count.leads,
+      replyCount: repliedLeadsCount 
+    };
   }
 
   async updateAutoReplySettings(userId: string, campaignId: string, autoReplyEnabled: boolean) {
