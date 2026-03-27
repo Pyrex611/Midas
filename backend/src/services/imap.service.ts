@@ -99,7 +99,7 @@ export class ImapService {
   private connectAndProcess(mailbox: any, sinceDate: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const imap = new Imap({
-        user: mailbox.imapUser,
+        user: mailbox.imapUser || mailbox.email,
         password: mailbox.imapPass,
         host: mailbox.imapHost,
         port: mailbox.imapPort || 993,

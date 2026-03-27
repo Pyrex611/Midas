@@ -8,10 +8,14 @@ export class MailboxService {
    */
   async createMailbox(userId: string, data: any) {
     const { smtpPass, imapPass, ...rest } = data;
+		
+		const actualPass = (smtpPass || imapPass || '').trim(); 
 
     const encryptedData: any = { ...rest };
-    if (smtpPass) encryptedData.smtpPass = encrypt(smtpPass);
-    if (imapPass) encryptedData.imapPass = encrypt(imapPass);
+		if (actualPass) {
+			encryptedData.smtpPass = encrypt(actualPass);
+			encryptedData.imapPass = encrypt(actualPass);
+		}
 
     if (data.isPrimary) {
       await prisma.mailbox.updateMany({
