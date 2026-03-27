@@ -49,6 +49,7 @@ router.post('/:id/mailboxes', requireAuth, requireCampaignAccess('EDITOR'), camp
 router.post('/:campaignId/drafts/custom', requireAuth, requireCampaignAccess('EDITOR'), campaignCtrl.createCustomDraft);
 router.post('/:campaignId/drafts/generate', requireAuth, requireCampaignAccess('EDITOR'), campaignCtrl.generateCampaignDraft);
 router.post('/:campaignId/steps/:stepNumber/generate-draft', requireAuth, requireCampaignAccess('EDITOR'), campaignCtrl.generateStepDraft);
+router.put('/:campaignId/drafts/:draftId', requireAuth, requireCampaignAccess('EDITOR'), campaignCtrl.updateDraft);
 
 // ==========================================
 // 4. ADMINISTRATIVE ROUTES (OWNER Role)

@@ -13,7 +13,7 @@ export const CampaignRepliesModal: React.FC<Props> = ({ isOpen, onClose, leads, 
   const repliedLeads = leads.filter(l => l.status === 'REPLIED');
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[55] p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[50] p-4 backdrop-blur-sm">
       <div className="bg-white rounded-[2rem] w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
           <div>
