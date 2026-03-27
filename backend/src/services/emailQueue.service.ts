@@ -212,7 +212,11 @@ export class EmailQueueService {
 
     // 3. Interval Cooldown Check (e.g., 50/day = ~28 mins)
     if (mailbox.lastSend) {
-      const intervalMs = (24 * 60 * 60 * 1000) / mailbox.sendLimit;
+      let windowHours = 24;
+      if (campaign.activeStartHour !== null && campaign.activeEndHour !== null) {
+				windowHours = campaign.activeEndHour - campaign.activeStartHour;
+      }
+      const intervalMs = (windowHours * 60 * 60 * 1000) / mailbox.sendLimit;
       const timeSinceLast = now.getTime() - new Date(mailbox.lastSend).getTime();
       if (timeSinceLast < intervalMs) return false;
     }

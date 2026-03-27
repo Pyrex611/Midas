@@ -143,12 +143,18 @@ export class MailboxService {
 
     const pool = campaign.mailboxLinks.map(link => link.mailbox);
 
+    // Context for interval calculation
+    const windowContext = {
+      start: campaign.activeStartHour,
+      end: campaign.activeEndHour
+    };
+		
     // 1. Thread Integrity (Follow-ups)
     if (preferredMailboxId) {
       const preferred = pool.find(m => m.id === preferredMailboxId);
       if (preferred) {
         // We still check if the preferred mailbox is within its specific interval
-        const stats = await this.getMailboxAvailability(preferred);
+        const stats = await this.getMailboxAvailability(preferred, windowContext);
         if (stats.canSend) return { mailbox: preferred, index: -1 };
         return null; // Must wait for the specific mailbox for follow-ups
       }
@@ -160,7 +166,7 @@ export class MailboxService {
       const nextIndex = (campaign.lastMailboxIndex + i) % pool.length;
       const candidate = pool[nextIndex];
       
-      const stats = await this.getMailboxAvailability(candidate);
+      const stats = await this.getMailboxAvailability(candidate, windowContext);
 
       if (stats.canSend) {
         // We found a mailbox ready to go!
@@ -172,7 +178,6 @@ export class MailboxService {
         return { mailbox: candidate, index: nextIndex };
       }
     }
-
     // No mailboxes in the pool are ready yet (all on interval cooldown)
     return null;
   }
@@ -180,9 +185,17 @@ export class MailboxService {
   /**
    * Helper to check if a mailbox has met its daily limit or interval cooldown
    */
-  private async getMailboxAvailability(mailbox: any) {
+  private async getMailboxAvailability(mailbox: any, window: { start: number | null, end: number | null }) {
     const now = new Date();
     
+    // Reset Logic (Check if 24h passed since last reset)
+    const hoursSinceReset = (now.getTime() - new Date(mailbox.lastSentReset).getTime()) / (1000 * 60 * 60);
+    if (hoursSinceReset >= 24) {
+        // We'll let the Queue service handle the actual DB update for reset, 
+        // but here we simulate it for the check.
+        mailbox.sentCount = 0;
+    }
+		
     // Check Daily Limit
     if (mailbox.sentCount >= mailbox.sendLimit) {
       return { canSend: false };
@@ -190,8 +203,13 @@ export class MailboxService {
 
     // Check Interval (e.g. 50/day = 1 email every 28.8 minutes)
     if (mailbox.lastSend) {
-      const periodMinutes = mailbox.sendPeriod === 'day' ? 1440 : 10080;
-      const intervalMs = (periodMinutes * 60 * 1000) / mailbox.sendLimit;
+      let windowHours = 24;
+      if (window.start !== null && window.end !== null) {
+        windowHours = window.end - window.start;
+        if (windowHours <= 0) windowHours = 24; // Handle overnight windows if added later
+      }
+
+      const intervalMs = (windowHours * 60 * 60 * 1000) / mailbox.sendLimit;
       const timeSinceLast = now.getTime() - new Date(mailbox.lastSend).getTime();
       
       if (timeSinceLast < intervalMs) {
