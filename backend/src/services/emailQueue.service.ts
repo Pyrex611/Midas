@@ -37,8 +37,6 @@ export class EmailQueueService {
     if (this.isProcessing) return;
     this.isProcessing = true;
     try {
-      // Pre-check DB connection
-      await prisma.$queryRaw`SELECT 1`.catch(() => { throw new Error('DB_DOWN') });
 
       const now = new Date();
       const pending = await prisma.pendingEmail.findMany({
@@ -52,6 +50,8 @@ export class EmailQueueService {
           lead: true,
         },
       });
+			
+      if (pending.length === 0) return;
 
       // Group by campaign
       const byCampaign = new Map();
@@ -64,6 +64,12 @@ export class EmailQueueService {
         await this.processCampaignEmails(campaignId, emails);
       }
     } catch (error: any) {
+      // Improved logging to see exactly what failed
+      logger.error({ 
+        msg: error.message, 
+        code: error.code,
+        meta: error.meta 
+      }, 'QUEUE_CORE_ERROR');
       logger.warn('Queue cycle skipped: Database busy or connection limit reached.');
     } finally {
       this.isProcessing = false;
@@ -75,20 +81,17 @@ export class EmailQueueService {
    */
   private async processCampaignEmails(campaignId: string, emails: any[]) {
     const campaign = emails[0].campaign;
+    if (!campaign.mailboxLinks || campaign.mailboxLinks.length === 0) return;
     
+    const usedMailboxIds = new Set<string>();
     // 1. Get ONLY active, healthy mailboxes from the pool
-    const pool = campaign.mailboxLinks
+    const activePool = campaign.mailboxLinks
       .map((link: any) => link.mailbox)
       .filter((m: any) => m.isActive && m.status === 'HEALTHY');
 
-    if (pool.length === 0) return;
-
-    // 2. Track mailboxes used in this 1-minute cycle to prevent double-sends from one account
-    const usedInThisBurst = new Set<string>();
-
     for (const email of emails) {
       // Stop if we have filled all available mailbox "slots" for this minute
-      if (usedInThisBurst.size >= pool.length) break;
+      if (usedMailboxIds.size >= pool.length) break;
 
       // 3. Timezone / Active Hours Check
       if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
@@ -101,10 +104,10 @@ export class EmailQueueService {
 
       // 4. Select a mailbox that is ready (Not on interval cooldown, not used in this burst)
       const selection = await this.findReadyMailbox(pool, usedInThisBurst, email.preferredMailboxId, campaign);
-      if (!selection) continue;
+      if (!selection || usedMailboxIds.has(selection.mailbox.id)) continue;
 
       try {
-        const decryptedMailbox = await mailboxService.getMailboxForSending(selection.id);
+        const decryptedMailbox = await mailboxService.getMailboxForSending(selection.mailbox.id);
 
         const { subject, body } = personalisationService.personalise(
           email.lead, email.subject, email.body, campaign.reference, campaign.senderName
@@ -143,8 +146,10 @@ export class EmailQueueService {
             })
           ]);
           
-          usedInThisBurst.add(decryptedMailbox.id);
+          usedMailboxIds.add(decryptedMailbox.id);
           logger.info({ lead: email.lead.email, mailbox: decryptedMailbox.email }, 'Sent successfully in burst mode.');
+					
+          await new Promise(resolve => setTimeout(resolve, 500)); 
         } else {
           // Handle Error (Check for auth failure 535)
           if (result.error?.includes('535')) {
