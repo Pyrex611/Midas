@@ -54,7 +54,7 @@ export class EmailQueueService {
       if (pending.length === 0) return;
 
       // Group by campaign
-      const byCampaign = new Map();
+      const byCampaign = new Map<string, any[]>();
       for (const email of pending) {
         if (!byCampaign.has(email.campaignId)) byCampaign.set(email.campaignId, []);
         byCampaign.get(email.campaignId).push(email);
@@ -66,7 +66,8 @@ export class EmailQueueService {
     } catch (error: any) {
       // Improved logging to see exactly what failed
       logger.error({ 
-        msg: error.message, 
+        msg: error.message,  
+        stack: error.stack,
         code: error.code,
         meta: error.meta 
       }, 'QUEUE_CORE_ERROR');
@@ -83,11 +84,14 @@ export class EmailQueueService {
     const campaign = emails[0].campaign;
     if (!campaign.mailboxLinks || campaign.mailboxLinks.length === 0) return;
     
-    const usedMailboxIds = new Set<string>();
     // 1. Get ONLY active, healthy mailboxes from the pool
     const activePool = campaign.mailboxLinks
       .map((link: any) => link.mailbox)
       .filter((m: any) => m.isActive && m.status === 'HEALTHY');
+			
+    if (activePool.length === 0) return;
+		
+    const usedMailboxIds = new Set<string>();
 
     for (const email of emails) {
       // Stop if we have filled all available mailbox "slots" for this minute
@@ -97,15 +101,18 @@ export class EmailQueueService {
       if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
         const nextTime = getNextActiveTime(new Date(), campaign.activeStartHour, campaign.activeEndHour, campaign.timezone || 'UTC');
         if (nextTime.getTime() > Date.now()) {
-          await prisma.pendingEmail.update({ where: { id: email.id }, data: { scheduledAt: nextTime } });
+          await prisma.pendingEmail.update({ where: { id: email.id }, data: { scheduledAt: nextTime } }).catch(() => {});
           continue; 
         }
       }
 
       // 4. Select a mailbox that is ready (Not on interval cooldown, not used in this burst)
-      const selection = await this.findReadyMailbox(pool, usedInThisBurst, email.preferredMailboxId, campaign);
+      // const selection = await this.findReadyMailbox(pool, usedInThisBurst, email.preferredMailboxId, campaign);
+      const selection = await mailboxService.selectMailboxForCampaign(campaignId, email.preferredMailboxId);
       if (!selection || usedMailboxIds.has(selection.mailbox.id)) continue;
 
+      const mailbox = selection.mailbox;
+			
       try {
         const decryptedMailbox = await mailboxService.getMailboxForSending(selection.mailbox.id);
 
@@ -147,9 +154,11 @@ export class EmailQueueService {
           ]);
           
           usedMailboxIds.add(decryptedMailbox.id);
-          logger.info({ lead: email.lead.email, mailbox: decryptedMailbox.email }, 'Sent successfully in burst mode.');
+          logger.info({ lead: email.lead.email, mailbox: decryptedMailbox.email }, 'Sent successfully.');
 					
-          await new Promise(resolve => setTimeout(resolve, 500)); 
+          // 🔥 SEED GAP: Wait 1 second before next lead in the burst to prevent DB deadlock
+          await new Promise(resolve => setTimeout(resolve, 1000)); 
+					
         } else {
           // Handle Error (Check for auth failure 535)
           if (result.error?.includes('535')) {
