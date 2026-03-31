@@ -95,7 +95,7 @@ export class EmailQueueService {
 
     for (const email of emails) {
       // Stop if we have filled all available mailbox "slots" for this minute
-      if (usedMailboxIds.size >= pool.length) break;
+      if (usedMailboxIds.size >= activePool.length) break;
 
       // 3. Timezone / Active Hours Check
       if (campaign.activeStartHour != null && campaign.activeEndHour != null) {
