@@ -220,7 +220,6 @@ export class ImapService {
     }
 
     // 1. Bounce Detection
-    const from = parsed.from?.value[0]?.address?.toLowerCase() || '';
     const subject = (parsed.subject || '').toLowerCase();
     const isBounce = from.includes('mailer-daemon') || from.includes('postmaster') || subject.includes('delivery status notification') || subject.includes('failure');
 
