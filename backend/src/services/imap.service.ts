@@ -7,9 +7,23 @@ import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
 import { mailboxService } from './mailbox.service';
 
+function isBounceMessage(parsed: any): boolean {
+  const from = (parsed.from?.value[0]?.address || '').toLowerCase();
+  const subject = (parsed.subject || '').toLowerCase();
+  
+  const bounceSenders = ['mailer-daemon@', 'postmaster@', 'mtaoutbound'];
+  const bounceKeywords = ['delivery status notification', 'failed', 'undeliverable', 'returning message to sender'];
+
+  const isFromDaemon = bounceSenders.some(daemon => from.includes(daemon));
+  const hasBounceSubject = bounceKeywords.some(kw => subject.includes(kw));
+
+  return isFromDaemon && hasBounceSubject;
+}
+
 export class ImapService {
   private isPolling = false;
   private pollInterval: NodeJS.Timeout | null = null;
+  private consecutiveErrors = 0;
 
   startPolling() {
     if (this.isPolling) return;
@@ -183,6 +197,9 @@ export class ImapService {
     const messageId = parsed.messageId?.trim();
     if (!messageId) return;
 
+    const from = (parsed.from?.value[0]?.address || '').toLowerCase();
+    if (from === mailbox.email.toLowerCase() || from.includes('accounts.google.com')) return;
+
     const inReplyTo = parsed.inReplyTo?.trim();
     const text = parsed.text || '';
 
@@ -232,34 +249,43 @@ export class ImapService {
     // 2. Reply Recording
     logger.info(`IMAP_EVENT: Valid reply detected from [${from}] for campaign [${originalEmail.campaignId}]`);
     
-    await prisma.$transaction([
-      prisma.mailbox.update({ where: { id: mailbox.id }, data: { replyCount: { increment: 1 } } }),
-      prisma.outboundEmail.create({
-        data: {
-          userId: originalEmail.userId,
-          leadId: originalEmail.leadId,
-          campaignId: originalEmail.campaignId,
-          mailboxId: mailbox.id,
-          subject: parsed.subject || '',
-          body: new EmailReplyParser().parseReply(text) || text,
-          isIncoming: true,
-          messageId,
-          replyToId: originalEmail.id,
-          sentAt: parsed.date || new Date(),
-          status: 'SENT',
-        }
-      }),
-      prisma.outboundEmail.update({ where: { id: originalEmail.id }, data: { repliedAt: new Date() } })
-    ]);
+    // Create the record and get the CUID
+    const newEmail = await prisma.outboundEmail.create({
+      data: {
+        userId: originalEmail.userId,
+        leadId: originalEmail.leadId,
+        campaignId: originalEmail.campaignId,
+        mailboxId: mailbox.id,
+        subject: parsed.subject || '',
+        body: new EmailReplyParser().parseReply(parsed.text || '') || (parsed.text || ''),
+        isIncoming: true,
+        messageId,
+        replyToId: originalEmail.id,
+        sentAt: parsed.date || new Date(),
+        status: 'SENT',
+      }
+    });
+
+    await prisma.outboundEmail.update({
+      where: { id: originalEmail.id },
+      data: { repliedAt: new Date() }
+    });
+
+    // Update mailbox reply stats
+    await prisma.mailbox.update({
+      where: { id: mailbox.id },
+      data: { replyCount: { increment: 1 } }
+    });
 
     // 3. AI Intelligence
     try {
       const analysis = await aiService.analyzeReply(parsed.text || '');
+			
       await prisma.outboundEmail.update({
-        where: { messageId },
+        where: { id: newEmail.id },
         data: { sentiment: analysis.sentiment, intent: analysis.intent, analysis: JSON.stringify(analysis) }
       });
-      autoReplyService.processReply(messageId).catch(e => logger.error(`AUTO_REPLY_ERR: ${e.message}`));
+      autoReplyService.processReply(newEmail.id).catch(e => logger.error(`AUTO_REPLY_ERR: ${e.message}`));
     } catch (e: any) { 
       logger.error(`AI_ANALYSIS_ERR: ${e.message}`); 
     }
