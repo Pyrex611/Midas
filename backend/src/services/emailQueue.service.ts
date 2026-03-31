@@ -174,37 +174,6 @@ export class EmailQueueService {
       }
     }
   }
-
-	private async findReadyMailbox(pool: any[], usedIds: Set<string>, preferredId: string | null, campaign: any) {
-    // A. Priority: Follow-up Integrity
-    if (preferredId) {
-      const pref = pool.find(m => m.id === preferredId);
-      if (pref && !usedIds.has(pref.id)) {
-        const availability = await this.checkMailboxAvailability(pref);
-        if (availability) return pref;
-      }
-      return null; // Force wait for the correct mailbox for follow-ups
-    }
-
-    // B. Round-Robin Search
-    for (let i = 0; i < pool.length; i++) {
-      const idx = (campaign.lastMailboxIndex + i) % pool.length;
-      const candidate = pool[idx];
-
-      if (usedIds.has(candidate.id)) continue;
-
-      const ready = await this.checkMailboxAvailability(candidate);
-      if (ready) {
-        // Update campaign index for next attempt
-        await prisma.campaign.update({
-          where: { id: campaign.id },
-          data: { lastMailboxIndex: (idx + 1) % pool.length }
-        });
-        return candidate;
-      }
-    }
-    return null;
-  }
 	
 	private async checkMailboxAvailability(mailbox: any): Promise<boolean> {
     const now = new Date();
