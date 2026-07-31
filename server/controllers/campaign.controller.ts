@@ -3,7 +3,6 @@ import prisma from '../lib/prisma';
 import { personalisationService } from '../services/personalisation.service';
 import { emailService } from '../services/email.service';
 import { aiService } from '../services/ai.service';
-import { promptManager } from '../services/promptManager.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
 
@@ -26,7 +25,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
         autoReplyEnabled: autoReplyEnabled ?? false,
         sendHourUTC: sendHourUTC ?? 9,
         ...(leadIds?.length && {
-          leads: { connect: leadIds.map((id: string) => ({ id })) },
+          leads: { connect: leadIds.map((lid: string) => ({ id: lid })) },
         }),
       },
     });
@@ -38,7 +37,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       });
     }
 
-    // Generate 5 initial outreach drafts
     for (let i = 0; i < 5; i++) {
       const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
       const draft = await aiService.generateDraft(
@@ -62,7 +60,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       });
     }
 
-    // Create follow-up step 1
     await prisma.followUpStep.create({
       data: {
         campaignId: campaign.id,
@@ -84,7 +81,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
 export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { id } = req.params;
+    const id = req.params.id as string;
     const { leadIds } = req.body;
     if (!Array.isArray(leadIds) || leadIds.length === 0) {
       return res.status(400).json({ error: 'leadIds must be a non-empty array' });
@@ -142,7 +139,7 @@ export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFu
 export const getCampaignDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { id } = req.params;
+    const id = req.params.id as string;
     const campaign = await prisma.campaign.findFirst({
       where: { id, userId },
       include: {
@@ -188,7 +185,8 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
 
 export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId, leadId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const leadId = req.params.leadId as string;
     const userId = req.user!.id;
 
     const emails = await prisma.outboundEmail.findMany({
@@ -231,7 +229,9 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
 
 export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId, leadId, draftId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const leadId = req.params.leadId as string;
+    const draftId = req.params.draftId as string;
     const userId = req.user!.id;
 
     const [lead, campaign, draft] = await Promise.all([
@@ -260,7 +260,8 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
 
 export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId, leadId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const leadId = req.params.leadId as string;
     const userId = req.user!.id;
 
     const [lead, campaign] = await Promise.all([
@@ -332,7 +333,8 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
 
 export const getReplyDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId, leadId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const leadId = req.params.leadId as string;
     const draft = await prisma.draft.findFirst({
       where: { leadId, campaignId, isReplyDraft: true, isActive: true },
     });
@@ -345,7 +347,8 @@ export const getReplyDraft = async (req: AuthRequest, res: Response, next: NextF
 
 export const generateReplyDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId, leadId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const leadId = req.params.leadId as string;
     const userId = req.user!.id;
 
     const lead = await prisma.lead.findFirst({ where: { id: leadId, userId } });
@@ -395,7 +398,8 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
 
 export const sendReplyDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId, leadId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const leadId = req.params.leadId as string;
     const { subject, body } = req.body;
     const userId = req.user!.id;
 
@@ -465,7 +469,7 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
 
 export const updateAutoReply = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const { autoReplyEnabled } = req.body;
     const updated = await prisma.campaign.update({
       where: { id, userId: req.user!.id },
@@ -477,7 +481,7 @@ export const updateAutoReply = async (req: AuthRequest, res: Response, next: Nex
 
 export const updateSendHour = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const { sendHourUTC } = req.body;
     const updated = await prisma.campaign.update({
       where: { id, userId: req.user!.id },
@@ -489,7 +493,7 @@ export const updateSendHour = async (req: AuthRequest, res: Response, next: Next
 
 export const updateActiveHours = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const { activeStartHour, activeEndHour, timezone } = req.body;
     const updated = await prisma.campaign.update({
       where: { id, userId: req.user!.id },
@@ -501,7 +505,7 @@ export const updateActiveHours = async (req: AuthRequest, res: Response, next: N
 
 export const getFollowUpSteps = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const steps = await prisma.followUpStep.findMany({
       where: { campaignId: id },
       orderBy: { stepNumber: 'asc' },
@@ -512,8 +516,8 @@ export const getFollowUpSteps = async (req: AuthRequest, res: Response, next: Ne
 
 export const setFollowUpSteps = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
-    const { steps } = req.body; // array of { stepNumber, delayDays }
+    const id = req.params.id as string;
+    const { steps } = req.body;
 
     if (!Array.isArray(steps)) return res.status(400).json({ error: 'steps must be an array' });
 
@@ -532,14 +536,15 @@ export const setFollowUpSteps = async (req: AuthRequest, res: Response, next: Ne
 
 export const deleteFollowUpStep = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await prisma.followUpStep.delete({ where: { id: req.params.stepId } });
+    const stepId = req.params.stepId as string;
+    await prisma.followUpStep.delete({ where: { id: stepId } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
 
 export const updateCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const updated = await prisma.campaign.update({
       where: { id, userId: req.user!.id },
       data: req.body,
@@ -550,15 +555,17 @@ export const updateCampaign = async (req: AuthRequest, res: Response, next: Next
 
 export const deleteCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await prisma.campaign.delete({ where: { id: req.params.id, userId: req.user!.id } });
+    const id = req.params.id as string;
+    await prisma.campaign.delete({ where: { id, userId: req.user!.id } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
 
 export const getCampaignDrafts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const campaignId = req.params.campaignId as string;
     const drafts = await prisma.draft.findMany({
-      where: { campaignId: req.params.campaignId, userId: req.user!.id, isActive: true },
+      where: { campaignId, userId: req.user!.id, isActive: true },
       orderBy: { createdAt: 'desc' },
     });
     res.json(drafts);
@@ -567,8 +574,9 @@ export const getCampaignDrafts = async (req: AuthRequest, res: Response, next: N
 
 export const updateDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const draftId = req.params.draftId as string;
     const updated = await prisma.draft.update({
-      where: { id: req.params.draftId, userId: req.user!.id },
+      where: { id: draftId, userId: req.user!.id },
       data: req.body,
     });
     res.json(updated);
@@ -577,14 +585,15 @@ export const updateDraft = async (req: AuthRequest, res: Response, next: NextFun
 
 export const deleteDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await prisma.draft.delete({ where: { id: req.params.draftId, userId: req.user!.id } });
+    const draftId = req.params.draftId as string;
+    await prisma.draft.delete({ where: { id: draftId, userId: req.user!.id } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
 
 export const createCustomDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId } = req.params;
+    const campaignId = req.params.campaignId as string;
     const { subject, body } = req.body;
     const draft = await prisma.draft.create({
       data: {
@@ -602,7 +611,7 @@ export const createCustomDraft = async (req: AuthRequest, res: Response, next: N
 
 export const generateCampaignDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId } = req.params;
+    const campaignId = req.params.campaignId as string;
     const userId = req.user!.id;
     const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -631,7 +640,8 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
 
 export const generateStepDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { campaignId, stepNumber } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const stepNumber = req.params.stepNumber as string;
     const userId = req.user!.id;
     const stepNum = parseInt(stepNumber, 10);
 
@@ -667,8 +677,9 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
 
 export const getCampaignDomains = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const id = req.params.id as string;
     const links = await prisma.campaignDomain.findMany({
-      where: { campaignId: req.params.id },
+      where: { campaignId: id },
       include: { domain: true },
     });
     res.json(links.map(l => l.domain));
@@ -677,7 +688,7 @@ export const getCampaignDomains = async (req: AuthRequest, res: Response, next: 
 
 export const addDomainToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const { domainId } = req.body;
     const link = await prisma.campaignDomain.create({
       data: { campaignId: id, domainId },
@@ -688,7 +699,8 @@ export const addDomainToCampaign = async (req: AuthRequest, res: Response, next:
 
 export const removeDomainFromCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { id, domainId } = req.params;
+    const id = req.params.id as string;
+    const domainId = req.params.domainId as string;
     await prisma.campaignDomain.deleteMany({
       where: { campaignId: id, domainId },
     });
