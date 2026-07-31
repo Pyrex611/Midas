@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import multer from 'multer';
 import { blobService } from '../services/blob.service';
 import prisma from '../lib/prisma';
@@ -16,10 +16,8 @@ export const uploadLeads = [
       const fileExt = req.file.originalname.split('.').pop() || 'csv';
       const safeName = `uploads/${userId}-${Date.now()}.${fileExt}`;
       
-      // Upload to Vercel Blob
       const blobUrl = await blobService.uploadFile(safeName, req.file.buffer);
 
-      // Create Async Job
       const job = await prisma.uploadJob.create({
         data: {
           userId,
@@ -59,6 +57,7 @@ export const getBlocklist = async (req: AuthRequest, res: Response, next: NextFu
 export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { pattern } = req.body;
+    if (!pattern) return res.status(400).json({ error: 'Pattern is required' });
     const block = await prisma.blocklist.create({ data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() } });
     res.status(201).json(block);
   } catch (error) { next(error); }
@@ -74,24 +73,70 @@ export const deleteBlocklist = async (req: AuthRequest, res: Response, next: Nex
 export const getLeads = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { page = '1', pageSize = '20', campaignId } = req.query;
-    const p = parseInt(page as string);
-    const s = parseInt(pageSize as string);
+    const { page = '1', pageSize = '20', status, campaignId } = req.query;
+    const p = parseInt(page as string, 10);
+    const s = parseInt(pageSize as string, 10);
 
     const where: any = { userId };
-    if (campaignId) where.campaignId = campaignId;
+    if (status && typeof status === 'string' && status !== 'all') {
+      where.status = status;
+    }
+    if (campaignId && typeof campaignId === 'string' && campaignId !== 'all') {
+      where.campaignId = campaignId;
+    }
 
     const [leads, total] = await Promise.all([
-      prisma.lead.findMany({ where, skip: (p - 1) * s, take: s, orderBy: { createdAt: 'desc' } }),
+      prisma.lead.findMany({
+        where,
+        skip: (p - 1) * s,
+        take: s,
+        orderBy: { createdAt: 'desc' },
+      }),
       prisma.lead.count({ where }),
     ]);
-    res.json({ data: leads, pagination: { page: p, pageSize: s, total, totalPages: Math.ceil(total / s) } });
-  } catch (error) { next(error); }
+
+    res.json({
+      data: leads,
+      pagination: {
+        page: p,
+        pageSize: s,
+        total,
+        totalPages: Math.ceil(total / s),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const lead = await prisma.lead.findFirstOrThrow({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    res.json(lead);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const lead = await prisma.lead.update({
+      where: { id: req.params.id, userId: req.user!.id },
+      data: req.body,
+    });
+    res.json(lead);
+  } catch (error) {
+    next(error);
+  }
 };
 
 export const deleteLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     await prisma.lead.delete({ where: { id: req.params.id, userId: req.user!.id } });
     res.json({ success: true });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 };

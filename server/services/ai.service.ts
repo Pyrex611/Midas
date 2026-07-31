@@ -1,8 +1,6 @@
 import { logger } from '../config/logger';
-import { env } from '../config/env';
 import { promptManager, PromptParams } from './promptManager.service';
 
-// ===== ANALYSIS INTERFACE =====
 export interface ReplyAnalysis {
   sentiment: 'very positive' | 'positive' | 'neutral' | 'negative' | 'very negative';
   intent: string;
@@ -14,47 +12,135 @@ export interface ReplyAnalysis {
   keyPoints?: string[];
 }
 
-// ===== PROVIDER INTERFACE =====
 interface AIProvider {
   complete(prompt: string, system?: string): Promise<string>;
   isAvailable(): Promise<boolean>;
 }
 
-// ===== MOCK PROVIDER (Safe Fallback) =====
 class MockProvider implements AIProvider {
   async isAvailable() { return true; }
 
-  async complete(prompt: string, system?: string): Promise<string> {
+  async complete(prompt: string): Promise<string> {
     logger.debug('MockProvider generating fallback response');
-    if (prompt.includes('sentiment') || prompt.includes('analyze')) {
+    if (prompt.includes('sentiment') || prompt.includes('Reply text')) {
       return JSON.stringify({
         sentiment: 'neutral',
         intent: 'asking for info',
-        painPoints: [],
+        painPoints: ['CRM integration friction'],
         objections: [],
-        interestLevel: 5,
-        buyingSignals: [],
-        suggestedApproach: 'provide more information',
+        interestLevel: 6,
+        buyingSignals: ['requested details'],
+        suggestedApproach: 'Provide a brief one-pager and offer an asynchronous demo.',
         keyPoints: []
       });
     } else {
-      return JSON.stringify({ 
-        subject: "Quick question for {{company}}", 
-        body: "Hi {{name}},\n\nI noticed your work in the industry and wanted to reach out regarding the objective we discussed.\n\nWould you be open to a brief chat?\n\nBest,\n{{senderName}}" 
+      return JSON.stringify({
+        subject: '{Quick question|Quick idea} regarding {{company}}',
+        body: '{Hi|Hey|Hello} {{name}},\n\n{I noticed|Looks like} {{company}} is active in your market. We help teams automate pipeline conversion without adding overhead.\n\nWorth exploring?\n\nBest,\n{{senderName}}'
       });
     }
   }
 }
 
-// ===== OPENROUTER PROVIDER (Primary) =====
-class OpenRouterProvider implements AIProvider {
-  private apiKey: string;
-  private model: string;
+class OpenAIProvider implements AIProvider {
+  constructor(private apiKey: string, private model = 'gpt-4-turbo-preview') {}
 
-  constructor(apiKey: string, model: string) {
-    this.apiKey = apiKey;
-    this.model = model;
+  async isAvailable() { return !!this.apiKey; }
+
+  async complete(prompt: string, system?: string): Promise<string> {
+    const messages = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({ role: 'user', content: prompt });
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 1200,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
+    }
+
+    const data: any = await response.json();
+    return data.choices[0].message.content;
   }
+}
+
+class GeminiProvider implements AIProvider {
+  constructor(private apiKey: string, private model = 'gemini-2.5-flash-lite') {}
+
+  async isAvailable() { return !!this.apiKey; }
+
+  async complete(prompt: string, system?: string): Promise<string> {
+    const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: fullPrompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API error (${response.status}): ${errorText}`);
+    }
+
+    const data: any = await response.json();
+    return data.candidates[0].content.parts[0].text;
+  }
+}
+
+class DeepSeekProvider implements AIProvider {
+  constructor(private apiKey: string, private model = 'deepseek-chat') {}
+
+  async isAvailable() { return !!this.apiKey; }
+
+  async complete(prompt: string, system?: string): Promise<string> {
+    const messages = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({ role: 'user', content: prompt });
+
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 1200,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`DeepSeek API error (${response.status}): ${errorText}`);
+    }
+
+    const data: any = await response.json();
+    return data.choices[0].message.content;
+  }
+}
+
+class OpenRouterProvider implements AIProvider {
+  constructor(private apiKey: string, private model: string) {}
 
   async isAvailable() { return !!this.apiKey; }
 
@@ -68,14 +154,14 @@ class OpenRouterProvider implements AIProvider {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
-        'HTTP-Referer': 'https://midas-outreach.com',
-        'X-Title': 'Midas AI SDR',
+        'HTTP-Referer': 'https://midas.outreach',
+        'X-Title': 'Midas Engine',
       },
       body: JSON.stringify({
         model: this.model,
         messages,
         temperature: 0.7,
-        max_tokens: 2000,
+        max_tokens: 3000,
       }),
     });
 
@@ -84,224 +170,204 @@ class OpenRouterProvider implements AIProvider {
       throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json();
-    return data.choices[0].message.content;
+    const data: any = await response.json();
+    if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+      throw new Error('OpenRouter API returned invalid response structure');
+    }
+
+    const choice = data.choices[0];
+    let rawContent = choice.message?.content || '';
+    if (!rawContent && choice.message?.reasoning) {
+      rawContent = choice.message.reasoning;
+    }
+    return rawContent;
   }
 }
 
-// ===== GEMINI PROVIDER (Standard Fallback) =====
-class GeminiProvider implements AIProvider {
-  private apiKey: string;
-  private model: string;
+class OllamaProvider implements AIProvider {
+  constructor(private baseUrl = 'http://localhost:11434', private model = 'llama3.1:8b') {}
 
-  constructor(apiKey: string, model = 'gemini-1.5-flash') {
-    this.apiKey = apiKey;
-    this.model = model;
+  async isAvailable() {
+    try {
+      const resp = await fetch(`${this.baseUrl}/api/tags`);
+      return resp.ok;
+    } catch {
+      return false;
+    }
   }
-
-  async isAvailable() { return !!this.apiKey; }
 
   async complete(prompt: string, system?: string): Promise<string> {
     const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: fullPrompt }] }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 2000 },
-        }),
-      }
-    );
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: fullPrompt,
+        stream: false,
+        options: { temperature: 0.7 },
+      }),
+    });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gemini API error (${response.status}): ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data.candidates[0].content.parts[0].text;
+    if (!response.ok) throw new Error('Ollama generation failed');
+    const data: any = await response.json();
+    return data.response;
   }
 }
 
-// ===== AI SERVICE WITH STRATEGIC CONTEXT =====
 export class AIService {
   private primaryProvider: AIProvider;
   private fallbackProvider: AIProvider | null = null;
   private mockProvider = new MockProvider();
-  private requestQueue: (() => Promise<any>)[] = [];
-  private processing = false;
 
   constructor() {
-    const primaryType = env.AI_PROVIDER?.toLowerCase() || 'openrouter';
-    const fallbackType = env.PRIMARY_FALLBACK_PROVIDER?.toLowerCase() || 'gemini';
+    const primaryType = (process.env.AI_PROVIDER || 'mock').toLowerCase();
+    const fallbackType = process.env.PRIMARY_FALLBACK_PROVIDER?.toLowerCase();
 
-    this.primaryProvider = this.createProvider(primaryType, env.OPENROUTER_MODEL || env.OPENAI_MODEL);
-    
+    logger.info({ primary: primaryType, fallback: fallbackType }, 'Initializing Dynamic AI Failover Engine');
+
+    this.primaryProvider = this.createProvider(primaryType);
+
     if (fallbackType && fallbackType !== primaryType) {
-      this.fallbackProvider = this.createProvider(fallbackType, env.GEMINI_MODEL);
+      try {
+        this.fallbackProvider = this.createProvider(fallbackType);
+      } catch (err) {
+        logger.error({ err, fallbackType }, 'Failed to initialize fallback AI provider');
+      }
     }
   }
 
-  private createProvider(type: string, model?: string): AIProvider {
+  private createProvider(type: string): AIProvider {
     switch (type) {
-      case 'openrouter':
-        return new OpenRouterProvider(env.OPENROUTER_API_KEY || '', model || 'deepseek/deepseek-r1:free');
+      case 'openai':
+        return new OpenAIProvider(process.env.OPENAI_API_KEY || '', process.env.OPENAI_MODEL || 'gpt-4-turbo-preview');
       case 'gemini':
-        return new GeminiProvider(env.GEMINI_API_KEY || '', model || 'gemini-1.5-flash');
+        return new GeminiProvider(process.env.GEMINI_API_KEY || '', process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
+      case 'deepseek':
+        return new DeepSeekProvider(process.env.DEEPSEEK_API_KEY || '', process.env.DEEPSEEK_MODEL || 'deepseek-chat');
+      case 'openrouter':
+        return new OpenRouterProvider(process.env.OPENROUTER_API_KEY || '', process.env.OPENROUTER_MODEL || 'deepseek/deepseek-r1:free');
+      case 'ollama':
+        return new OllamaProvider(process.env.OLLAMA_URL || 'http://localhost:11434', process.env.OLLAMA_POWERFUL_MODEL || 'llama3.1:8b');
       case 'mock':
       default:
         return new MockProvider();
     }
   }
 
-  /**
-   * Generates a cold email or reply draft using the refined Phase 5 Strategic Brain.
-   */
+  private async attemptComplete(prompt: string, system?: string): Promise<string> {
+    try {
+      return await this.primaryProvider.complete(prompt, system);
+    } catch (primaryError) {
+      logger.error({ error: primaryError, provider: process.env.AI_PROVIDER }, 'Primary AI provider failed');
+
+      if (this.fallbackProvider) {
+        try {
+          logger.info({ fallback: process.env.PRIMARY_FALLBACK_PROVIDER }, 'Switching to fallback AI provider');
+          return await this.fallbackProvider.complete(prompt, system);
+        } catch (fallbackError) {
+          logger.error({ error: fallbackError }, 'Fallback AI provider failed');
+        }
+      }
+
+      logger.warn('Failing over to Mock AI provider');
+      return await this.mockProvider.complete(prompt, system);
+    }
+  }
+
+  private extractJSON(raw: string): any {
+    // Strip DeepSeek R1 reasoning tags if present
+    const cleanedRaw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    const match = cleanedRaw.match(/\{[\s\S]*\}/);
+    if (!match) {
+      throw new Error(`No JSON object found in response: ${cleanedRaw.substring(0, 300)}`);
+    }
+
+    try {
+      return JSON.parse(match[0]);
+    } catch (err) {
+      // Bracket depth matching fallback
+      let depth = 0;
+      let start = -1;
+      for (let i = 0; i < cleanedRaw.length; i++) {
+        const ch = cleanedRaw[i];
+        if (ch === '{') {
+          if (depth === 0) start = i;
+          depth++;
+        } else if (ch === '}') {
+          depth--;
+          if (depth === 0 && start !== -1) {
+            const candidate = cleanedRaw.substring(start, i + 1);
+            try {
+              return JSON.parse(candidate);
+            } catch (e) {
+              // keep searching
+            }
+          }
+        }
+      }
+      throw new Error(`Could not extract valid JSON from response: ${cleanedRaw.substring(0, 300)}`);
+    }
+  }
+
+  async complete(prompt: string, system?: string): Promise<string> {
+    return this.attemptComplete(prompt, system);
+  }
+
   async generateDraft(
     tone: string = 'professional',
     useCase: 'initial' | 'followup' | 'reply' = 'initial',
     campaignContext?: string | null,
     reference?: string | null,
     companyContext?: string | null,
-    originalEmail?: string,      // Lead's reply
+    originalEmail?: string,
     sentiment?: string,
-    stepNumber?: number,
-    objective?: string | null,   // Global Campaign Goal
-    microObjective?: string | null, // Current Step Goal
-    targetTool?: string | null,     // Phone number or Link
-    lastEmailContent?: string | null // For Narrative Stitching
+    stepNumber?: number
   ): Promise<{ subject: string; body: string }> {
-    
     const variationSeed = Math.floor(Math.random() * 1000000);
-    
-    // Assemble the full strategic parameter set for the PromptManager
     const params: PromptParams = {
       useCase,
       tone,
       campaignContext,
-      objective,
-      microObjective,
-      targetTool,
       reference,
       companyContext,
       variationSeed,
       originalEmail,
-      lastEmailContent, // 🔥 The Stitch
       sentiment,
-      stepNumber
+      stepNumber,
     };
-
     const prompt = promptManager.buildPrompt(params);
-    const system = 'You are an expert B2B SDR closer. Output ONLY a valid JSON object with "subject" and "body" fields.';
+    const system = 'You are an elite B2B sales copywriter. Output only valid JSON with "subject" and "body".';
 
-    return this.enqueue(async () => {
-      const raw = await this.attemptComplete(prompt, system);
-      const parsed = this.extractJSON(raw);
-      
-      if (!parsed.subject || !parsed.body) {
-        throw new Error('AI Response missing critical fields');
-      }
-      
-      return { 
-        subject: parsed.subject.trim(), 
-        body: parsed.body.trim() 
-      };
-    });
-  }
-
-  /**
-   * Standard completion method with fallback logic.
-   */
-  async complete(prompt: string, system?: string): Promise<string> {
-    return this.enqueue(() => this.attemptComplete(prompt, system));
-  }
-
-  private async attemptComplete(prompt: string, system?: string): Promise<string> {
-    try {
-      return await this.primaryProvider.complete(prompt, system);
-    } catch (err) {
-      logger.warn({ err }, 'Primary AI provider failed, trying fallback...');
-      if (this.fallbackProvider) {
-        try {
-          return await this.fallbackProvider.complete(prompt, system);
-        } catch (fErr) {
-          logger.error({ fErr }, 'Fallback AI provider failed.');
-        }
-      }
-      return await this.mockProvider.complete(prompt, system);
+    const raw = await this.attemptComplete(prompt, system);
+    const parsed = this.extractJSON(raw);
+    if (!parsed.subject || !parsed.body) {
+      throw new Error(`Parsed JSON missing subject or body: ${JSON.stringify(parsed)}`);
     }
+    return { subject: parsed.subject, body: parsed.body };
   }
 
-  /**
-   * Analyze a reply to detect sentiment, intent, and buying signals.
-   */
   async analyzeReply(replyText: string): Promise<ReplyAnalysis> {
-    const prompt = `Analyze this B2B email reply. Provide a detailed JSON analysis:
-    - sentiment: "very positive", "positive", "neutral", "negative", "very negative"
-    - intent: e.g. "interested", "not interested", "ooo", "asking for info", "referral"
-    - interestLevel: 1-10
-    - buyingSignals: array of strings (e.g. "asked for price", "asked for meeting")
-    - suggestedApproach: string
-    
-    Reply text: """${replyText}"""`;
+    const prompt = `Analyze the following B2B email reply from a lead. Provide a JSON response with:
+- sentiment: one of "very positive", "positive", "neutral", "negative", "very negative"
+- intent: short phrase describing primary intent
+- painPoints: array of pain points mentioned (if any)
+- objections: array of objections raised (if any)
+- interestLevel: number 1-10
+- buyingSignals: array of buying signals (if any)
+- suggestedApproach: recommended next step
+- keyPoints: array of important notes
 
-    const system = 'You are a senior sales manager. Output only valid JSON.';
+Reply text: """${replyText}"""`;
 
-    return this.enqueue(async () => {
-      const raw = await this.attemptComplete(prompt, system);
-      return this.extractJSON(raw) as ReplyAnalysis;
-    });
-  }
-
-  /**
-   * Robust JSON extraction using brace-counting to survive LLM conversational filler.
-   */
-  private extractJSON(raw: string): any {
-    const firstBrace = raw.indexOf('{');
-    const lastBrace = raw.lastIndexOf('}');
-    
-    if (firstBrace === -1 || lastBrace === -1) {
-      throw new Error('No JSON object found in AI response');
+    const system = 'You are an expert sales analyst. Output only valid JSON.';
+    const raw = await this.attemptComplete(prompt, system);
+    const parsed = this.extractJSON(raw);
+    if (!parsed.sentiment || !parsed.intent) {
+      throw new Error(`Parsed analysis missing sentiment or intent: ${JSON.stringify(parsed)}`);
     }
-
-    const candidate = raw.substring(firstBrace, lastBrace + 1);
-    try {
-      return JSON.parse(candidate);
-    } catch (err) {
-      // Fallback: try more aggressive cleaning
-      const cleaned = candidate.replace(/[\u0000-\u001F\u007F-\u009F]/g, ""); 
-      return JSON.parse(cleaned);
-    }
-  }
-
-  private async enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.requestQueue.push(async () => {
-        try {
-          const result = await fn();
-          resolve(result);
-        } catch (err) {
-          reject(err);
-        }
-      });
-      this.processQueue();
-    });
-  }
-
-  private async processQueue() {
-    if (this.processing || this.requestQueue.length === 0) return;
-    this.processing = true;
-    while (this.requestQueue.length > 0) {
-      const next = this.requestQueue.shift();
-      if (next) {
-        await next();
-        // Artificial delay to prevent rate limiting (500ms default)
-        await new Promise(res => setTimeout(res, env.AI_REQUEST_DELAY_MS || 500));
-      }
-    }
-    this.processing = false;
+    return parsed as ReplyAnalysis;
   }
 }
 
