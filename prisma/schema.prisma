@@ -1,0 +1,306 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- Auth.js Models ---
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("sessions")
+}
+
+// --- Midas Core Models ---
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+  password      String?   
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  accounts       Account[]
+  sessions       Session[]
+  leads          Lead[]
+  campaigns      Campaign[]
+  drafts         Draft[]
+  settings       UserSettings?
+  domains        Domain[]
+  outboundEmails OutboundEmail[]
+  pendingEmails  PendingEmail[]
+  uploadJobs     UploadJob[]
+  blocklist      Blocklist[]
+
+  @@map("users")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// --- Domain & Deliverability Engine ---
+model Domain {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id") @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  domainName     String   @unique @map("domain_name")
+  status         String   @default("unverified") 
+  
+  dkimStatus     Boolean  @default(false)
+  spfStatus      Boolean  @default(false)
+  mxStatus       Boolean  @default(false)
+  trackingStatus Boolean  @default(false)
+  dnsRecords     String?  @db.Text 
+  
+  warmupDay      Int      @default(1)
+  dailyLimit     Int      @default(20) 
+  sentCountToday Int      @default(0)
+  bounceRate     Float    @default(0.0)
+  complaintRate  Float    @default(0.0)
+  lastSentReset  DateTime @default(now()) @map("last_sent_reset")
+  
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  campaigns              CampaignDomain[]
+  outboundEmails         OutboundEmail[]  @relation("OutboundEmailDomain")
+  pendingEmails          PendingEmail[]   @relation("PendingEmailDomain")
+  preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferred")
+
+  @@index([userId])
+}
+
+model CampaignDomain {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  domainId   String   @map("domain_id")
+  domain     Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now()) @map("added_at")
+  @@unique([campaignId, domainId])
+}
+
+model Campaign {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id") @db.Uuid
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  context          String?
+  reference        String?
+  senderName       String?  @map("sender_name")
+  status           String   @default("DRAFT")
+  createdAt        DateTime @default(now()) @map("created_at")
+  startedAt        DateTime? @map("started_at")
+  completedAt      DateTime? @map("completed_at")
+  lastDomainIndex  Int      @default(0) @map("last_domain_index")
+  autoReplyEnabled Boolean  @default(false) @map("auto_reply_enabled")
+  sendHourUTC      Int      @default(9) @map("send_hour_utc")
+  activeStartHour  Int?     @map("active_start_hour")
+  activeEndHour    Int?     @map("active_end_hour")
+  timezone         String?
+
+  followUpSteps FollowUpStep[]
+  leads         Lead[]
+  emails        OutboundEmail[]
+  drafts        Draft[]
+  pendingEmails PendingEmail[]
+  domainLinks   CampaignDomain[] 
+  @@index([userId])
+}
+
+model Blocklist {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pattern   String   
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([userId, pattern])
+}
+
+model UploadJob {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id") @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  filename       String
+  blobUrl        String   @db.Text
+  status         String   @default("PENDING") 
+  error          String?  @db.Text
+  totalRows      Int      @default(0)
+  validLeads     Int      @default(0)
+  catchAllLeads  Int      @default(0)
+  invalidLeads   Int      @default(0)
+  blockedLeads   Int      @default(0)
+  duplicates     Int      @default(0)
+  verificationId String?  
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  @@index([userId])
+  @@index([status])
+}
+
+model Lead {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id") @db.Uuid
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  email              String
+  company            String?
+  position           String?
+  status             String   @default("NEW")
+  outreachStatus     String?  @map("outreach_status")
+  verificationStatus String   @default("UNVERIFIED") @map("verification_status")
+  campaignId         String?  @map("campaign_id")
+  campaign           Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  
+  sentEmails     OutboundEmail[]
+  replyDrafts    Draft[]         @relation("LeadDrafts")
+  pendingEmails  PendingEmail[]
+  @@unique([userId, email])
+}
+
+model Draft {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id") @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject      String
+  body         String
+  tone         String
+  useCase      String   @map("use_case")
+  version      Int      @default(1)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  campaignId   String?  @map("campaign_id")
+  campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  leadId       String?  @map("lead_id")
+  lead         Lead?    @relation("LeadDrafts", fields: [leadId], references: [id], onDelete: SetNull)
+  isReplyDraft Boolean  @default(false) @map("is_reply_draft")
+  stepNumber   Int?     @map("step_number") 
+  sentCount    Int      @default(0) @map("sent_count")
+  replyCount   Int      @default(0) @map("reply_count")
+
+  emails        OutboundEmail[]
+  followUpSteps FollowUpStep[]
+  pendingEmails PendingEmail[]
+}
+
+model FollowUpStep {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepNumber Int
+  delayDays  Int
+  draftId    String?  @map("draft_id")
+  draft      Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  @@unique([campaignId, stepNumber])
+}
+
+// --- Deliverability Tracking Added ---
+model OutboundEmail {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id") @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domainId      String?  @map("domain_id")
+  domain        Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
+  leadId        String   @map("lead_id")
+  lead          Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId    String?  @map("campaign_id")
+  campaign      Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  draftId       String?  @map("draft_id")
+  draft         Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  
+  subject       String
+  body          String
+  sentAt        DateTime @default(now()) @map("sent_at")
+  status        String   @default("SENT")
+  error         String?
+
+  openedAt      DateTime? @map("opened_at")
+  clickedAt     DateTime? @map("clicked_at") // ADDED
+  bouncedAt     DateTime? @map("bounced_at") // ADDED
+  spamComplaint Boolean   @default(false) @map("spam_complaint") // ADDED
+  repliedAt     DateTime? @map("replied_at")
+  replyText     String?   @map("reply_text")
+
+  replyToId     String?         @map("reply_to_id")
+  replyTo       OutboundEmail?  @relation("Replies", fields: [replyToId], references: [id])
+  replies       OutboundEmail[] @relation("Replies")
+  isIncoming    Boolean         @default(false) @map("is_incoming")
+  messageId     String?         @map("message_id")
+  references    String?
+  inReplyTo     String?         @map("in_reply_to")
+  fromAddress   String?         @map("from_address")
+  toAddress     String?         @map("to_address")
+  sentiment     String?
+  intent        String?
+  analysis      String?
+}
+
+model PendingEmail {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id") @db.Uuid
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domainId           String?  @map("domain_id")
+  domain             Domain?  @relation("PendingEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
+  campaignId         String   @map("campaign_id")
+  campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leadId             String   @map("lead_id")
+  lead               Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  draftId            String?  @map("draft_id")
+  draft              Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  subject            String
+  body               String
+  inReplyTo          String?  @map("in_reply_to")
+  scheduledAt        DateTime? @map("scheduled_at")
+  status             String   @default("PENDING") 
+  error              String?
+  createdAt          DateTime @default(now()) @map("created_at")
+  priority           Int      @default(2)
+  preferredDomainId  String?  @map("preferred_domain_id")
+  preferredDomain    Domain?  @relation("PendingEmailPreferred", fields: [preferredDomainId], references: [id], onDelete: SetNull)
+  @@index([status, scheduledAt])
+}
+
+model UserSettings {
+  userId        String   @id @map("user_id") @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+}

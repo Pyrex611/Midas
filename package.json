@@ -1,0 +1,52 @@
+{
+  "name": "midas-unified",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "prisma generate && tsc -p tsconfig.server.json && vite build",
+    "start": "node dist/server/index.js",
+    "vercel-build": "prisma generate && tsc -p tsconfig.server.json && vite build",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@auth/express": "^0.12.3",
+    "@auth/prisma-adapter": "^2.11.3",
+    "@prisma/client": "^7.9.1",
+    "@vercel/blob": "^2.6.1",
+    "axios": "^1.19.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.2.0",
+    "nodemailer": "^8.0.11",
+    "papaparse": "^5.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-dropzone": "^19.1.1",
+    "react-router-dom": "^7.18.2",
+    "serverless-http": "^4.0.0",
+    "winston": "^3.19.0",
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.1.2",
+    "@types/nodemailer": "^8.0.1",
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.25",
+    "prisma": "^7.9.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0"
+  }
+}

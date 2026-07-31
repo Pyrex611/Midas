@@ -1,0 +1,10 @@
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.ts" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron/queue", "schedule": "* * * * *" },
+    { "path": "/api/cron/followups", "schedule": "0 * * * *" }
+  ]
+}

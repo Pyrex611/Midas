@@ -9,3 +9,5 @@ midas.db
 dist/
 node_modules/
 backend/node_modules/
+.vercel
+.env*
