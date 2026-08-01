@@ -1,6 +1,5 @@
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
-import fetch from 'node-fetch';
 import Papa from 'papaparse';
 import { verificationService } from './verification.service';
 
@@ -17,7 +16,6 @@ export class LeadQueueService {
 
   async processPendingUploads() {
     try {
-      // 1. Lock pending jobs
       const lockedJobs = await prisma.$queryRaw<{id: string}[]>`
         SELECT id FROM "UploadJob"
         WHERE status IN ('PENDING', 'VERIFYING')
@@ -36,14 +34,12 @@ export class LeadQueueService {
           if (job.status === 'PENDING') {
             await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } });
             
-            // Download and parse file from Vercel Blob
             const response = await fetch(job.blobUrl);
             const csvText = await response.text();
             
             const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
             const rawLeads: any[] = parsed.data;
 
-            // Load user blocklist
             const blocklist = await prisma.blocklist.findMany({ where: { userId: job.userId } });
 
             const validRows = [];
@@ -69,11 +65,9 @@ export class LeadQueueService {
               continue;
             }
 
-            // Submit to BounceBan
             const emailsToVerify = validRows.map(r => r.email);
             const verificationId = await verificationService.submitBulkJob(emailsToVerify);
 
-            // Save state into DB to resume next cron
             await prisma.uploadJob.update({
               where: { id: job.id },
               data: { 
@@ -81,7 +75,6 @@ export class LeadQueueService {
                 verificationId, 
                 totalRows: rawLeads.length,
                 blockedLeads: blockedCount,
-                // temporarily store valid rows in error field for retrieval next step (hack for serverless state transfer)
                 error: JSON.stringify(validRows) 
               }
             });
@@ -122,12 +115,11 @@ export class LeadQueueService {
               }
             }
 
-            // Insert Leads via Prisma many
             for (const lead of leadsToInsert) {
               try {
                 await prisma.lead.create({ data: lead });
               } catch (e: any) {
-                if (e.code === 'P2002') duplicatesCount++; // Unique constraint failed
+                if (e.code === 'P2002') duplicatesCount++;
               }
             }
 
@@ -139,7 +131,7 @@ export class LeadQueueService {
                 catchAllLeads: catchAllCount,
                 invalidLeads: invalidCount,
                 duplicates: duplicatesCount,
-                error: null // clear the hack
+                error: null
               }
             });
             logger.info(`Job ${job.id} completed. Inserted valid leads.`);

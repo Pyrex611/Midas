@@ -8,9 +8,9 @@ import { Campaigns } from './pages/Campaigns';
 import { CampaignDetail } from './pages/CampaignDetail';
 import { Profile } from './pages/Profile';
 import { Login } from './pages/Login';
-import { Signup } from './pages/Signup';
+import { Signup } from './pages/SignUp';
 import { Domains } from './pages/Domains';
-import { Inbox } from './pages/Inbox'; // <-- Added
+import { Inbox } from './pages/Inbox';
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const { user, loading } = useAuth();
@@ -32,7 +32,7 @@ function AppRoutes() {
         <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
         <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
         <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
-        <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} /> {/* <-- Added */}
+        <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       </Routes>
     </>

@@ -1,16 +1,12 @@
-import { OutreachStatus, CampaignRole } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { DraftService } from './draft.service';
-import { personalisationService } from './personalisation.service'; // 🔥 Fixed: Added missing import
+import { personalisationService } from './personalisation.service';
 import { emailService } from './email.service';
 import { logger } from '../config/logger';
 
 const draftService = new DraftService();
 
 export class CampaignService {
-  /**
-   * Create a new campaign with Analytical Sequence Strategy.
-   */
   async createCampaign(
     userId: string,
     name: string,
@@ -20,499 +16,200 @@ export class CampaignService {
     senderName?: string,
     leadIds?: string[],
     autoReplyEnabled?: boolean,
-    sendHourUTC?: number,
-    objective?: string
+    sendHourUTC?: number
   ) {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(userId)) {
-      throw new Error(`Invalid userId format: ${userId}. Expected a UUID.`);
-    }
-
     try {
-      const campaign = await prisma.$transaction(async (tx) => {
-        const newCampaign = await tx.campaign.create({
-          data: {
-            userId,
-            name,
-            description,
-            context,
-            reference,
-            objective,
-            status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
-            startedAt: leadIds?.length ? new Date() : null,
-            autoReplyEnabled: autoReplyEnabled ?? false,
-            sendHourUTC: sendHourUTC ?? 9,
-            ...(leadIds?.length && {
-              leads: { connect: leadIds.map(id => ({ id })) },
-            }),
-          },
-        });
-
-        // Add creator as OWNER
-        await tx.campaignMember.create({
-          data: {
-            campaignId: newCampaign.id,
-            userId: userId,
-            role: 'OWNER',
-          },
-        });
-
-        // ANALYTICAL STRATEGY GENERATION (Phase 4.5d)
-        const hasRef = !!reference;
-        const strategy = [
-          { 
-            step: 1, 
-            delay: 3, 
-            goal: "Establish logic and share a new perspective on the problem." 
-          },
-          { 
-            step: 2, 
-            delay: 6, 
-            goal: hasRef 
-              ? "Prove credibility by mentioning a success story ({{reference_company}})." 
-              : "Highlight the negative cost of inaction/ignoring this issue." 
-          },
-          { 
-            step: 3, 
-            delay: 10, 
-            goal: "Direct closing attempt. Ask a 'No-Oriented' question to reduce friction." 
-          }
-        ];
-
-        for (const s of strategy) {
-          await tx.followUpStep.create({
-            data: {
-              campaignId: newCampaign.id,
-              stepNumber: s.step,
-              delayDays: s.delay,
-              microObjective: s.goal
-            }
-          });
-        }
-
-        if (leadIds?.length) {
-          await tx.lead.updateMany({
-            where: { id: { in: leadIds }, userId },
-            data: { outreachStatus: 'PENDING' as OutreachStatus },
-          });
-        }
-
-        return newCampaign;
-      });
-
-      // Initial Outreach Generation
-      await draftService.generateMultipleDrafts(
-        userId, 3, 'professional', 'initial', 
-        campaign.id, context, reference, undefined, senderName, undefined, objective
-      );
-
-      // Analytical Follow-up Generation (Step-aware)
-      const steps = await prisma.followUpStep.findMany({ where: { campaignId: campaign.id } });
-      for (const step of steps) {
-        await draftService.generateAndSaveDraft(
-          userId, 'professional', 'followup', 
-          campaign.id, context, reference, undefined, senderName, 
-          step.stepNumber, objective, step.microObjective
-        );
-      }
-
-      if (leadIds?.length) {
-        this.processCampaign(userId, campaign.id).catch(err => {
-          logger.error({ err, campaignId: campaign.id }, 'Background processing failed');
-        });
-      }
-
-      return campaign;
-    } catch (error) {
-      logger.error({ error, name }, 'Failed to create strategic campaign');
-      throw error;
-    }
-  }
-
-  /**
-   * Process leads in a campaign (initial outreach).
-   * Ensures compatibility with Editor-led actions by using the Campaign Creator's ID.
-   */
-  private async processCampaign(campaignId: string, specificLeadIds?: string[]) {
-    try {
-      // 1. Fetch Campaign and its Owner
-      const campaign = await prisma.campaign.findUnique({ 
-        where: { id: campaignId },
-        include: { 
-          mailboxLinks: { include: { mailbox: true } } 
-        }
-      });
-
-      if (!campaign || campaign.mailboxLinks.length === 0) {
-        logger.error({ campaignId }, 'Worker Error: Campaign not found or No mailboxes linked to campaign.');
-        return;
-      }
-
-      // 2. Fetch drafts linked to this campaign
-      const drafts = await prisma.draft.findMany({
-        where: { 
-          campaignId, 
-          isActive: true, 
-          useCase: 'initial' 
+      const campaign = await prisma.campaign.create({
+        data: {
+          userId,
+          name,
+          description,
+          context,
+          reference,
+          senderName,
+          status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
+          startedAt: leadIds?.length ? new Date() : null,
+          autoReplyEnabled: autoReplyEnabled ?? false,
+          sendHourUTC: sendHourUTC ?? 9,
+          ...(leadIds?.length && {
+            leads: { connect: leadIds.map((id: string) => ({ id })) },
+          }),
         },
       });
 
-      if (drafts.length === 0) {
-        logger.warn({ campaignId }, 'Worker: No initial drafts found.');
-        return;
+      if (leadIds?.length) {
+        await prisma.lead.updateMany({
+          where: { id: { in: leadIds }, userId },
+          data: { outreachStatus: 'PENDING', campaignId: campaign.id },
+        });
       }
 
-      // 3. Identify leads to process
-      const whereClause: any = { campaignId };
-      if (specificLeadIds) {
-        whereClause.id = { in: specificLeadIds };
-      } else {
-        whereClause.outreachStatus = { in: ['PENDING', 'PROCESSING'] };
-      }
+      await draftService.generateMultipleDrafts(
+        userId,
+        5,
+        'professional',
+        'initial',
+        campaign.id,
+        context,
+        reference,
+        undefined,
+        senderName
+      );
 
-      const leads = await prisma.lead.findMany({ where: whereClause });
-      if (leads.length === 0) return;
+      await draftService.generateFollowUpDrafts(
+        userId,
+        campaign.id,
+        context,
+        reference,
+        senderName,
+        1,
+        3
+      );
 
-      logger.info({ campaignId, leadCount: leads.length }, 'Processing batch outreach...');
+      await prisma.followUpStep.create({
+        data: {
+          campaignId: campaign.id,
+          stepNumber: 1,
+          delayDays: 3,
+        },
+      });
 
-      for (const lead of leads) {
-        try {
-          const randomIndex = Math.floor(Math.random() * drafts.length);
-          const draft = drafts[randomIndex];
-
-          // Double-check status before processing to prevent duplicate queueing
-          const freshLead = await prisma.lead.findUnique({ where: { id: lead.id } });
-          if (freshLead?.outreachStatus === 'QUEUED' || freshLead?.outreachStatus === 'SENT') continue;
-
-          // Set status to prevent double-processing
-          await prisma.lead.update({
-            where: { id: lead.id },
-            data: { outreachStatus: 'PROCESSING' }
-          });
-
-          const { subject, body } = personalisationService.personalise(
-            lead as any,
-            draft.subject,
-            draft.body,
-            campaign.reference,
-            campaign.senderName
-          );
-
-          // 🔥 IMPORTANT: We use campaign.userId (The Owner), 
-          // even if the Editor is the one who pushed the button.
-          await emailService.queueEmail(
-            campaign.userId, 
-            campaignId,
-            lead.id,
-            draft.id,
-            subject,
-            body
-          );
-
-          await prisma.lead.update({
-            where: { id: lead.id },
-            data: { outreachStatus: 'QUEUED' }
-          });
-
-        } catch (error: any) {
-          logger.error({ error: error.message, leadId: lead.id }, 'Lead skip');
-          await prisma.lead.update({
-            where: { id: lead.id },
-            data: { outreachStatus: 'FAILED' }
-          });
-        }
-      }
-    } catch (error: any) {
-      logger.error({ error: error.message }, 'Fatal error in processCampaign worker');
+      logger.info({ campaignId: campaign.id }, 'Campaign created successfully');
+      return campaign;
+    } catch (error) {
+      logger.error({ error, name }, 'Failed to create campaign');
+      throw new Error('Could not create campaign');
     }
   }
 
-  /**
-   * Add leads to an existing campaign.
-   */
   async addLeadsToCampaign(userId: string, campaignId: string, leadIds: string[]) {
-    logger.info(`[ADD_LEADS] Request received for Campaign: ${campaignId}. Lead Count: ${leadIds.length}`);
-
-    const campaign = await prisma.campaign.findUnique({ 
-      where: { id: campaignId },
-      include: { 
-        leads: { select: { id: true, email: true, outreachStatus: true } } 
-      }
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: campaignId, userId },
+      include: { leads: { select: { id: true } } },
     });
 
-    if (!campaign) {
-      logger.error(`[ADD_LEADS] Campaign ${campaignId} not found.`);
-      throw new Error('Campaign not found');
+    if (!campaign) throw new Error('Campaign not found');
+
+    const existingLeadIds = new Set(campaign.leads.map(l => l.id));
+    const newLeadIds = leadIds.filter(id => !existingLeadIds.has(id));
+
+    if (newLeadIds.length === 0) {
+      return { added: 0, skipped: leadIds.length };
     }
 
-    const inputLeads = await prisma.lead.findMany({ where: { id: { in: leadIds } } });
-    logger.info(`[ADD_LEADS] Found ${inputLeads.length} leads in database to process.`);
+    await prisma.lead.updateMany({
+      where: { id: { in: newLeadIds }, userId },
+      data: {
+        campaignId,
+        outreachStatus: 'PENDING',
+      },
+    });
 
-    const actualUpdateIds: string[] = [];
-    let duplicateCount = 0;
-    let historyCount = 0;
-
-    for (const lead of inputLeads) {
-      const emailLower = lead.email.toLowerCase();
-
-      // 1. DUPLICATION GUARD: Check if this email is already assigned to this campaign
-      // under a DIFFERENT lead ID.
-      const existingInCampaign = campaign.leads.find(
-        l => l.email.toLowerCase() === emailLower && l.id !== lead.id
-      );
-
-      if (existingInCampaign) {
-        duplicateCount++;
-        logger.debug(`[ADD_LEADS] Skipping ${emailLower}: Email already exists in campaign (ID: ${existingInCampaign.id})`);
-        
-        // If the new lead record was already pointed at this campaign, unlink it to clean up
-        if (lead.campaignId === campaignId) {
-            await prisma.lead.update({
-              where: { id: lead.id },
-              data: { campaignId: null, outreachStatus: null }
-            });
-        }
-        continue; 
-      }
-
-      // 2. HISTORY GUARD: Has this campaign ever sent an email to this address?
-      const history = await prisma.outboundEmail.findFirst({
-        where: {
-          campaignId: campaignId,
-          lead: { email: lead.email }, 
-          status: 'SENT'
-        }
+    if (campaign.status === 'DRAFT') {
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: {
+          status: 'ACTIVE',
+          startedAt: new Date(),
+        },
       });
-
-      if (history) {
-        historyCount++;
-        logger.info(`[ADD_LEADS] ${emailLower} already contacted. Syncing status to SENT.`);
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: { campaignId: campaignId, outreachStatus: 'SENT', status: 'CONTACTED' }
-        });
-      } else {
-        // 3. VALID FOR QUEUE: Lead is new to this campaign
-        actualUpdateIds.push(lead.id);
-      }
     }
 
-    logger.info(`[ADD_LEADS] Summary - Duplicates: ${duplicateCount}, History-Synced: ${historyCount}, To be Queued: ${actualUpdateIds.length}`);
-
-    if (actualUpdateIds.length > 0) {
-      await prisma.lead.updateMany({
-        where: { id: { in: actualUpdateIds } },
-        data: { 
-            campaignId: campaignId, // Ensure link is set
-            outreachStatus: 'PENDING' 
-        }
-      });
-
-      // Trigger background worker
-      this.processCampaign(campaignId, actualUpdateIds).catch(err => 
-        logger.error({ err: err.message }, 'ProcessCampaign background failure')
-      );
-    }
-
-    return { 
-      totalProcessed: leadIds.length, 
-      duplicatesFound: duplicateCount,
-      historySynced: historyCount,
-      newlyQueued: actualUpdateIds.length 
-    };
+    return { added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length };
   }
 
   async getCampaigns(userId: string) {
     return prisma.campaign.findMany({
-      where: {
-        OR: [
-          { userId: userId },
-          { members: { some: { userId: userId } } }
-        ]
-      },
+      where: { userId },
       orderBy: { createdAt: 'desc' },
       include: {
-        _count: { select: { leads: true, emails: true, drafts: true } },
-        members: { where: { userId }, select: { role: true } }
+        _count: {
+          select: {
+            leads: true,
+            emails: true,
+            drafts: true,
+          },
+        },
       },
     });
   }
 
   async getCampaignDetails(userId: string, campaignId: string) {
     const campaign = await prisma.campaign.findFirst({
-      // Access check: Owner or Member
-      where: { 
-        id: campaignId, 
-        OR: [{ userId }, { members: { some: { userId } } }] 
-      },
+      where: { id: campaignId, userId },
       include: {
-        members: { 
-          include: { 
-            user: { select: { id: true, email: true, name: true } } 
-          } 
-        },
         leads: {
-          include: {
-            // Needed for the Replies Modal to show mailbox and start date
-            sentEmails: {
-              where: { isIncoming: false },
-              orderBy: { sentAt: 'asc' },
-              take: 1,
-              include: { mailbox: { select: { name: true, email: true } } }
-            }
-          }
-        },
-        _count: {
           select: {
-            emails: true, // Total emails sent
-            leads: true   // Total leads in campaign
-          }
+            id: true,
+            name: true,
+            email: true,
+            company: true,
+            position: true,
+            outreachStatus: true,
+            status: true,
+          },
         },
-        drafts: { 
-          where: { isActive: true }, 
-          orderBy: { createdAt: 'desc' } 
+        drafts: {
+          where: { isActive: true },
+          orderBy: { createdAt: 'desc' },
         },
-        followUpSteps: { 
-          orderBy: { stepNumber: 'asc' } 
+        emails: {
+          orderBy: { sentAt: 'desc' },
+          take: 100,
+        },
+        followUpSteps: {
+          orderBy: { stepNumber: 'asc' },
+        },
+        domainLinks: {
+          include: { domain: true },
         },
       },
     });
 
     if (!campaign) return null;
 
-    // Logic for calculating metrics
-    // We filter in-memory for the reply count to avoid an extra DB round-trip
-    const repliedLeadsCount = campaign.leads.filter(l => l.status === 'REPLIED').length;
-
-    // Re-use our helper to get follow-up steps with their draft counts
-    const stepsWithCounts = await this.getFollowUpSteps(userId, campaignId);
-    
-    // Get real-time queue count
-    const queuedCount = await prisma.pendingEmail.count({ 
-      where: { campaignId, status: 'PENDING' } 
+    const queuedCount = await prisma.pendingEmail.count({
+      where: { userId, campaignId, status: 'PENDING' },
     });
 
-    return { 
-      ...campaign, 
-      followUpSteps: stepsWithCounts, 
+    return {
+      ...campaign,
       queuedCount,
-      // Mapping for the UI Header
-      totalSent: campaign._count.emails,
-      totalLeads: campaign._count.leads,
-      replyCount: repliedLeadsCount 
     };
   }
 
-  async updateAutoReplySettings(userId: string, campaignId: string, autoReplyEnabled: boolean) {
-    return prisma.campaign.update({ where: { id: campaignId }, data: { autoReplyEnabled } });
-  }
-
-  async updateSendHour(userId: string, campaignId: string, sendHourUTC: number) {
-    return prisma.campaign.update({ where: { id: campaignId }, data: { sendHourUTC } });
-  }
-
-  async updateActiveHours(userId: string, id: string, activeStartHour?: number | null, activeEndHour?: number | null, timezone?: string | null) {
-    return prisma.campaign.update({ where: { id }, data: { activeStartHour, activeEndHour, timezone } });
-  }
-
-  async setFollowUpSteps(userId: string, campaignId: string, steps: { stepNumber: number; delayDays: number; microObjective?: string }[]) {
-    return prisma.$transaction(async (tx) => {
-      await tx.followUpStep.deleteMany({ where: { campaignId } });
-      return Promise.all(
-        steps.map(step =>
-          tx.followUpStep.create({
-            data: { campaignId, stepNumber: step.stepNumber, delayDays: step.delayDays, microObjective: step.microObjective },
-          })
-        )
-      );
-    });
-  }
-
-  async deleteFollowUpStep(userId: string, stepId: string) {
-    await prisma.followUpStep.delete({ where: { id: stepId } });
-  }
-
-  async getCampaignMailboxes(userId: string, campaignId: string) {
+  async getCampaignDomains(userId: string, campaignId: string) {
     const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId },
-      include: { mailboxLinks: { include: { mailbox: true } } },
+      where: { id: campaignId, userId },
+      include: {
+        domainLinks: {
+          include: { domain: true },
+        },
+      },
     });
     if (!campaign) throw new Error('Campaign not found');
-    return campaign.mailboxLinks.map(link => link.mailbox);
+    return campaign.domainLinks.map(link => link.domain);
   }
 
-  async addMailboxToCampaign(userId: string, campaignId: string, mailboxId: string) {
-    return prisma.campaignMailbox.create({ data: { campaignId, mailboxId } });
-  }
+  async addDomainToCampaign(userId: string, campaignId: string, domainId: string) {
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    if (!campaign) throw new Error('Campaign not found');
+    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
+    if (!domain) throw new Error('Domain not found');
 
-  async removeMailboxFromCampaign(userId: string, campaignId: string, mailboxId: string) {
-    const link = await prisma.campaignMailbox.findFirst({ where: { campaignId, mailboxId } });
-    if (link) await prisma.campaignMailbox.delete({ where: { id: link.id } });
-  }
-	
-	/**
-   * Get all follow-up steps for a campaign, including the count of AI drafts
-   * available for each specific psychological step.
-   */
-  async getFollowUpSteps(userId: string, campaignId: string) {
-    const steps = await prisma.followUpStep.findMany({
-      where: { campaignId },
-      orderBy: { stepNumber: 'asc' },
+    return prisma.campaignDomain.create({
+      data: { campaignId, domainId },
     });
-
-    // We enhance the database records with a real-time count of active drafts
-    const stepsWithCounts = await Promise.all(
-      steps.map(async (step) => {
-        const draftCount = await prisma.draft.count({
-          where: { 
-            campaignId, 
-            stepNumber: step.stepNumber, 
-            isActive: true 
-          },
-        });
-        return { 
-          ...step, 
-          draftCount 
-        };
-      })
-    );
-
-    return stepsWithCounts;
   }
-	
-	/**
-   * Remove a list of leads from a campaign.
-   * Ensures that any pending emails in the queue for these leads are also wiped.
-   */
-  async removeLeadsFromCampaign(userId: string, campaignId: string, leadIds: string[]) {
-    logger.info({ campaignId, count: leadIds.length }, 'Removing leads from campaign and clearing queue.');
 
-    return await prisma.$transaction(async (tx) => {
-      // 1. Delete all pending emails for these leads in this campaign
-      const deletedQueueItems = await tx.pendingEmail.deleteMany({
-        where: {
-          campaignId: campaignId,
-          leadId: { in: leadIds },
-          status: 'PENDING'
-        }
-      });
-
-      // 2. Unlink the leads from the campaign
-      const updatedLeads = await tx.lead.updateMany({
-        where: {
-          id: { in: leadIds },
-          campaignId: campaignId
-        },
-        data: {
-          campaignId: null,
-          outreachStatus: null
-        }
-      });
-
-      return {
-        leadsRemoved: updatedLeads.count,
-        queueItemsCleared: deletedQueueItems.count
-      };
+  async removeDomainFromCampaign(userId: string, campaignId: string, domainId: string) {
+    const link = await prisma.campaignDomain.findFirst({
+      where: { campaignId, domainId },
+      include: { campaign: true },
     });
+    if (!link || link.campaign.userId !== userId) throw new Error('Link not found or unauthorized');
+    await prisma.campaignDomain.delete({ where: { id: link.id } });
   }
 }
+
+export const campaignService = new CampaignService();

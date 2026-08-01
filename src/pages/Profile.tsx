@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { userAPI, mailboxAPI } from '../services/api';
+import { userAPI, domainAPI } from '../services/api';
 import { UserSettings } from '../components/UserSettings';
-import { MailboxForm } from '../components/MailboxForm';
-import { MailboxStatsModal } from '../components/MailboxStatsModal'; // 🔥 Added Import
 import { Link, useNavigate } from 'react-router-dom';
 
 interface CampaignStat {
@@ -18,29 +16,26 @@ interface CampaignStat {
 }
 
 export const Profile: React.FC = () => {
-  const { user, updateUser, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState<CampaignStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(user?.name || '');
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'mailboxes' | 'settings'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'domains' | 'settings'>('profile');
 
-  // Mailboxes state
-  const [mailboxes, setMailboxes] = useState<any[]>([]);
-  const [loadingMailboxes, setLoadingMailboxes] = useState(false);
-  const [showMailboxForm, setShowMailboxForm] = useState(false);
-  const [editingMailbox, setEditingMailbox] = useState<any>(null);
-  const [selectedForStats, setSelectedForStats] = useState<any>(null); // 🔥 Added State
+  // Domains state
+  const [domains, setDomains] = useState<any[]>([]);
+  const [loadingDomains, setLoadingDomains] = useState(false);
 
   useEffect(() => {
     const fetchProfile = async () => {
       try {
         const res = await userAPI.getProfile();
-        setCampaigns(res.data.campaigns);
-        if (res.data.user.name !== user?.name) {
-          updateUser({ name: res.data.user.name });
+        setCampaigns(res.data.campaigns || []);
+        if (res.data.user?.name) {
+          setNewName(res.data.user.name);
         }
       } catch (error) {
         console.error('Failed to load profile', error);
@@ -51,21 +46,21 @@ export const Profile: React.FC = () => {
     fetchProfile();
   }, []);
 
-  const fetchMailboxes = async () => {
-    setLoadingMailboxes(true);
+  const fetchDomains = async () => {
+    setLoadingDomains(true);
     try {
-      const res = await mailboxAPI.getAll();
-      setMailboxes(res.data);
+      const res = await domainAPI.getAll();
+      setDomains(res.data);
     } catch (error) {
-      console.error('Failed to load mailboxes', error);
+      console.error('Failed to load domains', error);
     } finally {
-      setLoadingMailboxes(false);
+      setLoadingDomains(false);
     }
   };
 
   useEffect(() => {
-    if (activeTab === 'mailboxes') {
-      fetchMailboxes();
+    if (activeTab === 'domains') {
+      fetchDomains();
     }
   }, [activeTab]);
 
@@ -73,7 +68,6 @@ export const Profile: React.FC = () => {
     setSaving(true);
     try {
       await userAPI.updateProfile({ name: newName });
-      updateUser({ name: newName });
       setEditingName(false);
     } catch (error) {
       console.error('Failed to update name', error);
@@ -86,16 +80,6 @@ export const Profile: React.FC = () => {
   const handleLogout = async () => {
     await signOut();
     navigate('/login');
-  };
-
-  const handleDeleteMailbox = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this mailbox?')) return;
-    try {
-      await mailboxAPI.delete(id);
-      fetchMailboxes();
-    } catch (err) {
-      alert('Failed to delete mailbox');
-    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -122,35 +106,52 @@ export const Profile: React.FC = () => {
   }
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20 pb-24">
+    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
       <h1 className="text-3xl font-bold text-gray-900 mb-8">Profile</h1>
 
       {/* Tabs */}
       <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8 overflow-x-auto">
-          {['profile', 'mailboxes', 'settings'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab as any)}
-              className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap capitalize ${
-                activeTab === tab
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'profile'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Profile
+          </button>
+          <button
+            onClick={() => setActiveTab('domains')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'domains'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Sending Domains
+          </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'settings'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Settings
+          </button>
         </nav>
       </div>
 
       {/* Profile Tab */}
       {activeTab === 'profile' && (
         <>
-          <div className="bg-white shadow rounded-2xl p-6 mb-8 border border-gray-100">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="bg-white shadow rounded-lg p-6 mb-8">
+            <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Login Email</p>
+                <p className="text-sm text-gray-500">Email</p>
                 <p className="text-lg font-medium text-gray-900">{user?.email}</p>
               </div>
               <div className="flex items-center space-x-4">
@@ -160,93 +161,117 @@ export const Profile: React.FC = () => {
                       type="text"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
-                      className="border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="border rounded-md px-3 py-2 text-sm"
                       placeholder="Your name"
                     />
-                    <button onClick={handleSaveName} disabled={saving} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md font-bold">Save</button>
-                    <button onClick={() => setEditingName(false)} className="px-4 py-2 bg-gray-100 text-gray-800 text-sm rounded-md">Cancel</button>
+                    <button
+                      onClick={handleSaveName}
+                      disabled={saving}
+                      className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => setEditingName(false)}
+                      className="px-4 py-2 bg-gray-200 text-gray-800 text-sm rounded-md hover:bg-gray-300"
+                    >
+                      Cancel
+                    </button>
                   </>
                 ) : (
                   <>
                     <div>
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Display Name</p>
+                      <p className="text-sm text-gray-500">Display Name</p>
                       <p className="text-lg font-medium text-gray-900">{user?.name || 'Not set'}</p>
                     </div>
-                    <button onClick={() => setEditingName(true)} className="text-blue-600 hover:underline text-sm font-bold">Edit</button>
+                    <button
+                      onClick={() => setEditingName(true)}
+                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      Edit
+                    </button>
                   </>
                 )}
               </div>
             </div>
-            <div className="mt-8 border-t pt-6 flex justify-end">
-              <button onClick={handleLogout} className="px-6 py-2 bg-red-50 text-red-600 text-sm font-bold rounded-lg hover:bg-red-100 transition-colors">Sign Out</button>
+            <div className="mt-6 border-t pt-4 flex justify-end">
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700"
+              >
+                Sign Out
+              </button>
             </div>
           </div>
 
-          <h2 className="text-xl font-bold text-gray-900 mb-4">Active Campaigns</h2>
-          <div className="grid grid-cols-1 gap-4">
-            {campaigns.map((campaign) => (
-              <Link key={campaign.id} to={`/campaigns/${campaign.id}`} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all flex items-center justify-between group">
-                <div className="min-w-0 flex-1">
-                  <p className="font-bold text-gray-900 group-hover:text-blue-600 truncate">{campaign.name}</p>
-                  <div className="mt-1 flex flex-wrap gap-4 text-[10px] font-bold text-gray-400 uppercase tracking-tight">
-                    <span>📊 {campaign.leads} Leads</span>
-                    <span>📤 {campaign.sentEmails} Sent</span>
-                    <span className="text-blue-500">📈 {campaign.replyRate}% Reply</span>
-                  </div>
-                </div>
-                {getStatusBadge(campaign.status)}
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Your Campaigns</h2>
+          {campaigns.length === 0 ? (
+            <div className="bg-white shadow rounded-lg p-12 text-center">
+              <p className="text-gray-500">No campaigns created yet.</p>
+              <Link to="/campaigns" className="mt-4 inline-block text-blue-600 hover:text-blue-800 text-sm font-medium">
+                Go to Campaigns →
               </Link>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="bg-white shadow overflow-hidden sm:rounded-md">
+              <ul className="divide-y divide-gray-200">
+                {campaigns.map((campaign) => (
+                  <li key={campaign.id} className="px-4 py-4 sm:px-6 hover:bg-gray-50">
+                    <Link to={`/campaigns/${campaign.id}`} className="block">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-lg font-medium text-blue-600 truncate">{campaign.name}</p>
+                          <div className="mt-2 flex items-center text-sm text-gray-500 space-x-4">
+                            <span>📊 {campaign.leads} leads</span>
+                            <span>📝 {campaign.drafts} drafts</span>
+                            <span>📤 {campaign.sentEmails} sent</span>
+                            <span>💬 {campaign.replies} replies</span>
+                            <span>📈 {campaign.replyRate}% reply rate</span>
+                          </div>
+                        </div>
+                        <div className="ml-4 flex-shrink-0">
+                          {getStatusBadge(campaign.status)}
+                        </div>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </>
       )}
 
-      {/* 🔥 UPDATED Mailboxes Tab */}
-      {activeTab === 'mailboxes' && (
-        <div>
+      {/* Domains Tab */}
+      {activeTab === 'domains' && (
+        <div className="bg-white shadow rounded-lg p-6">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-gray-900">Your Sending Personas</h2>
-            <button
-              onClick={() => { setEditingMailbox(null); setShowMailboxForm(true); }}
-              className="px-4 py-2 bg-blue-600 text-white text-xs font-bold rounded-lg shadow-sm"
-            >
-              + Add Mailbox
-            </button>
+            <h2 className="text-2xl font-bold text-gray-900">Your Sending Domains</h2>
+            <Link to="/domains" className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700">
+              Manage Domains →
+            </Link>
           </div>
 
-          {loadingMailboxes ? (
-            <div className="text-center py-12 text-gray-400">Syncing mailboxes...</div>
+          {loadingDomains ? (
+            <div className="text-center py-12">Loading domains...</div>
+          ) : domains.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              No domains connected yet. <Link to="/domains" className="text-blue-600 hover:underline">Add a subdomain</Link> to start sending emails.
+            </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {mailboxes.map((mb) => (
-                <div 
-                  key={mb.id} 
-                  className="bg-white border-2 border-gray-50 rounded-2xl p-5 hover:border-blue-200 transition-all cursor-pointer group relative"
-                  onClick={() => setSelectedForStats(mb)}
-                >
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="min-w-0">
-                      <p className="font-black text-gray-900 truncate">{mb.name}</p>
-                      <p className="text-xs text-gray-400 truncate font-medium">{mb.email}</p>
+            <div className="space-y-4">
+              {domains.map((d) => (
+                <div key={d.id} className="border rounded-lg p-4 flex items-center justify-between hover:bg-gray-50">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <p className="text-lg font-medium text-gray-900">{d.domainName}</p>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${d.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                        {d.status.toUpperCase()}
+                      </span>
                     </div>
-                    <div className={`w-2 h-2 rounded-full ${mb.status === 'HEALTHY' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                  </div>
-
-                  <div className="flex gap-3 mb-4">
-                    <div className="bg-blue-50 px-2 py-1 rounded text-[10px] font-bold text-blue-600">
-                      {mb.totalSent || 0} Sent
-                    </div>
-                    <div className="bg-green-50 px-2 py-1 rounded text-[10px] font-bold text-green-600">
-                      {mb.replyCount || 0} Replies
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-2 pt-3 border-t border-gray-50">
-                    <span className="text-[9px] font-black text-blue-600 uppercase group-hover:underline">View Analytics →</span>
-                    <div className="flex gap-3" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => { setEditingMailbox(mb); setShowMailboxForm(true); }} className="text-[10px] font-bold text-gray-400 hover:text-blue-600 uppercase">Edit</button>
-                      <button onClick={() => handleDeleteMailbox(mb.id)} className="text-[10px] font-bold text-gray-400 hover:text-red-600 uppercase">Delete</button>
-                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Warmup Day {d.warmupDay} | Daily Limit: {d.dailyLimit} | Bounce Rate: {(d.bounceRate * 100).toFixed(1)}%
+                    </p>
                   </div>
                 </div>
               ))}
@@ -257,24 +282,6 @@ export const Profile: React.FC = () => {
 
       {/* Settings Tab */}
       {activeTab === 'settings' && <UserSettings />}
-
-      {/* Modals */}
-      <MailboxStatsModal 
-        isOpen={!!selectedForStats} 
-        onClose={() => setSelectedForStats(null)} 
-        mailbox={selectedForStats} 
-      />
-
-      {showMailboxForm && (
-        <MailboxForm
-          mailbox={editingMailbox}
-          onClose={() => setShowMailboxForm(false)}
-          onSuccess={() => {
-            setShowMailboxForm(false);
-            fetchMailboxes();
-          }}
-        />
-      )}
     </div>
   );
 };

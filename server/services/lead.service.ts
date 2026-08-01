@@ -1,14 +1,16 @@
-import { Prisma, Lead } from '@prisma/client';
 import prisma from '../lib/prisma';
-import { LeadCreateInput, LeadUpdateInput, LeadStatus } from '../types/lead.types';
 import { logger } from '../config/logger';
 
 export class LeadService {
-  /**
-   * Bulk insert leads with duplicate handling. Returns created leads.
-   */
-  async createLeads(userId: string, leads: LeadCreateInput[], skipDuplicates = true) {
-    const result = { created: 0, duplicates: 0, failed: 0, errors: [], createdLeads: [] as any[] };
+  async createLeads(userId: string, leads: { name: string; email: string; company?: string | null; position?: string | null }[], skipDuplicates = true) {
+    const result: {
+      created: number;
+      duplicates: number;
+      failed: number;
+      errors: { email: string; error: string }[];
+      createdLeads: any[];
+    } = { created: 0, duplicates: 0, failed: 0, errors: [], createdLeads: [] };
+
     for (const lead of leads) {
       try {
         const existing = await prisma.lead.findFirst({
@@ -33,21 +35,18 @@ export class LeadService {
         result.createdLeads.push(created);
       } catch (error: any) {
         result.failed++;
-        result.errors.push({ email: lead.email, error: error.message });
-        logger.error({ error, lead }, 'Lead creation failed');
-        throw new Error(`Lead creation failed for ${lead.email}: ${error.message}`);
+        result.errors.push({ email: lead.email, error: error.message || 'Unknown error' });
+        logger.error({ error: error.message, lead }, 'Lead creation failed');
       }
     }
     return result;
   }
 
-  /**
-   * Retrieve paginated leads, optionally filtered by status and campaign.
-   */
-  async getLeads(userId: string, page: number, pageSize: number, status?: LeadStatus, campaignId?: string) {
+  async getLeads(userId: string, page: number, pageSize: number, status?: string, campaignId?: string) {
     const where: any = { userId };
-    if (status) where.status = status;
-    if (campaignId) where.campaignId = campaignId;
+    if (status && status !== 'all') where.status = status;
+    if (campaignId && campaignId !== 'all') where.campaignId = campaignId;
+
     const [leads, total] = await Promise.all([
       prisma.lead.findMany({
         where,
@@ -57,16 +56,8 @@ export class LeadService {
       }),
       prisma.lead.count({ where }),
     ]);
+
     return { data: leads, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
-  }
-
-
-  async getLead(userId: string, id: string) {
-    return prisma.lead.findFirstOrThrow({ where: { id, userId } });
-  }
-
-  async updateLead(userId: string, id: string, data: LeadUpdateInput) {
-    return prisma.lead.update({ where: { id, userId }, data });
   }
 
   async deleteLead(userId: string, id: string) {
@@ -74,3 +65,5 @@ export class LeadService {
     return { success: true };
   }
 }
+
+export const leadService = new LeadService();

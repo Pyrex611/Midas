@@ -1,12 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import { supabase } from '../lib/supabase';
-import { logger } from '../config/logger';
+import bcrypt from 'bcryptjs';
 import prisma from '../lib/prisma';
+import { logger } from '../config/logger';
 
-/**
- * POST /api/auth/signup
- * Create a new user in Supabase and add a corresponding record in our User table with name.
- */
 export const signUp = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password, name } = req.body;
@@ -14,48 +10,28 @@ export const signUp = async (req: Request, res: Response, next: NextFunction) =>
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    // 1. Create user in Supabase
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { name }, // store in Supabase metadata if desired
-      },
-    });
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
 
-    if (error) throw error;
-    if (!data.user) throw new Error('User creation failed');
-
-    // 2. Create corresponding user in our database with name
-    const localUser = await prisma.user.upsert({
-      where: { id: data.user.id },
-      update: { name: name || email.split('@')[0] },
-      create: {
-        id: data.user.id,
-        email: data.user.email!,
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
         name: name || email.split('@')[0],
       },
     });
 
-    logger.info({ userId: localUser.id }, 'User record synchronized in local DB');
-
-    
-    res.status(201).json({
-      user: data.user,
-      session: data.session, // Will be null if confirmation is ON, populated if OFF
-      isConfirmed: !!data.session 
-    });
-
+    logger.info({ userId: user.id }, 'User registered in DB');
+    res.status(201).json({ success: true, user: { id: user.id, email: user.email, name: user.name } });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Signup failure');
+    logger.error({ error: error.message }, 'Signup failed');
     res.status(400).json({ error: error.message });
   }
 };
 
-/**
- * POST /api/auth/signin
- * Sign in an existing user and ensure they have a record in our User table (with name).
- */
 export const signIn = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password } = req.body;
@@ -63,66 +39,28 @@ export const signIn = async (req: Request, res: Response, next: NextFunction) =>
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-    if (!data.user) throw new Error('Signin failed');
-
-    // Ensure user exists in our database, update name if needed
-    try {
-      await prisma.user.upsert({
-        where: { id: data.user.id },
-        update: {
-          // optionally update name from metadata if available
-          name: data.user.user_metadata?.name || undefined,
-        },
-        create: {
-          id: data.user.id,
-          email: data.user.email!,
-          name: data.user.user_metadata?.name || email.split('@')[0],
-        },
-      });
-      logger.info({ userId: data.user.id }, 'User record ensured in local DB');
-    } catch (dbError: any) {
-      logger.error({ dbError }, 'Failed to ensure user record');
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user || !user.password) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    logger.info({ userId: data.user.id }, 'User signed in');
-    res.json({ user: data.user, session: data.session });
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    logger.info({ userId: user.id }, 'User signed in via custom credentials route');
+    res.json({ success: true, user: { id: user.id, email: user.email, name: user.name } });
   } catch (error: any) {
-    logger.error({ error }, 'Signin failed');
+    logger.error({ error: error.message }, 'Signin failed');
     res.status(401).json({ error: error.message });
   }
 };
 
-/**
- * POST /api/auth/signout
- * Sign out the current user.
- */
 export const signOut = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-
-    logger.info('User signed out');
-    res.json({ success: true });
-  } catch (error: any) {
-    logger.error({ error }, 'Signout failed');
-    res.status(400).json({ error: error.message });
-  }
+  res.json({ success: true });
 };
 
-/**
- * GET /api/auth/session
- * Retrieve the current session.
- */
 export const getSession = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
-
-    res.json({ session: data.session });
-  } catch (error: any) {
-    logger.error({ error }, 'Get session failed');
-    res.status(400).json({ error: error.message });
-  }
+  res.json({ session: null });
 };

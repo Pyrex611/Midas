@@ -6,7 +6,7 @@ export interface ReplyAnalysis {
   intent: string;
   painPoints?: string[];
   objections?: string[];
-  interestLevel?: number; // 1-10
+  interestLevel?: number;
   buyingSignals?: string[];
   suggestedApproach?: string;
   keyPoints?: string[];
@@ -20,7 +20,8 @@ interface AIProvider {
 class MockProvider implements AIProvider {
   async isAvailable() { return true; }
 
-  async complete(prompt: string): Promise<string> {
+  // Fixed signature to accept system parameter (resolves TS2554)
+  async complete(prompt: string, system?: string): Promise<string> {
     logger.debug('MockProvider generating fallback response');
     if (prompt.includes('sentiment') || prompt.includes('Reply text')) {
       return JSON.stringify({
@@ -276,7 +277,6 @@ export class AIService {
   }
 
   private extractJSON(raw: string): any {
-    // Strip DeepSeek R1 reasoning tags if present
     const cleanedRaw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     const match = cleanedRaw.match(/\{[\s\S]*\}/);
@@ -287,7 +287,6 @@ export class AIService {
     try {
       return JSON.parse(match[0]);
     } catch (err) {
-      // Bracket depth matching fallback
       let depth = 0;
       let start = -1;
       for (let i = 0; i < cleanedRaw.length; i++) {

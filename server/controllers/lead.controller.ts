@@ -65,7 +65,8 @@ export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFu
 
 export const deleteBlocklist = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await prisma.blocklist.delete({ where: { id: req.params.id } });
+    const id = req.params.id as string;
+    await prisma.blocklist.delete({ where: { id } });
     res.json({ success: true });
   } catch (error) { next(error); }
 };
@@ -73,16 +74,20 @@ export const deleteBlocklist = async (req: AuthRequest, res: Response, next: Nex
 export const getLeads = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { page = '1', pageSize = '20', status, campaignId } = req.query;
-    const p = parseInt(page as string, 10);
-    const s = parseInt(pageSize as string, 10);
+    const pageStr = (req.query.page as string) || '1';
+    const pageSizeStr = (req.query.pageSize as string) || '20';
+    const statusStr = req.query.status as string | undefined;
+    const campaignIdStr = req.query.campaignId as string | undefined;
+
+    const p = parseInt(pageStr, 10);
+    const s = parseInt(pageSizeStr, 10);
 
     const where: any = { userId };
-    if (status && typeof status === 'string' && status !== 'all') {
-      where.status = status;
+    if (statusStr && statusStr !== 'all') {
+      where.status = statusStr;
     }
-    if (campaignId && typeof campaignId === 'string' && campaignId !== 'all') {
-      where.campaignId = campaignId;
+    if (campaignIdStr && campaignIdStr !== 'all') {
+      where.campaignId = campaignIdStr;
     }
 
     const [leads, total] = await Promise.all([
@@ -111,8 +116,9 @@ export const getLeads = async (req: AuthRequest, res: Response, next: NextFuncti
 
 export const getLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const id = req.params.id as string;
     const lead = await prisma.lead.findFirstOrThrow({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id, userId: req.user!.id },
     });
     res.json(lead);
   } catch (error) {
@@ -122,8 +128,9 @@ export const getLead = async (req: AuthRequest, res: Response, next: NextFunctio
 
 export const updateLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const id = req.params.id as string;
     const lead = await prisma.lead.update({
-      where: { id: req.params.id, userId: req.user!.id },
+      where: { id, userId: req.user!.id },
       data: req.body,
     });
     res.json(lead);
@@ -134,7 +141,8 @@ export const updateLead = async (req: AuthRequest, res: Response, next: NextFunc
 
 export const deleteLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    await prisma.lead.delete({ where: { id: req.params.id, userId: req.user!.id } });
+    const id = req.params.id as string;
+    await prisma.lead.delete({ where: { id, userId: req.user!.id } });
     res.json({ success: true });
   } catch (error) {
     next(error);
