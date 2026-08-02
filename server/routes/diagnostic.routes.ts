@@ -5,17 +5,22 @@ import { logger } from '../config/logger';
 const router = Router();
 
 router.get('/health/db', async (req, res) => {
+  console.log('[DEBUG DIAGNOSTICS] /health/db triggered. Testing database query latency...');
   try {
+    const start = Date.now();
     const [leadCount, campaignCount, draftCount, domainCount] = await Promise.all([
       prisma.lead.count(),
       prisma.campaign.count(),
       prisma.draft.count(),
       prisma.domain.count(),
     ]);
+    const duration = Date.now() - start;
+    console.log(`[DEBUG DIAGNOSTICS] Prisma queries completed in ${duration}ms`);
 
     res.json({
       status: 'healthy',
       database: 'Vercel Postgres (Neon)',
+      responseTimeMs: duration,
       counts: {
         leads: leadCount,
         campaigns: campaignCount,
@@ -25,7 +30,8 @@ router.get('/health/db', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
-    logger.error({ error }, 'Database health check failed');
+    console.error('[DEBUG DIAGNOSTICS ERROR]', error);
+    logger.error({ error: error.message }, 'Database health check failed');
     res.status(500).json({
       status: 'unhealthy',
       error: error.message,
@@ -50,7 +56,7 @@ router.post('/test/lead', async (req, res) => {
 
     res.json({ success: true, lead });
   } catch (error: any) {
-    logger.error({ error }, 'Test lead creation failed');
+    logger.error({ error: error.message }, 'Test lead creation failed');
     res.status(500).json({ success: false, error: error.message });
   }
 });

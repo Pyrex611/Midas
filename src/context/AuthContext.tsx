@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import axios from 'axios';
+import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-react';
+import api from '../services/api';
 
 interface User {
   id: string;
@@ -17,52 +18,71 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Automatically send cookies with Axios for Auth.js sessions
-axios.defaults.withCredentials = true;
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isLoaded, isSignedIn, signOut: clerkSignOut, getToken } = useClerkAuth();
+  const { user: clerkUser, isLoaded: isUserLoaded } = useUser();
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const fetchSession = async () => {
-    try {
-      const res = await axios.get('/api/auth/session');
-      if (res.data && Object.keys(res.data).length > 0 && res.data.user) {
-        setUser(res.data.user);
-      } else {
-        setUser(null);
-      }
-    } catch (error) {
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Register the Clerk JWT token interceptor dynamically onto our custom API Axios instance
   useEffect(() => {
-    fetchSession();
-  }, []);
+    if (!isLoaded) return;
 
-  const signIn = async (email: string, password: string) => {
-    // Auth.js credentials signin endpoint
-    await axios.post('/api/auth/callback/credentials', { email, password });
-    await fetchSession();
+    const interceptor = api.interceptors.request.use(async (config) => {
+      try {
+        const token = await getToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+      } catch (err) {
+        console.error('Error attaching Clerk session token:', err);
+      }
+      return config;
+    });
+
+    return () => {
+      api.interceptors.request.eject(interceptor);
+    };
+  }, [isLoaded, getToken]);
+
+  // Map Clerk's reactive user model directly to the existing User interface to prevent any refactoring regressions
+  useEffect(() => {
+    if (isLoaded && isSignedIn && clerkUser) {
+      setUser({
+        id: clerkUser.id,
+        email: clerkUser.primaryEmailAddress?.emailAddress || '',
+        name: clerkUser.fullName || clerkUser.primaryEmailAddress?.emailAddress.split('@')[0],
+      });
+    } else {
+      setUser(null);
+    }
+  }, [isLoaded, isSignedIn, clerkUser]);
+
+  const signIn = async () => {
+    throw new Error('Use Clerk UI components directly to sign in.');
   };
 
-  const signUp = async (email: string, password: string, name?: string) => {
-    // Custom registration endpoint
-    await axios.post('/api/auth/custom/signup', { email, password, name });
-    // Sign in automatically after signup
-    await signIn(email, password);
+  const signUp = async () => {
+    throw new Error('Use Clerk UI components directly to sign up.');
   };
 
   const signOut = async () => {
-    await axios.post('/api/auth/signout');
-    setUser(null);
+    await clerkSignOut();
   };
 
+  // Crucial Fix: We are only "done loading" when BOTH Clerk's auth AND user details are fully populated and mapped.
+  // This prevents the split-second session propagation delay from prematurely triggering a redirect to "/login".
+  const loading = !isLoaded || (isSignedIn && (!isUserLoaded || !user));
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        signIn,
+        signUp,
+        signOut,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

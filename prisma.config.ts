@@ -2,15 +2,14 @@ import "dotenv/config";
 import dotenv from "dotenv";
 import { defineConfig, env } from "prisma/config";
 
-// Load environment files created by Vercel CLI or local setup
 dotenv.config({ path: ".env.local" });
 dotenv.config({ path: ".env.development.local" });
 
-// Support Vercel Postgres variables or standard DATABASE_URL
+// STRICTLY use Non-Pooling URL for structural schema changes
 const resolvedDbUrl = 
+  process.env.POSTGRES_URL_NON_POOLING || 
+  process.env.DIRECT_URL || 
   process.env.DATABASE_URL || 
-  process.env.POSTGRES_PRISMA_URL || 
-  process.env.POSTGRES_URL || 
   "postgresql://placeholder:placeholder@localhost:5432/placeholder";
 
 export default defineConfig({

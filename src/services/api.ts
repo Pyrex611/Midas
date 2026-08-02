@@ -8,9 +8,18 @@ const api = axios.create({
 
 axios.defaults.withCredentials = true;
 
+// Scope Token Injection to our Custom API instance to fix app-wide 401s
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('midas_auth_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export const authAPI = {
   signUp: (email: string, password: string, name?: string) =>
-    api.post('/auth/custom/signup', { email, password, name }),
+    api.post('/auth/signup', { email, password, name }),
   signIn: (email: string, password: string) =>
     api.post('/auth/callback/credentials', { email, password }),
   signOut: () => api.post('/auth/signout'),

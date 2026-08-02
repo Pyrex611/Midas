@@ -3,17 +3,26 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Standardize database connection strings
+const rawDatabaseUrl = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL || '';
+
+if (rawDatabaseUrl) {
+  // Clean trailing characters from standard pooled connection urls
+  let cleanUrl = rawDatabaseUrl.trim();
+  process.env.DATABASE_URL = cleanUrl;
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
-	SUPABASE_URL: z.string().url(),
-	SUPABASE_ANON_KEY: z.string(),
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_ANON_KEY: z.string().optional(),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
   ENCRYPTION_KEY: z.string().length(64),
-	// Email service selector
+  // Email service selector
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp']).default('ethereal'),
 
   // SMTP settings (required if EMAIL_SERVICE=smtp)
@@ -31,19 +40,19 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().default('gpt-4-turbo-preview'),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash-lite'),
-	DEEPSEEK_API_KEY: z.string().optional(),
-	DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
-	OPENROUTER_API_KEY: z.string().optional(),
-	OPENROUTER_MODEL: z.string().default('deepseek/deepseek-r1:free'),
+  DEEPSEEK_API_KEY: z.string().optional(),
+  DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_MODEL: z.string().default('deepseek/deepseek-r1:free'),
   OLLAMA_URL: z.string().default('http://localhost:11434'),
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),
 
   // IMAP settings
-  IMAP_HOST: z.string(),
-  IMAP_PORT: z.string().transform(Number),
-  IMAP_USER: z.string(),
-  IMAP_PASS: z.string(),
+  IMAP_HOST: z.string().optional(),
+  IMAP_PORT: z.string().transform(Number).optional(),
+  IMAP_USER: z.string().optional(),
+  IMAP_PASS: z.string().optional(),
   IMAP_TLS: z.enum(['true', 'false']).default('true'),
   IMAP_MAILBOX: z.string().default('INBOX'),
   IMAP_POLL_INTERVAL: z.string().default('300000').transform(Number),

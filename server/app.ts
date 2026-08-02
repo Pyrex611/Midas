@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { authMiddleware } from './lib/auth';
 import { requireAuth } from './middleware/auth.middleware';
 import authRoutes from './routes/auth.routes';
 import cronRoutes from './routes/cron.routes';
@@ -20,9 +19,10 @@ app.use(express.json());
 // Public Webhook Receivers
 app.use('/api/webhooks', webhookRoutes);
 
-// Auth.js built-in routes
-app.use("/api/auth/*", authMiddleware);
-app.use('/api/auth/custom', authRoutes);
+// Auth Routes (Public)
+app.use('/api/auth', authRoutes);
+
+// Cron Routes
 app.use('/api/cron', cronRoutes);
 
 // Protected API Routes

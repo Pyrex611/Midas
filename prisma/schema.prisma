@@ -6,47 +6,16 @@ datasource db {
   provider = "postgresql"
 }
 
-// --- Auth.js Models ---
-model Account {
-  id                String  @id @default(cuid())
-  userId            String  @map("user_id") @db.Uuid
-  type              String
-  provider          String
-  providerAccountId String  @map("provider_account_id")
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@unique([provider, providerAccountId])
-  @@map("accounts")
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique @map("session_token")
-  userId       String   @map("user_id") @db.Uuid
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@map("sessions")
-}
-
 // --- Midas Core Models ---
 model User {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name          String?
-  email         String?   @unique
-  emailVerified DateTime? @map("email_verified")
-  image         String?
+  email         String    @unique
   password      String?   
+  clerkId       String?   @unique @map("clerk_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  accounts       Account[]
-  sessions       Session[]
   leads          Lead[]
   campaigns      Campaign[]
   drafts         Draft[]
@@ -58,14 +27,6 @@ model User {
   blocklist      Blocklist[]
 
   @@map("users")
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-  @@unique([identifier, token])
-  @@map("verification_tokens")
 }
 
 // --- Domain & Deliverability Engine ---
@@ -232,30 +193,29 @@ model FollowUpStep {
   @@unique([campaignId, stepNumber])
 }
 
-// --- Deliverability Tracking Added ---
 model OutboundEmail {
-  id            String   @id @default(cuid())
-  userId        String   @map("user_id") @db.Uuid
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  domainId      String?  @map("domain_id")
-  domain        Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
-  leadId        String   @map("lead_id")
-  lead          Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  campaignId    String?  @map("campaign_id")
-  campaign      Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  draftId       String?  @map("draft_id")
-  draft         Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id") @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domainId    String?  @map("domain_id")
+  domain      Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
+  leadId      String   @map("lead_id")
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId  String?  @map("campaign_id")
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  draftId     String?  @map("draft_id")
+  draft       Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
   
-  subject       String
-  body          String
-  sentAt        DateTime @default(now()) @map("sent_at")
-  status        String   @default("SENT")
-  error         String?
+  subject     String
+  body        String
+  sentAt      DateTime @default(now()) @map("sent_at")
+  status      String   @default("SENT")
+  error       String?
 
   openedAt      DateTime? @map("opened_at")
-  clickedAt     DateTime? @map("clicked_at") // ADDED
-  bouncedAt     DateTime? @map("bounced_at") // ADDED
-  spamComplaint Boolean   @default(false) @map("spam_complaint") // ADDED
+  clickedAt     DateTime? @map("clicked_at") 
+  bouncedAt     DateTime? @map("bounced_at") 
+  spamComplaint Boolean   @default(false) @map("spam_complaint") 
   repliedAt     DateTime? @map("replied_at")
   replyText     String?   @map("reply_text")
 
@@ -292,6 +252,7 @@ model PendingEmail {
   status             String   @default("PENDING") 
   error              String?
   createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
   priority           Int      @default(2)
   preferredDomainId  String?  @map("preferred_domain_id")
   preferredDomain    Domain?  @relation("PendingEmailPreferred", fields: [preferredDomainId], references: [id], onDelete: SetNull)

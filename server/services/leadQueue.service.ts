@@ -16,11 +16,20 @@ export class LeadQueueService {
 
   async processPendingUploads() {
     try {
+      // 1. Stale Job Recovery
+      await prisma.$executeRaw`
+        UPDATE "UploadJob"
+        SET status = 'PENDING'
+        WHERE status = 'PROCESSING'
+        AND updated_at < NOW() - INTERVAL '15 minutes'
+      `;
+
+      // 2. Lock pending jobs
       const lockedJobs = await prisma.$queryRaw<{id: string}[]>`
         SELECT id FROM "UploadJob"
         WHERE status IN ('PENDING', 'VERIFYING')
         ORDER BY created_at ASC
-        LIMIT 5
+        LIMIT 2
         FOR UPDATE SKIP LOCKED
       `;
 
@@ -32,7 +41,8 @@ export class LeadQueueService {
 
         try {
           if (job.status === 'PENDING') {
-            await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } });
+            // Prisma automatically updates 'updatedAt' due to @updatedAt in schema
+            await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } }); // <-- Removed manual updatedAt
             
             const response = await fetch(job.blobUrl);
             const csvText = await response.text();
@@ -115,11 +125,17 @@ export class LeadQueueService {
               }
             }
 
-            for (const lead of leadsToInsert) {
-              try {
-                await prisma.lead.create({ data: lead });
-              } catch (e: any) {
-                if (e.code === 'P2002') duplicatesCount++;
+            // CSV Chunking: Insert in batches of 500 to prevent Prisma limits
+            const CHUNK_SIZE = 500;
+            for (let i = 0; i < leadsToInsert.length; i += CHUNK_SIZE) {
+              const chunk = leadsToInsert.slice(i, i + CHUNK_SIZE);
+              
+              for (const lead of chunk) {
+                try {
+                  await prisma.lead.create({ data: lead });
+                } catch (e: any) {
+                  if (e.code === 'P2002') duplicatesCount++;
+                }
               }
             }
 
@@ -131,7 +147,7 @@ export class LeadQueueService {
                 catchAllLeads: catchAllCount,
                 invalidLeads: invalidCount,
                 duplicates: duplicatesCount,
-                error: null
+                error: null 
               }
             });
             logger.info(`Job ${job.id} completed. Inserted valid leads.`);
