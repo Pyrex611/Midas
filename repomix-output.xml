@@ -410,6 +410,8 @@ Apache License
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.0.0",
+    "@clerk/clerk-sdk-node": "^5.0.0",
     "@neondatabase/serverless": "^0.9.4",
     "@prisma/adapter-neon": "^7.9.1",
     "@prisma/client": "^7.9.1",
@@ -431,6 +433,7 @@ Apache License
     "react-dropzone": "^14.2.3",
     "react-router-dom": "^6.30.3",
     "serverless-http": "^3.2.0",
+    "svix": "^1.21.0",
     "tailwindcss": "^4.0.0",
     "winston": "^3.17.0",
     "xlsx": "^0.18.5",
@@ -443,7 +446,6 @@ Apache License
     "@types/jsonwebtoken": "^9.0.6",
     "@types/multer": "^1.4.7",
     "@types/node": "^20.10.5",
-    "@types/papaparse": "^5.3.7",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
@@ -1322,7 +1324,8 @@ model User {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name          String?
   email         String    @unique
-  password      String   
+  password      String?   
+  clerkId       String?   @unique @map("clerk_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
@@ -1382,6 +1385,39 @@ model CampaignDomain {
   @@unique([campaignId, domainId])
 }
 
+enum CampaignRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model CampaignMember {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String       @map("user_id") @db.Uuid
+  role       CampaignRole @default(EDITOR)
+  joinedAt   DateTime     @default(now()) @map("joined_at")
+
+  @@unique([campaignId, userId])
+  @@index([userId])
+}
+
+model CampaignInvite {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  senderId   String       @map("sender_id") @db.Uuid
+  email      String
+  role       CampaignRole @default(EDITOR)
+  token      String       @unique
+  accepted   Boolean      @default(false)
+  expiresAt  DateTime     @map("expires_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@index([email])
+}
+
 model Campaign {
   id               String   @id @default(cuid())
   userId           String   @map("user_id") @db.Uuid
@@ -1401,6 +1437,9 @@ model Campaign {
   activeStartHour  Int?     @map("active_start_hour")
   activeEndHour    Int?     @map("active_end_hour")
   timezone         String?
+  objective         String?
+  targetTool        String?  @map("target_tool")
+  extendedObjective String?  @map("extended_objective")
 
   followUpSteps FollowUpStep[]
   leads         Lead[]
@@ -1408,6 +1447,9 @@ model Campaign {
   drafts        Draft[]
   pendingEmails PendingEmail[]
   domainLinks   CampaignDomain[] 
+  members       CampaignMember[]
+  invites       CampaignInvite[]
+
   @@index([userId])
 }
 
@@ -1461,6 +1503,9 @@ model Lead {
   replyDrafts    Draft[]         @relation("LeadDrafts")
   pendingEmails  PendingEmail[]
   @@unique([userId, email])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([status])
 }
 
 model Draft {
@@ -1510,7 +1555,7 @@ model OutboundEmail {
   domainId    String?  @map("domain_id")
   domain      Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
   leadId      String   @map("lead_id")
-  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaignId  String?  @map("campaign_id")
   campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   draftId     String?  @map("draft_id")
@@ -1541,6 +1586,11 @@ model OutboundEmail {
   sentiment     String?
   intent        String?
   analysis      String?
+
+  @@index([userId])
+  @@index([campaignId])
+  @@index([leadId])
+  @@index([messageId])
 }
 
 model PendingEmail {
@@ -1567,6 +1617,9 @@ model PendingEmail {
   preferredDomainId  String?  @map("preferred_domain_id")
   preferredDomain    Domain?  @relation("PendingEmailPreferred", fields: [preferredDomainId], references: [id], onDelete: SetNull)
   @@index([status, scheduledAt])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([leadId])
 }
 
 model UserSettings {
@@ -1702,17 +1755,26 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Standardize database connection strings
+const rawDatabaseUrl = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL || '';
+
+if (rawDatabaseUrl) {
+  // Clean trailing characters from standard pooled connection urls
+  let cleanUrl = rawDatabaseUrl.trim();
+  process.env.DATABASE_URL = cleanUrl;
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
-	SUPABASE_URL: z.string().url(),
-	SUPABASE_ANON_KEY: z.string(),
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_ANON_KEY: z.string().optional(),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
   ENCRYPTION_KEY: z.string().length(64),
-	// Email service selector
+  // Email service selector
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp']).default('ethereal'),
 
   // SMTP settings (required if EMAIL_SERVICE=smtp)
@@ -1730,19 +1792,19 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().default('gpt-4-turbo-preview'),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash-lite'),
-	DEEPSEEK_API_KEY: z.string().optional(),
-	DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
-	OPENROUTER_API_KEY: z.string().optional(),
-	OPENROUTER_MODEL: z.string().default('deepseek/deepseek-r1:free'),
+  DEEPSEEK_API_KEY: z.string().optional(),
+  DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_MODEL: z.string().default('deepseek/deepseek-r1:free'),
   OLLAMA_URL: z.string().default('http://localhost:11434'),
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),
 
   // IMAP settings
-  IMAP_HOST: z.string(),
-  IMAP_PORT: z.string().transform(Number),
-  IMAP_USER: z.string(),
-  IMAP_PASS: z.string(),
+  IMAP_HOST: z.string().optional(),
+  IMAP_PORT: z.string().transform(Number).optional(),
+  IMAP_USER: z.string().optional(),
+  IMAP_PASS: z.string().optional(),
   IMAP_TLS: z.enum(['true', 'false']).default('true'),
   IMAP_MAILBOX: z.string().default('INBOX'),
   IMAP_POLL_INTERVAL: z.string().default('300000').transform(Number),
@@ -1944,6 +2006,7 @@ export const signOut = async (req: Request, res: Response, next: NextFunction) =
 
 <file path="server/controllers/campaign.controller.ts">
 import { Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { personalisationService } from '../services/personalisation.service';
 import { emailService } from '../services/email.service';
@@ -1954,25 +2017,41 @@ import { AuthRequest } from '../middleware/auth.middleware';
 export const createCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC } = req.body;
+    const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC, objective, targetTool, extendedObjective } = req.body;
     if (!name) return res.status(400).json({ error: 'Campaign name is required' });
 
-    const campaign = await prisma.campaign.create({
-      data: {
-        userId,
-        name,
-        description,
-        context,
-        reference,
-        senderName,
-        status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
-        startedAt: leadIds?.length ? new Date() : null,
-        autoReplyEnabled: autoReplyEnabled ?? false,
-        sendHourUTC: sendHourUTC ?? 9,
-        ...(leadIds?.length && {
-          leads: { connect: leadIds.map((lid: string) => ({ id: lid })) },
-        }),
-      },
+    // Use a transactional write to create campaign AND set automatic owner membership
+    const campaign = await prisma.$transaction(async (tx) => {
+      const camp = await tx.campaign.create({
+        data: {
+          userId,
+          name,
+          description,
+          context,
+          reference,
+          senderName,
+          status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
+          startedAt: leadIds?.length ? new Date() : null,
+          autoReplyEnabled: autoReplyEnabled ?? false,
+          sendHourUTC: sendHourUTC ?? 9,
+          objective,
+          targetTool,
+          extendedObjective,
+          ...(leadIds?.length && {
+            leads: { connect: leadIds.map((lid: string) => ({ id: lid })) },
+          }),
+        },
+      });
+
+      await tx.campaignMember.create({
+        data: {
+          campaignId: camp.id,
+          userId,
+          role: 'OWNER',
+        },
+      });
+
+      return camp;
     });
 
     if (leadIds?.length) {
@@ -2023,6 +2102,219 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
   }
 };
 
+export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    // Query campaigns where user is EITHER the original owner OR is a verified member
+    const campaigns = await prisma.campaign.findMany({
+      where: {
+        OR: [
+          { userId },
+          { members: { some: { userId } } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: { leads: true, emails: true, drafts: true },
+        },
+        members: {
+          where: { userId },
+          select: { role: true },
+        },
+      },
+    });
+    res.json(campaigns);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getCampaignDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const id = req.params.id as string;
+    
+    // Check if the user is the owner or member
+    const isMember = await prisma.campaignMember.findFirst({
+      where: { campaignId: id, userId },
+    });
+
+    const isCreator = await prisma.campaign.findFirst({
+      where: { id, userId },
+    });
+
+    if (!isMember && !isCreator) {
+      return res.status(403).json({ error: 'Forbidden: You do not have access to this campaign' });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id },
+      include: {
+        leads: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            company: true,
+            position: true,
+            outreachStatus: true,
+            status: true,
+          },
+        },
+        drafts: {
+          where: { isActive: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        emails: {
+          orderBy: { sentAt: 'desc' },
+          take: 100,
+        },
+        followUpSteps: {
+          orderBy: { stepNumber: 'asc' },
+        },
+        domainLinks: {
+          include: { domain: true },
+        },
+      },
+    });
+
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+    const queuedCount = await prisma.pendingEmail.count({
+      where: { campaignId: id, status: 'PENDING' },
+    });
+
+    res.json({ ...campaign, queuedCount });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// --- Campaign Collaboration Backend Handlers ---
+export const getMyInvites = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const email = req.user!.email;
+    if (!email) return res.json([]);
+
+    const invites = await prisma.campaignInvite.findMany({
+      where: {
+        email: email.toLowerCase().trim(),
+        accepted: false,
+        expiresAt: { gt: new Date() },
+      },
+      include: {
+        campaign: {
+          select: { name: true },
+        },
+      },
+    });
+    res.json(invites);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const acceptInvite = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { token } = req.params;
+
+    const invite = await prisma.campaignInvite.findUnique({
+      where: { token },
+    });
+
+    if (!invite || invite.accepted || invite.expiresAt < new Date()) {
+      return res.status(400).json({ error: 'Invalid or expired invitation token.' });
+    }
+
+    await prisma.$transaction([
+      prisma.campaignInvite.update({
+        where: { id: invite.id },
+        data: { accepted: true },
+      }),
+      prisma.campaignMember.create({
+        data: {
+          campaignId: invite.campaignId,
+          userId,
+          role: invite.role,
+        },
+      }),
+    ]);
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createInvite = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const senderId = req.user!.id;
+    const campaignId = req.params.id;
+    const { email, role } = req.body;
+
+    if (!email) return res.status(400).json({ error: 'Email address is required' });
+
+    // Ensure sender is the owner or editor
+    const membership = await prisma.campaignMember.findFirst({
+      where: { campaignId, userId: senderId },
+    });
+
+    if (!membership || membership.role === 'VIEWER') {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to invite collaborators.' });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // Expirations after 7 days
+
+    const invite = await prisma.campaignInvite.create({
+      data: {
+        campaignId,
+        senderId,
+        email: email.toLowerCase().trim(),
+        role: role || 'EDITOR',
+        token,
+        expiresAt,
+      },
+    });
+
+    res.status(201).json(invite);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateCampaignStrategy = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const campaignId = req.params.id;
+    const userId = req.user!.id;
+    const { objective, targetTool, extendedObjective } = req.body;
+
+    const membership = await prisma.campaignMember.findFirst({
+      where: { campaignId, userId },
+    });
+
+    if (!membership || membership.role === 'VIEWER') {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions.' });
+    }
+
+    const updated = await prisma.campaign.update({
+      where: { id: campaignId },
+      data: {
+        objective,
+        targetTool,
+        extendedObjective,
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
@@ -2058,71 +2350,6 @@ export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: 
     }
 
     res.json({ added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const campaigns = await prisma.campaign.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        _count: {
-          select: { leads: true, emails: true, drafts: true },
-        },
-      },
-    });
-    res.json(campaigns);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getCampaignDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const id = req.params.id as string;
-    const campaign = await prisma.campaign.findFirst({
-      where: { id, userId },
-      include: {
-        leads: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            company: true,
-            position: true,
-            outreachStatus: true,
-            status: true,
-          },
-        },
-        drafts: {
-          where: { isActive: true },
-          orderBy: { createdAt: 'desc' },
-        },
-        emails: {
-          orderBy: { sentAt: 'desc' },
-          take: 100,
-        },
-        followUpSteps: {
-          orderBy: { stepNumber: 'asc' },
-        },
-        domainLinks: {
-          include: { domain: true },
-        },
-      },
-    });
-
-    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
-
-    const queuedCount = await prisma.pendingEmail.count({
-      where: { userId, campaignId: id, status: 'PENDING' },
-    });
-
-    res.json({ ...campaign, queuedCount });
   } catch (error) {
     next(error);
   }
@@ -3110,31 +3337,100 @@ export function decrypt(text: string): string {
 }
 </file>
 
-<file path="server/middleware/auth.middleware.ts">
-import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
+<file path="server/lib/prisma.ts">
+import { PrismaNeonHttp } from '@prisma/adapter-neon';
+import { PrismaClient } from '@prisma/client';
 
-const SECRET = process.env.AUTH_SECRET || 'fallback_secret_for_dev_32_chars_min';
+console.log('[DEBUG PRISMA] Initializing Stateless Prisma Neon HTTP Fetch Adapter...');
 
-export interface AuthRequest extends Request {
-  user?: any;
+const prismaClientSingleton = () => {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is not set in environment variables');
+  }
+
+  // Set up the Prisma 7 Neon HTTP stateless adapter (exactly 2 arguments required: connectionString, options)
+  const adapter = new PrismaNeonHttp(connectionString, {});
+  
+  return new PrismaClient({
+    adapter,
+    log: ['query', 'error', 'warn'],
+  });
+};
+
+declare global {
+  var prismaGlobal: undefined | ReturnType<typeof prismaClientSingleton>;
 }
 
-export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+const prisma = globalThis.prismaGlobal ?? prismaClientSingleton();
 
-    if (!token) {
-      return res.status(401).json({ error: 'Unauthorized: Missing token' });
+export default prisma;
+
+if (process.env.NODE_ENV !== 'production') {
+  globalThis.prismaGlobal = prisma;
+}
+</file>
+
+<file path="server/middleware/auth.middleware.ts">
+import { Request, Response, NextFunction } from 'express';
+import { ClerkExpressRequireAuth } from '@clerk/clerk-sdk-node';
+import prisma from '../lib/prisma';
+import { logger } from '../config/logger';
+
+// Export AuthRequest interface to resolve downstream controller compilation errors
+export interface AuthRequest extends Request {
+  user?: any;
+  auth?: any;
+}
+
+export const requireAuth = (req: any, res: Response, next: NextFunction) => {
+  // Execute Clerk's official token validation (called with zero arguments to automatically consume environment keys)
+  ClerkExpressRequireAuth()(req, res, async (err: any) => {
+    if (err) {
+      logger.error({ err }, 'Clerk verification failed');
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired Clerk session' });
     }
 
-    const payload = jwt.verify(token, SECRET) as { userId: string; email: string };
-    req.user = { id: payload.userId, email: payload.email };
-    next();
-  } catch (error) {
-    res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
-  }
+    try {
+      const clerkId = req.auth.userId;
+      if (!clerkId) {
+        return res.status(401).json({ error: 'Unauthorized: Missing Clerk User ID' });
+      }
+
+      // Self-healing check: Fetch user's local database UUID mapping
+      let user = await prisma.user.findUnique({
+        where: { clerkId },
+        select: { id: true, email: true },
+      });
+
+      if (!user) {
+        logger.info({ clerkId }, 'Clerk user not found in local DB. Performing self-healing syncing...');
+        
+        // Fetch fallback email from Clerk's session claims
+        const email = req.auth.sessionClaims?.email || `user-${clerkId.substring(0, 8)}@clerk.local`;
+        const name = req.auth.sessionClaims?.fullName || email.split('@')[0];
+
+        // Perform an upsert to prevent any race conditions during registration
+        user = await prisma.user.upsert({
+          where: { email },
+          update: { clerkId },
+          create: {
+            clerkId,
+            email,
+            name,
+          },
+          select: { id: true, email: true },
+        });
+      }
+
+      // Populate req.user so that downstream Express controllers continue to work with zero refactoring
+      req.user = { id: user.id, email: user.email };
+      next();
+    } catch (dbErr: any) {
+      logger.error({ dbErr }, 'Database verification/syncing during auth failed');
+      res.status(500).json({ error: 'Database session validation failed' });
+    }
+  });
 };
 </file>
 
@@ -3222,9 +3518,17 @@ import {
   getCampaignDomains,
   addDomainToCampaign,
   removeDomainFromCampaign,
+  getMyInvites,
+  acceptInvite,
+  createInvite,
+  updateCampaignStrategy,
 } from '../controllers/campaign.controller';
 
 const router = Router();
+
+// Core Collaboration endpoints
+router.get('/invites/my', getMyInvites);
+router.post('/invites/:token/accept', acceptInvite);
 
 router.post('/', createCampaign);
 router.get('/', getCampaigns);
@@ -3232,6 +3536,7 @@ router.get('/', getCampaigns);
 router.put('/:id/auto-reply', updateAutoReply);
 router.put('/:id/active-hours', updateActiveHours);
 router.put('/:id/send-hour', updateSendHour);
+router.put('/:id/strategy', updateCampaignStrategy);
 
 router.get('/:id/followup-steps', getFollowUpSteps);
 router.post('/:id/followup-steps', setFollowUpSteps);
@@ -3246,6 +3551,8 @@ router.delete('/:id', deleteCampaign);
 router.get('/:id', getCampaignDetails);
 
 router.post('/:id/leads', addLeadsToCampaign);
+router.post('/:id/invites', createInvite);
+
 router.get('/:campaignId/leads/:leadId/thread', getLeadEmailThread);
 router.get('/:campaignId/leads/:leadId/preview/:draftId', previewLeadWithDraft);
 router.post('/:campaignId/leads/:leadId/send', sendLeadEmail);
@@ -3473,55 +3780,77 @@ export default router;
 
 <file path="server/routes/webhooks.routes.ts">
 import { Router } from 'express';
-import multer from 'multer';
-import { webhooksService } from '../services/webhooks.service';
+import { Webhook } from 'svix';
+import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
 const router = Router();
-const upload = multer();
 
-router.post('/mailgun', async (req, res) => {
-  try {
-    const { signature } = req.body;
-    if (!signature) return res.status(401).send('Missing signature');
-
-    const isValid = webhooksService.verifyMailgunSignature(
-      signature.timestamp,
-      signature.token,
-      signature.signature
-    );
-
-    if (!isValid) return res.status(403).send('Invalid Signature');
-
-    webhooksService.processDeliverabilityEvent(req.body).catch(err => {
-      logger.error({ err }, 'Deliverability processing failed in background');
-    });
-
-    res.status(200).send('OK');
-  } catch (error) {
-    logger.error({ error }, 'Mailgun webhook error');
-    res.status(500).send('Internal Server Error');
+router.post('/clerk', async (req, res) => {
+  const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    logger.error('CLERK_WEBHOOK_SECRET is not set');
+    return res.status(500).json({ error: 'Webhook configuration error' });
   }
-});
 
-// Phase 5: Inbound Route (Mailgun sends this as multipart/form-data)
-router.post('/mailgun/inbound', upload.none(), async (req, res) => {
+  const headers = req.headers;
+  const svix_id = headers['svix-id'] as string;
+  const svix_timestamp = headers['svix-timestamp'] as string;
+  const svix_signature = headers['svix-signature'] as string;
+
+  if (!svix_id || !svix_timestamp || !svix_signature) {
+    return res.status(400).json({ error: 'Missing svix headers' });
+  }
+
+  // Parse raw body payload as string for verification
+  const payload = JSON.stringify(req.body);
+
+  const wh = new Webhook(webhookSecret);
+  let evt: any;
+
   try {
-    const { timestamp, token, signature } = req.body;
-    if (!signature) return res.status(401).send('Missing signature');
+    evt = wh.verify(payload, {
+      'svix-id': svix_id,
+      'svix-timestamp': svix_timestamp,
+      'svix-signature': svix_signature,
+    }) as any;
+  } catch (err: any) {
+    logger.error({ err }, 'Webhook signature verification failed');
+    return res.status(400).json({ error: 'Invalid webhook signature' });
+  }
 
-    const isValid = webhooksService.verifyMailgunSignature(timestamp, token, signature);
-    if (!isValid) return res.status(403).send('Invalid Signature');
+  const eventType = evt.type;
 
-    // Process asynchronously to release Mailgun instantly
-    webhooksService.processInboundEmail(req.body).catch(err => {
-      logger.error({ err }, 'Inbound email processing failed in background');
-    });
+  try {
+    if (eventType === 'user.created' || eventType === 'user.updated') {
+      const { id: clerkId, email_addresses, first_name, last_name } = evt.data;
+      const email = email_addresses?.[0]?.email_address;
+      const name = `${first_name || ''} ${last_name || ''}`.trim() || email.split('@')[0];
 
-    res.status(200).send('OK');
-  } catch (error) {
-    logger.error({ error }, 'Mailgun inbound webhook error');
-    res.status(500).send('Internal Server Error');
+      if (email) {
+        await prisma.user.upsert({
+          where: { email },
+          update: { clerkId, name },
+          create: {
+            clerkId,
+            email,
+            name,
+          },
+        });
+        logger.info({ clerkId, email }, 'Clerk User synced successfully to DB');
+      }
+    } else if (eventType === 'user.deleted') {
+      const { id: clerkId } = evt.data;
+      await prisma.user.deleteMany({
+        where: { clerkId },
+      });
+      logger.info({ clerkId }, 'Clerk User deleted successfully from DB');
+    }
+
+    res.json({ success: true });
+  } catch (dbErr: any) {
+    logger.error({ dbErr }, 'Failed to execute database sync for Clerk webhook');
+    res.status(500).json({ error: 'Database syncing failed' });
   }
 });
 
@@ -4264,6 +4593,33 @@ export class DomainService {
 
   async addDomain(userId: string, domainName: string) {
     const cleanDomain = domainName.toLowerCase().trim();
+    const apiKey = process.env.MAILGUN_API_KEY;
+
+    // High-Fidelity Sandbox Fallback Mock Mode if no live keys exist or are set to 'mock'
+    if (!apiKey || apiKey === 'mock') {
+      logger.info({ domainName }, 'Mailgun API key is unconfigured or mock. Simulating domain addition.');
+
+      return prisma.domain.create({
+        data: {
+          userId,
+          domainName: cleanDomain,
+          status: 'unverified',
+          dnsRecords: JSON.stringify({
+            receiving: [
+              { record_type: 'MX', name: cleanDomain, value: 'mxa.mailgun.org', valid: 'unverified' },
+              { record_type: 'MX', name: cleanDomain, value: 'mxb.mailgun.org', valid: 'unverified' }
+            ],
+            sending: [
+              { record_type: 'TXT', name: cleanDomain, value: 'v=spf1 include:mailgun.org ~all', valid: 'unverified' },
+              { record_type: 'TXT', name: `krs._domainkey.${cleanDomain}`, value: 'k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3S...', valid: 'unverified' },
+              { record_type: 'CNAME', name: `email.${cleanDomain}`, value: 'mailgun.org', valid: 'unverified' }
+            ]
+          }),
+          dailyLimit: 20, // Strict Warmup Day 1 Constraint
+          warmupDay: 1
+        }
+      });
+    }
     
     const formData = new URLSearchParams();
     formData.append('name', cleanDomain);
@@ -4307,6 +4663,32 @@ export class DomainService {
   async verifyDomain(userId: string, domainId: string) {
     const domain = await prisma.domain.findUnique({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
+
+    const apiKey = process.env.MAILGUN_API_KEY;
+
+    // High-Fidelity Sandbox Mock verification simulation
+    if (!apiKey || apiKey === 'mock') {
+      logger.info({ domainId }, 'Mailgun API key is unconfigured or mock. Simulating DNS verification success.');
+      
+      const records = domain.dnsRecords ? JSON.parse(domain.dnsRecords) : { receiving: [], sending: [] };
+      const verifiedReceiving = records.receiving.map((r: any) => ({ ...r, valid: 'valid' }));
+      const verifiedSending = records.sending.map((r: any) => ({ ...r, valid: 'valid' }));
+
+      return prisma.domain.update({
+        where: { id: domainId },
+        data: {
+          status: 'active',
+          spfStatus: true,
+          dkimStatus: true,
+          mxStatus: true,
+          trackingStatus: true,
+          dnsRecords: JSON.stringify({
+            receiving: verifiedReceiving,
+            sending: verifiedSending
+          })
+        }
+      });
+    }
 
     try {
       const mgRes = await fetch(`${this.baseUrl}/domains/${domain.domainName}/verify`, {
@@ -4355,6 +4737,13 @@ export class DomainService {
   async deleteDomain(userId: string, domainId: string) {
     const domain = await prisma.domain.findUnique({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
+
+    const apiKey = process.env.MAILGUN_API_KEY;
+    if (!apiKey || apiKey === 'mock') {
+      logger.info({ domainId }, 'Mailgun API key is unconfigured or mock. Simulating domain deletion.');
+      await prisma.domain.delete({ where: { id: domainId } });
+      return;
+    }
 
     try {
       await fetch(`${this.baseUrl}/domains/${domain.domainName}`, {
@@ -7644,7 +8033,8 @@ export const Navbar = () => {
         </svg>
       </button>
 
-      {isOpen && <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setIsOpen(false)} />}
+      {/* Opacity Fix: Utilise native Tailwind v4 forward-slash alpha notation instead of separate bg-opacity */}
+      {isOpen && <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setIsOpen(false)} />}
 
       <div className={`fixed top-0 left-0 h-full w-64 bg-white shadow-xl z-50 transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-6 flex flex-col h-full">
@@ -8068,7 +8458,8 @@ export const UserSettings: React.FC = () => {
 
 <file path="src/context/AuthContext.tsx">
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import axios from 'axios';
+import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-react';
+import api from '../services/api';
 
 interface User {
   id: string;
@@ -8086,81 +8477,71 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const TOKEN_KEY = 'midas_auth_token';
-
-axios.defaults.timeout = 15000;
-axios.defaults.withCredentials = true;
-
-axios.interceptors.request.use((config) => {
-  const token = localStorage.getItem(TOKEN_KEY);
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isLoaded, isSignedIn, signOut: clerkSignOut, getToken } = useClerkAuth();
+  const { user: clerkUser, isLoaded: isUserLoaded } = useUser();
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const fetchSession = async () => {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const res = await axios.get('/api/auth/session');
-      if (res.data && res.data.user) {
-        setUser(res.data.user);
-      } else {
-        localStorage.removeItem(TOKEN_KEY);
-        setUser(null);
-      }
-    } catch {
-      localStorage.removeItem(TOKEN_KEY);
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Register the Clerk JWT token interceptor dynamically onto our custom API Axios instance
   useEffect(() => {
-    fetchSession();
-  }, []);
+    if (!isLoaded) return;
 
-  const signIn = async (email: string, password: string) => {
-    const res = await axios.post('/api/auth/callback/credentials', { email, password });
-    if (res.data && res.data.token) {
-      localStorage.setItem(TOKEN_KEY, res.data.token);
-      setUser(res.data.user);
+    const interceptor = api.interceptors.request.use(async (config) => {
+      try {
+        const token = await getToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+      } catch (err) {
+        console.error('Error attaching Clerk session token:', err);
+      }
+      return config;
+    });
+
+    return () => {
+      api.interceptors.request.eject(interceptor);
+    };
+  }, [isLoaded, getToken]);
+
+  // Map Clerk's reactive user model directly to the existing User interface to prevent any refactoring regressions
+  useEffect(() => {
+    if (isLoaded && isSignedIn && clerkUser) {
+      setUser({
+        id: clerkUser.id,
+        email: clerkUser.primaryEmailAddress?.emailAddress || '',
+        name: clerkUser.fullName || clerkUser.primaryEmailAddress?.emailAddress.split('@')[0],
+      });
     } else {
-      throw new Error(res.data?.error || 'Sign in failed');
+      setUser(null);
     }
+  }, [isLoaded, isSignedIn, clerkUser]);
+
+  const signIn = async () => {
+    throw new Error('Use Clerk UI components directly to sign in.');
   };
 
-  const signUp = async (email: string, password: string, name?: string) => {
-    const res = await axios.post('/api/auth/signup', { email, password, name });
-    if (res.data && res.data.token) {
-      localStorage.setItem(TOKEN_KEY, res.data.token);
-      setUser(res.data.user);
-    } else {
-      throw new Error(res.data?.error || 'Sign up failed');
-    }
+  const signUp = async () => {
+    throw new Error('Use Clerk UI components directly to sign up.');
   };
 
   const signOut = async () => {
-    try {
-      await axios.post('/api/auth/signout');
-    } catch {}
-    localStorage.removeItem(TOKEN_KEY);
-    setUser(null);
+    await clerkSignOut();
   };
 
+  // Crucial Fix: We are only "done loading" when BOTH Clerk's auth AND user details are fully populated and mapped.
+  // This prevents the split-second session propagation delay from prematurely triggering a redirect to "/login".
+  const loading = !isLoaded || (isSignedIn && (!isUserLoaded || !user));
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        signIn,
+        signUp,
+        signOut,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -8190,12 +8571,21 @@ export const useAuth = () => {
 <file path="src/main.tsx">
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { ClerkProvider } from '@clerk/clerk-react';
 import App from './App';
 import './index.css';
 
+const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
+if (!publishableKey) {
+  throw new Error('VITE_CLERK_PUBLISHABLE_KEY is not defined in environment variables');
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <ClerkProvider publishableKey={publishableKey}>
+      <App />
+    </ClerkProvider>
   </React.StrictMode>
 );
 </file>
@@ -9475,109 +9865,35 @@ export const Leads: React.FC = () => {
 </file>
 
 <file path="src/pages/Login.tsx">
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
+import { SignIn } from '@clerk/clerk-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Link, useNavigate } from 'react-router-dom';
 
 export const Login: React.FC = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const { signIn } = useAuth();
+  const { user, loading } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setSubmitting(true);
-
-    try {
-      await signIn(email, password);
-      navigate('/');
-    } catch (err: any) {
-      const responseError = err.response?.data?.error;
-      if (typeof responseError === 'string') {
-        setError(responseError);
-      } else if (responseError && typeof responseError === 'object' && responseError.message) {
-        setError(String(responseError.message));
-      } else if (err.message && typeof err.message === 'string') {
-        setError(err.message);
-      } else {
-        setError('Login failed. Please check your credentials.');
-      }
-    } finally {
-      setSubmitting(false);
+  // If already authenticated, redirect away from the login page instantly
+  useEffect(() => {
+    if (!loading && user) {
+      navigate('/', { replace: true });
     }
-  };
+  }, [user, loading, navigate]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Sign in to your account</h2>
-        </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
-          )}
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="email" className="sr-only">Email address</label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={submitting}
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm disabled:opacity-50"
-                placeholder="Email address"
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">Password</label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={submitting}
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm disabled:opacity-50"
-                placeholder="Password"
-              />
-            </div>
-          </div>
-          <div>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed items-center"
-            >
-              {submitting ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Signing in...
-                </>
-              ) : (
-                'Sign in'
-              )}
-            </button>
-          </div>
-          <div className="text-sm text-center">
-            <Link to="/signup" className="font-medium text-blue-600 hover:text-blue-500">
-              Don't have an account? Sign up
-            </Link>
-          </div>
-        </form>
+      <div className="max-w-md w-full flex flex-col items-center">
+        <SignIn 
+          signUpUrl="/signup" 
+          afterSignInUrl="/" 
+          appearance={{
+            elements: {
+              formButtonPrimary: 'bg-blue-600 hover:bg-blue-700 text-white',
+              card: 'shadow-xl rounded-2xl border border-gray-100 bg-white'
+            }
+          }}
+        />
       </div>
     </div>
   );
@@ -9875,136 +10191,35 @@ export const Profile: React.FC = () => {
 </file>
 
 <file path="src/pages/SignUp.tsx">
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
+import { SignUp } from '@clerk/clerk-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Link, useNavigate } from 'react-router-dom';
 
 export const Signup: React.FC = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const { signUp } = useAuth();
+  const { user, loading } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
+  // If already authenticated, redirect away from the signup page instantly
+  useEffect(() => {
+    if (!loading && user) {
+      navigate('/', { replace: true });
     }
-
-    setSubmitting(true);
-
-    try {
-      await signUp(email, password);
-      navigate('/');
-    } catch (err: any) {
-      const responseError = err.response?.data?.error;
-      if (typeof responseError === 'string') {
-        setError(responseError);
-      } else if (responseError && typeof responseError === 'object' && responseError.message) {
-        setError(String(responseError.message));
-      } else if (err.message && typeof err.message === 'string') {
-        setError(err.message);
-      } else {
-        setError('Signup failed. Please try again.');
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  }, [user, loading, navigate]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Create your account
-          </h2>
-        </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
-          )}
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="email" className="sr-only">Email address</label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={submitting}
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm disabled:opacity-50"
-                placeholder="Email address"
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">Password</label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={submitting}
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm disabled:opacity-50"
-                placeholder="Password"
-              />
-            </div>
-            <div>
-              <label htmlFor="confirm-password" className="sr-only">Confirm Password</label>
-              <input
-                id="confirm-password"
-                name="confirm-password"
-                type="password"
-                autoComplete="new-password"
-                required
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={submitting}
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm disabled:opacity-50"
-                placeholder="Confirm password"
-              />
-            </div>
-          </div>
-
-          <div>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed items-center"
-            >
-              {submitting ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Creating account...
-                </>
-              ) : (
-                'Sign up'
-              )}
-            </button>
-          </div>
-          <div className="text-sm text-center">
-            <Link to="/login" className="font-medium text-blue-600 hover:text-blue-500">
-              Already have an account? Sign in
-            </Link>
-          </div>
-        </form>
+      <div className="max-w-md w-full flex flex-col items-center">
+        <SignUp 
+          signInUrl="/login" 
+          afterSignUpUrl="/"
+          appearance={{
+            elements: {
+              formButtonPrimary: 'bg-blue-600 hover:bg-blue-700 text-white',
+              card: 'shadow-xl rounded-2xl border border-gray-100 bg-white'
+            }
+          }}
+        />
       </div>
     </div>
   );
@@ -10022,9 +10237,18 @@ const api = axios.create({
 
 axios.defaults.withCredentials = true;
 
+// Scope Token Injection to our Custom API instance to fix app-wide 401s
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('midas_auth_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export const authAPI = {
   signUp: (email: string, password: string, name?: string) =>
-    api.post('/auth/custom/signup', { email, password, name }),
+    api.post('/auth/signup', { email, password, name }),
   signIn: (email: string, password: string) =>
     api.post('/auth/callback/credentials', { email, password }),
   signOut: () => api.post('/auth/signout'),
@@ -10121,6 +10345,15 @@ export const campaignAPI = {
   getCampaignDomains: (campaignId: string) => api.get(`/campaigns/${campaignId}/domains`),
   addDomainToCampaign: (campaignId: string, domainId: string) => api.post(`/campaigns/${campaignId}/domains`, { domainId }),
   removeDomainFromCampaign: (campaignId: string, domainId: string) => api.delete(`/campaigns/${campaignId}/domains/${domainId}`),
+
+  // Core Campaign Collaboration Operations Linked to CampaignInvite/CampaignMember Schemas
+  getMyInvites: () => api.get('/campaigns/invites/my'),
+  acceptInvite: (token: string) => api.post(`/campaigns/invites/${token}/accept`),
+  createInvite: (campaignId: string, data: { email: string; role: string }) =>
+    api.post(`/campaigns/${campaignId}/invites`, data),
+
+  updateStrategy: (campaignId: string, data: { objective?: string; targetTool?: string; extendedObjective?: string }) =>
+    api.put(`/campaigns/${campaignId}/strategy`, data),
 
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),

@@ -27,9 +27,17 @@ import {
   getCampaignDomains,
   addDomainToCampaign,
   removeDomainFromCampaign,
+  getMyInvites,
+  acceptInvite,
+  createInvite,
+  updateCampaignStrategy,
 } from '../controllers/campaign.controller';
 
 const router = Router();
+
+// Core Collaboration endpoints
+router.get('/invites/my', getMyInvites);
+router.post('/invites/:token/accept', acceptInvite);
 
 router.post('/', createCampaign);
 router.get('/', getCampaigns);
@@ -37,6 +45,7 @@ router.get('/', getCampaigns);
 router.put('/:id/auto-reply', updateAutoReply);
 router.put('/:id/active-hours', updateActiveHours);
 router.put('/:id/send-hour', updateSendHour);
+router.put('/:id/strategy', updateCampaignStrategy);
 
 router.get('/:id/followup-steps', getFollowUpSteps);
 router.post('/:id/followup-steps', setFollowUpSteps);
@@ -51,6 +60,8 @@ router.delete('/:id', deleteCampaign);
 router.get('/:id', getCampaignDetails);
 
 router.post('/:id/leads', addLeadsToCampaign);
+router.post('/:id/invites', createInvite);
+
 router.get('/:campaignId/leads/:leadId/thread', getLeadEmailThread);
 router.get('/:campaignId/leads/:leadId/preview/:draftId', previewLeadWithDraft);
 router.post('/:campaignId/leads/:leadId/send', sendLeadEmail);

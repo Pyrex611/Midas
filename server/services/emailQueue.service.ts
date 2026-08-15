@@ -6,12 +6,17 @@ import { personalisationService } from './personalisation.service';
 export class EmailQueueService {
   
   private checkTimezone(timezone: string | null, startHour: number | null, endHour: number | null): boolean {
-    if (!startHour || !endHour) return true; 
+    if (startHour === null || startHour === undefined || endHour === null || endHour === undefined) return true;
     const tz = timezone || 'UTC';
     try {
       const formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: tz });
-      const currentHour = parseInt(formatter.format(new Date()), 10);
-      return currentHour >= startHour && currentHour < endHour;
+      let currentHour = parseInt(formatter.format(new Date()), 10);
+      if (currentHour === 24) currentHour = 0; // Normalize midnight 24 -> 0
+      
+      // Support overnight windows (e.g. 20:00 to 04:00) as well as daytime windows
+      return startHour <= endHour
+        ? currentHour >= startHour && currentHour < endHour
+        : currentHour >= startHour || currentHour < endHour;
     } catch (e) {
       return true; 
     }
@@ -19,7 +24,7 @@ export class EmailQueueService {
 
   async processQueue() {
     try {
-      // 1. Stale Job Recovery
+      // 1. Recover any stale processing tasks older than 10 minutes
       await prisma.$executeRaw`
         UPDATE "PendingEmail"
         SET status = 'PENDING'
@@ -27,7 +32,7 @@ export class EmailQueueService {
         AND updated_at < NOW() - INTERVAL '10 minutes'
       `;
 
-      // 2. Concurrency-Safe Claiming
+      // 2. Concurrency-Safe Claiming with SKIP LOCKED
       const lockedEmails = await prisma.$queryRaw<{id: string}[]>`
         SELECT id FROM "PendingEmail"
         WHERE status = 'PENDING'
@@ -41,10 +46,9 @@ export class EmailQueueService {
 
       const emailIds = lockedEmails.map(e => e.id);
 
-      // Prisma automatically updates 'updatedAt' due to @updatedAt in schema
       await prisma.pendingEmail.updateMany({
         where: { id: { in: emailIds } },
-        data: { status: 'PROCESSING' } // <-- Removed manual updatedAt
+        data: { status: 'PROCESSING' }
       });
 
       const emailsToProcess = await prisma.pendingEmail.findMany({
@@ -60,7 +64,7 @@ export class EmailQueueService {
         try {
           const campaign = pending.campaign;
 
-          // Timezone Guard
+          // Guard against timezone windows
           if (!this.checkTimezone(campaign.timezone, campaign.activeStartHour, campaign.activeEndHour)) {
             await prisma.pendingEmail.update({
               where: { id: pending.id },
@@ -74,6 +78,7 @@ export class EmailQueueService {
 
           let selectedDomain = activeDomains[campaign.lastDomainIndex % activeDomains.length];
 
+          // Daily quota reset
           const today = new Date().toISOString().split('T')[0];
           const lastReset = new Date(selectedDomain.lastSentReset).toISOString().split('T')[0];
           
@@ -89,7 +94,7 @@ export class EmailQueueService {
             });
           }
 
-          // Domain Limit Guard: Safely defer to tomorrow instead of failing
+          // Limit protection: Reschedule for tomorrow without dropping or failing the email
           if (selectedDomain.sentCountToday >= selectedDomain.dailyLimit) {
             const tomorrow = new Date();
             tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
@@ -99,11 +104,11 @@ export class EmailQueueService {
               where: { id: pending.id },
               data: { status: 'PENDING', scheduledAt: tomorrow }
             });
-            logger.info({ domain: selectedDomain.domainName }, 'Domain daily limit reached. Re-queued for tomorrow.');
+            logger.info({ domain: selectedDomain.domainName }, 'Domain daily limit reached. Re-queued for next window.');
             continue;
           }
 
-          // Personalize & Send
+          // Personalize text with smart fallbacks
           const { subject, body } = personalisationService.personalise(
             pending.lead,
             pending.subject,
@@ -147,6 +152,12 @@ export class EmailQueueService {
               data: { sentCountToday: { increment: 1 } }
             });
 
+            // Persist round-robin rotation index
+            await prisma.campaign.update({
+              where: { id: campaign.id },
+              data: { lastDomainIndex: { increment: 1 } }
+            });
+
             await prisma.lead.update({
               where: { id: pending.leadId },
               data: { outreachStatus: 'SENT', status: 'CONTACTED' }
@@ -172,7 +183,7 @@ export class EmailQueueService {
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Fatal Queue Error');
+      logger.error({ error }, 'Fatal Queue Processing Error');
     }
   }
 }

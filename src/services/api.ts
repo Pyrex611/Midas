@@ -117,6 +117,15 @@ export const campaignAPI = {
   addDomainToCampaign: (campaignId: string, domainId: string) => api.post(`/campaigns/${campaignId}/domains`, { domainId }),
   removeDomainFromCampaign: (campaignId: string, domainId: string) => api.delete(`/campaigns/${campaignId}/domains/${domainId}`),
 
+  // Core Campaign Collaboration Operations Linked to CampaignInvite/CampaignMember Schemas
+  getMyInvites: () => api.get('/campaigns/invites/my'),
+  acceptInvite: (token: string) => api.post(`/campaigns/invites/${token}/accept`),
+  createInvite: (campaignId: string, data: { email: string; role: string }) =>
+    api.post(`/campaigns/${campaignId}/invites`, data),
+
+  updateStrategy: (campaignId: string, data: { objective?: string; targetTool?: string; extendedObjective?: string }) =>
+    api.put(`/campaigns/${campaignId}/strategy`, data),
+
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),
 };

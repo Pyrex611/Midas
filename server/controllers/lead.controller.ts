@@ -1,8 +1,10 @@
 import { Response, NextFunction } from 'express';
 import multer from 'multer';
 import { blobService } from '../services/blob.service';
+import { leadQueueService } from '../services/leadQueue.service';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { logger } from '../config/logger';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
 
@@ -25,6 +27,11 @@ export const uploadLeads = [
           blobUrl,
           status: 'PENDING'
         }
+      });
+
+      // TRIGGER BACKGROUND PROCESSING IMMEDIATELY
+      leadQueueService.processPendingUploads().catch(err => {
+        logger.error({ err }, 'Background lead upload worker error');
       });
 
       res.status(202).json({ success: true, jobId: job.id, status: 'PENDING' });
@@ -58,7 +65,9 @@ export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFu
   try {
     const { pattern } = req.body;
     if (!pattern) return res.status(400).json({ error: 'Pattern is required' });
-    const block = await prisma.blocklist.create({ data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() } });
+    const block = await prisma.blocklist.create({ 
+      data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() } 
+    });
     res.status(201).json(block);
   } catch (error) { next(error); }
 };

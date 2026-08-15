@@ -1,44 +1,56 @@
 import { Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { personalisationService } from '../services/personalisation.service';
 import { emailService } from '../services/email.service';
 import { aiService } from '../services/ai.service';
+import { emailQueueService } from '../services/emailQueue.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
 
 export const createCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC } = req.body;
+    const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC, objective, targetTool, extendedObjective } = req.body;
     if (!name) return res.status(400).json({ error: 'Campaign name is required' });
 
-    const campaign = await prisma.campaign.create({
-      data: {
-        userId,
-        name,
-        description,
-        context,
-        reference,
-        senderName,
-        status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
-        startedAt: leadIds?.length ? new Date() : null,
-        autoReplyEnabled: autoReplyEnabled ?? false,
-        sendHourUTC: sendHourUTC ?? 9,
-        ...(leadIds?.length && {
-          leads: { connect: leadIds.map((lid: string) => ({ id: lid })) },
-        }),
-      },
+    const campaign = await prisma.$transaction(async (tx) => {
+      const camp = await tx.campaign.create({
+        data: {
+          userId,
+          name,
+          description,
+          context,
+          reference,
+          senderName,
+          status: leadIds?.length ? 'ACTIVE' : 'DRAFT',
+          startedAt: leadIds?.length ? new Date() : null,
+          autoReplyEnabled: autoReplyEnabled ?? false,
+          sendHourUTC: sendHourUTC ?? 9,
+          objective,
+          targetTool,
+          extendedObjective,
+          ...(leadIds?.length && {
+            leads: { connect: leadIds.map((lid: string) => ({ id: lid })) },
+          }),
+        },
+      });
+
+      await tx.campaignMember.create({
+        data: {
+          campaignId: camp.id,
+          userId,
+          role: 'OWNER',
+        },
+      });
+
+      return camp;
     });
 
-    if (leadIds?.length) {
-      await prisma.lead.updateMany({
-        where: { id: { in: leadIds }, userId },
-        data: { outreachStatus: 'PENDING', campaignId: campaign.id },
-      });
-    }
-
+    // Generate Initial Draft Variations
+    const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
+    const createdDrafts = [];
     for (let i = 0; i < 5; i++) {
-      const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
       const draft = await aiService.generateDraft(
         tones[i % tones.length],
         'initial',
@@ -48,7 +60,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
         undefined,
         undefined
       );
-      await prisma.draft.create({
+      const savedDraft = await prisma.draft.create({
         data: {
           userId,
           campaignId: campaign.id,
@@ -58,8 +70,10 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
           useCase: 'initial',
         },
       });
+      createdDrafts.push(savedDraft);
     }
 
+    // Create Initial Follow-Up Sequence Step
     await prisma.followUpStep.create({
       data: {
         campaignId: campaign.id,
@@ -68,51 +82,40 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       },
     });
 
-    res.status(201).json({
-      success: true,
-      campaignId: campaign.id,
-      message: leadIds?.length ? `Campaign started with ${leadIds.length} leads` : 'Campaign created',
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+    // AUTOMATIC INITIAL QUEUE DISPATCH FOR ATTACHED LEADS
+    if (leadIds?.length && createdDrafts.length > 0) {
+      await prisma.lead.updateMany({
+        where: { id: { in: leadIds }, userId },
+        data: { outreachStatus: 'PENDING', campaignId: campaign.id },
+      });
 
-export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const id = req.params.id as string;
-    const { leadIds } = req.body;
-    if (!Array.isArray(leadIds) || leadIds.length === 0) {
-      return res.status(400).json({ error: 'leadIds must be a non-empty array' });
-    }
+      const initialDraft = createdDrafts[0];
+      const pendingRecords = leadIds.map((leadId: string) => ({
+        userId,
+        campaignId: campaign.id,
+        leadId,
+        draftId: initialDraft.id,
+        subject: initialDraft.subject,
+        body: initialDraft.body,
+        status: 'PENDING',
+        priority: 1,
+        scheduledAt: new Date(),
+      }));
 
-    const campaign = await prisma.campaign.findFirst({
-      where: { id, userId },
-      include: { leads: { select: { id: true } } },
-    });
-    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+      await prisma.pendingEmail.createMany({
+        data: pendingRecords,
+      });
 
-    const existingLeadIds = new Set(campaign.leads.map(l => l.id));
-    const newLeadIds = leadIds.filter(lid => !existingLeadIds.has(lid));
-
-    if (newLeadIds.length === 0) {
-      return res.json({ added: 0, skipped: leadIds.length });
-    }
-
-    await prisma.lead.updateMany({
-      where: { id: { in: newLeadIds }, userId },
-      data: { campaignId: id, outreachStatus: 'PENDING' },
-    });
-
-    if (campaign.status === 'DRAFT') {
-      await prisma.campaign.update({
-        where: { id },
-        data: { status: 'ACTIVE', startedAt: new Date() },
+      emailQueueService.processQueue().catch(err => {
+        logger.error({ err }, 'Background queue trigger failed');
       });
     }
 
-    res.json({ added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length });
+    res.status(201).json({
+      success: true,
+      campaignId: campaign.id,
+      message: leadIds?.length ? `Campaign started with ${leadIds.length} leads queued` : 'Campaign created',
+    });
   } catch (error) {
     next(error);
   }
@@ -122,11 +125,20 @@ export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFu
   try {
     const userId = req.user!.id;
     const campaigns = await prisma.campaign.findMany({
-      where: { userId },
+      where: {
+        OR: [
+          { userId },
+          { members: { some: { userId } } },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         _count: {
           select: { leads: true, emails: true, drafts: true },
+        },
+        members: {
+          where: { userId },
+          select: { role: true },
         },
       },
     });
@@ -140,8 +152,21 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
   try {
     const userId = req.user!.id;
     const id = req.params.id as string;
-    const campaign = await prisma.campaign.findFirst({
+    
+    const isMember = await prisma.campaignMember.findFirst({
+      where: { campaignId: id, userId },
+    });
+
+    const isCreator = await prisma.campaign.findFirst({
       where: { id, userId },
+    });
+
+    if (!isMember && !isCreator) {
+      return res.status(403).json({ error: 'Forbidden: You do not have access to this campaign' });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id },
       include: {
         leads: {
           select: {
@@ -174,10 +199,196 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
     const queuedCount = await prisma.pendingEmail.count({
-      where: { userId, campaignId: id, status: 'PENDING' },
+      where: { campaignId: id, status: 'PENDING' },
     });
 
     res.json({ ...campaign, queuedCount });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const id = req.params.id as string;
+    const { leadIds } = req.body;
+    if (!Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({ error: 'leadIds must be a non-empty array' });
+    }
+
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, OR: [{ userId }, { members: { some: { userId } } }] },
+      include: { leads: { select: { id: true } } },
+    });
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+    const existingLeadIds = new Set(campaign.leads.map(l => l.id));
+    const newLeadIds = leadIds.filter(lid => !existingLeadIds.has(lid));
+
+    if (newLeadIds.length === 0) {
+      return res.json({ added: 0, skipped: leadIds.length });
+    }
+
+    await prisma.lead.updateMany({
+      where: { id: { in: newLeadIds } },
+      data: { campaignId: id, outreachStatus: 'PENDING' },
+    });
+
+    if (campaign.status === 'DRAFT') {
+      await prisma.campaign.update({
+        where: { id },
+        data: { status: 'ACTIVE', startedAt: new Date() },
+      });
+    }
+
+    // AUTOMATIC QUEUE INJECTION FOR NEWLY ADDED LEADS
+    const initialDraft = await prisma.draft.findFirst({
+      where: { campaignId: id, isActive: true, useCase: 'initial' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (initialDraft) {
+      const pendingRecords = newLeadIds.map((leadId: string) => ({
+        userId,
+        campaignId: id,
+        leadId,
+        draftId: initialDraft.id,
+        subject: initialDraft.subject,
+        body: initialDraft.body,
+        status: 'PENDING',
+        priority: 1,
+        scheduledAt: new Date(),
+      }));
+
+      await prisma.pendingEmail.createMany({
+        data: pendingRecords,
+      });
+
+      emailQueueService.processQueue().catch(err => {
+        logger.error({ err }, 'Background queue execution error');
+      });
+    }
+
+    res.json({ added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getMyInvites = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const email = req.user!.email;
+    if (!email) return res.json([]);
+
+    const invites = await prisma.campaignInvite.findMany({
+      where: {
+        email: email.toLowerCase().trim(),
+        accepted: false,
+        expiresAt: { gt: new Date() },
+      },
+      include: {
+        campaign: { select: { name: true } },
+      },
+    });
+    res.json(invites);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const acceptInvite = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { token } = req.params;
+
+    const invite = await prisma.campaignInvite.findUnique({ where: { token } });
+
+    if (!invite || invite.accepted || invite.expiresAt < new Date()) {
+      return res.status(400).json({ error: 'Invalid or expired invitation token.' });
+    }
+
+    await prisma.$transaction([
+      prisma.campaignInvite.update({
+        where: { id: invite.id },
+        data: { accepted: true },
+      }),
+      prisma.campaignMember.create({
+        data: {
+          campaignId: invite.campaignId,
+          userId,
+          role: invite.role,
+        },
+      }),
+    ]);
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createInvite = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const senderId = req.user!.id;
+    const campaignId = req.params.id;
+    const { email, role } = req.body;
+
+    if (!email) return res.status(400).json({ error: 'Email address is required' });
+
+    const membership = await prisma.campaignMember.findFirst({
+      where: { campaignId, userId: senderId },
+    });
+
+    if (!membership || membership.role === 'VIEWER') {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to invite collaborators.' });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    const invite = await prisma.campaignInvite.create({
+      data: {
+        campaignId,
+        senderId,
+        email: email.toLowerCase().trim(),
+        role: role || 'EDITOR',
+        token,
+        expiresAt,
+      },
+    });
+
+    res.status(201).json(invite);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateCampaignStrategy = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const campaignId = req.params.id;
+    const userId = req.user!.id;
+    const { objective, targetTool, extendedObjective } = req.body;
+
+    const membership = await prisma.campaignMember.findFirst({
+      where: { campaignId, userId },
+    });
+
+    if (!membership || membership.role === 'VIEWER') {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions.' });
+    }
+
+    const updated = await prisma.campaign.update({
+      where: { id: campaignId },
+      data: {
+        objective,
+        targetTool,
+        extendedObjective,
+      },
+    });
+
+    res.json(updated);
   } catch (error) {
     next(error);
   }
@@ -190,38 +401,16 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
     const userId = req.user!.id;
 
     const emails = await prisma.outboundEmail.findMany({
-      where: { userId, campaignId, leadId },
+      where: { campaignId, leadId },
       orderBy: { sentAt: 'asc' },
     });
 
-    const unanalyzed = emails.filter(e => e.isIncoming && !e.analysis);
-    for (const email of unanalyzed) {
-      try {
-        const analysis = await aiService.analyzeReply(email.body);
-        await prisma.outboundEmail.update({
-          where: { id: email.id },
-          data: {
-            sentiment: analysis.sentiment,
-            intent: analysis.intent,
-            analysis: JSON.stringify(analysis),
-          },
-        });
-      } catch (err) {
-        logger.error({ err, emailId: email.id }, 'Failed to analyze reply thread');
-      }
-    }
-
-    const updatedEmails = await prisma.outboundEmail.findMany({
-      where: { userId, campaignId, leadId },
-      orderBy: { sentAt: 'asc' },
-    });
-
-    const emailsWithParsedAnalysis = updatedEmails.map(email => ({
+    const parsedEmails = emails.map(email => ({
       ...email,
-      analysis: email.analysis ? JSON.parse(email.analysis) : null,
+      analysis: email.analysis ? (typeof email.analysis === 'string' ? JSON.parse(email.analysis) : email.analysis) : null,
     }));
 
-    res.json(emailsWithParsedAnalysis);
+    res.json(parsedEmails);
   } catch (error) {
     next(error);
   }
@@ -232,12 +421,11 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
     const campaignId = req.params.campaignId as string;
     const leadId = req.params.leadId as string;
     const draftId = req.params.draftId as string;
-    const userId = req.user!.id;
 
     const [lead, campaign, draft] = await Promise.all([
-      prisma.lead.findFirst({ where: { id: leadId, userId } }),
-      prisma.campaign.findFirst({ where: { id: campaignId, userId } }),
-      prisma.draft.findFirst({ where: { id: draftId, userId } }),
+      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.campaign.findUnique({ where: { id: campaignId } }),
+      prisma.draft.findUnique({ where: { id: draftId } }),
     ]);
 
     if (!lead || !campaign || !draft) {
@@ -265,9 +453,9 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
     const userId = req.user!.id;
 
     const [lead, campaign] = await Promise.all([
-      prisma.lead.findFirst({ where: { id: leadId, userId } }),
-      prisma.campaign.findFirst({
-        where: { id: campaignId, userId },
+      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
         include: {
           drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' }, take: 1 },
           domainLinks: { include: { domain: true } },
@@ -351,7 +539,7 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
     const leadId = req.params.leadId as string;
     const userId = req.user!.id;
 
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, userId } });
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
     const latestReply = await prisma.outboundEmail.findFirst({
@@ -360,8 +548,13 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
     });
     if (!latestReply) return res.status(400).json({ error: 'No incoming reply found' });
 
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
-    const analysis = latestReply.analysis ? JSON.parse(latestReply.analysis) : { sentiment: 'neutral' };
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+    let analysis = { sentiment: 'neutral' };
+    if (latestReply.analysis) {
+      try {
+        analysis = typeof latestReply.analysis === 'string' ? JSON.parse(latestReply.analysis) : latestReply.analysis;
+      } catch (e) {}
+    }
 
     const draftData = await aiService.generateDraft(
       'professional',
@@ -403,9 +596,9 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
     const { subject, body } = req.body;
     const userId = req.user!.id;
 
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, userId } });
-    const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, userId },
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
       include: { domainLinks: { include: { domain: true } } },
     });
 
@@ -472,7 +665,7 @@ export const updateAutoReply = async (req: AuthRequest, res: Response, next: Nex
     const id = req.params.id as string;
     const { autoReplyEnabled } = req.body;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: { autoReplyEnabled },
     });
     res.json(updated);
@@ -484,7 +677,7 @@ export const updateSendHour = async (req: AuthRequest, res: Response, next: Next
     const id = req.params.id as string;
     const { sendHourUTC } = req.body;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: { sendHourUTC },
     });
     res.json(updated);
@@ -496,7 +689,7 @@ export const updateActiveHours = async (req: AuthRequest, res: Response, next: N
     const id = req.params.id as string;
     const { activeStartHour, activeEndHour, timezone } = req.body;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: { activeStartHour, activeEndHour, timezone },
     });
     res.json(updated);
@@ -546,7 +739,7 @@ export const updateCampaign = async (req: AuthRequest, res: Response, next: Next
   try {
     const id = req.params.id as string;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: req.body,
     });
     res.json(updated);
@@ -556,7 +749,7 @@ export const updateCampaign = async (req: AuthRequest, res: Response, next: Next
 export const deleteCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    await prisma.campaign.delete({ where: { id, userId: req.user!.id } });
+    await prisma.campaign.delete({ where: { id } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
@@ -565,7 +758,7 @@ export const getCampaignDrafts = async (req: AuthRequest, res: Response, next: N
   try {
     const campaignId = req.params.campaignId as string;
     const drafts = await prisma.draft.findMany({
-      where: { campaignId, userId: req.user!.id, isActive: true },
+      where: { campaignId, isActive: true },
       orderBy: { createdAt: 'desc' },
     });
     res.json(drafts);
@@ -576,7 +769,7 @@ export const updateDraft = async (req: AuthRequest, res: Response, next: NextFun
   try {
     const draftId = req.params.draftId as string;
     const updated = await prisma.draft.update({
-      where: { id: draftId, userId: req.user!.id },
+      where: { id: draftId },
       data: req.body,
     });
     res.json(updated);
@@ -586,7 +779,7 @@ export const updateDraft = async (req: AuthRequest, res: Response, next: NextFun
 export const deleteDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const draftId = req.params.draftId as string;
-    await prisma.draft.delete({ where: { id: draftId, userId: req.user!.id } });
+    await prisma.draft.delete({ where: { id: draftId } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
@@ -612,8 +805,7 @@ export const createCustomDraft = async (req: AuthRequest, res: Response, next: N
 export const generateCampaignDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.campaignId as string;
-    const userId = req.user!.id;
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
     const draftData = await aiService.generateDraft(
@@ -625,7 +817,7 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
 
     const draft = await prisma.draft.create({
       data: {
-        userId,
+        userId: req.user!.id,
         campaignId,
         subject: draftData.subject,
         body: draftData.body,
@@ -642,10 +834,9 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
   try {
     const campaignId = req.params.campaignId as string;
     const stepNumber = req.params.stepNumber as string;
-    const userId = req.user!.id;
     const stepNum = parseInt(stepNumber, 10);
 
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
     const draftData = await aiService.generateDraft(
@@ -661,7 +852,7 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
 
     const draft = await prisma.draft.create({
       data: {
-        userId,
+        userId: req.user!.id,
         campaignId,
         subject: draftData.subject,
         body: draftData.body,
@@ -690,9 +881,18 @@ export const addDomainToCampaign = async (req: AuthRequest, res: Response, next:
   try {
     const id = req.params.id as string;
     const { domainId } = req.body;
-    const link = await prisma.campaignDomain.create({
-      data: { campaignId: id, domainId },
+
+    const link = await prisma.campaignDomain.upsert({
+      where: {
+        campaignId_domainId: {
+          campaignId: id,
+          domainId,
+        },
+      },
+      update: {},
+      create: { campaignId: id, domainId },
     });
+
     res.status(201).json(link);
   } catch (error) { next(error); }
 };

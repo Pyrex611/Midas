@@ -6,17 +6,18 @@ import { verificationService } from './verification.service';
 export class LeadQueueService {
 
   private isEmailBlocked(email: string, blocklist: { pattern: string }[]): boolean {
+    const cleanEmail = email.trim().toLowerCase();
+    const emailDomain = cleanEmail.split('@')[1] || '';
+
     return blocklist.some(b => {
-      if (b.pattern.startsWith('*@')) {
-        return email.endsWith(b.pattern.replace('*@', '@'));
-      }
-      return email === b.pattern;
+      const cleanPattern = b.pattern.trim().toLowerCase().replace(/^\*@?/, '').replace(/^@/, '');
+      if (!cleanPattern) return false;
+      return cleanEmail === cleanPattern || emailDomain === cleanPattern || cleanEmail.endsWith('@' + cleanPattern) || cleanEmail.endsWith('.' + cleanPattern);
     });
   }
 
   async processPendingUploads() {
     try {
-      // 1. Stale Job Recovery
       await prisma.$executeRaw`
         UPDATE "UploadJob"
         SET status = 'PENDING'
@@ -24,7 +25,6 @@ export class LeadQueueService {
         AND updated_at < NOW() - INTERVAL '15 minutes'
       `;
 
-      // 2. Lock pending jobs
       const lockedJobs = await prisma.$queryRaw<{id: string}[]>`
         SELECT id FROM "UploadJob"
         WHERE status IN ('PENDING', 'VERIFYING')
@@ -41,8 +41,7 @@ export class LeadQueueService {
 
         try {
           if (job.status === 'PENDING') {
-            // Prisma automatically updates 'updatedAt' due to @updatedAt in schema
-            await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } }); // <-- Removed manual updatedAt
+            await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } });
             
             const response = await fetch(job.blobUrl);
             const csvText = await response.text();
@@ -52,19 +51,38 @@ export class LeadQueueService {
 
             const blocklist = await prisma.blocklist.findMany({ where: { userId: job.userId } });
 
-            const validRows = [];
+            const validRows: any[] = [];
             let blockedCount = 0;
             
             for (const row of rawLeads) {
-              const email = (row.email || row.Email || '').trim().toLowerCase();
-              const name = (row.name || row.Name || '').trim();
-              if (!email || !name) continue;
+              const keys = Object.keys(row);
+              const emailKey = keys.find(k => /email/i.test(k));
+              const nameKey = keys.find(k => /^(full ?name|name|contact ?name)$/i.test(k));
+              const firstNameKey = keys.find(k => /first ?name/i.test(k));
+              const lastNameKey = keys.find(k => /last ?name/i.test(k));
+              const companyKey = keys.find(k => /company|organization|account/i.test(k));
+              const positionKey = keys.find(k => /title|position|role/i.test(k));
+
+              const email = emailKey ? String(row[emailKey] || '').trim().toLowerCase() : '';
+              let name = nameKey ? String(row[nameKey] || '').trim() : '';
+              if (!name && firstNameKey) {
+                const first = String(row[firstNameKey] || '').trim();
+                const last = lastNameKey ? String(row[lastNameKey] || '').trim() : '';
+                name = `${first} ${last}`.trim();
+              }
+
+              const company = companyKey ? String(row[companyKey] || '').trim() : null;
+              const position = positionKey ? String(row[positionKey] || '').trim() : null;
+
+              if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+              if (!name) name = email.split('@')[0];
 
               if (this.isEmailBlocked(email, blocklist)) {
                 blockedCount++;
                 continue;
               }
-              validRows.push({ name, email, company: row.company || null, position: row.position || null });
+
+              validRows.push({ name, email, company, position });
             }
 
             if (validRows.length === 0) {
@@ -102,7 +120,7 @@ export class LeadQueueService {
               continue;
             }
 
-            let validCount = 0, catchAllCount = 0, invalidCount = 0, duplicatesCount = 0;
+            let validCount = 0, catchAllCount = 0, invalidCount = 0;
             const leadsToInsert = [];
 
             for (const row of rawRows) {
@@ -125,32 +143,33 @@ export class LeadQueueService {
               }
             }
 
-            // CSV Chunking: Insert in batches of 500 to prevent Prisma limits
+            // High-Speed Chunked Batch Inserts
             const CHUNK_SIZE = 500;
+            let insertedCount = 0;
+            let duplicatesCount = 0;
+
             for (let i = 0; i < leadsToInsert.length; i += CHUNK_SIZE) {
               const chunk = leadsToInsert.slice(i, i + CHUNK_SIZE);
-              
-              for (const lead of chunk) {
-                try {
-                  await prisma.lead.create({ data: lead });
-                } catch (e: any) {
-                  if (e.code === 'P2002') duplicatesCount++;
-                }
-              }
+              const insertResult = await prisma.lead.createMany({
+                data: chunk,
+                skipDuplicates: true,
+              });
+              insertedCount += insertResult.count;
+              duplicatesCount += (chunk.length - insertResult.count);
             }
 
             await prisma.uploadJob.update({
               where: { id: job.id },
               data: {
                 status: 'COMPLETED',
-                validLeads: validCount,
+                validLeads: insertedCount,
                 catchAllLeads: catchAllCount,
                 invalidLeads: invalidCount,
                 duplicates: duplicatesCount,
                 error: null 
               }
             });
-            logger.info(`Job ${job.id} completed. Inserted valid leads.`);
+            logger.info(`Job ${job.id} completed. Inserted ${insertedCount} leads.`);
           }
         } catch (jobError: any) {
           await prisma.uploadJob.update({

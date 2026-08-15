@@ -54,7 +54,7 @@ export class WebhooksService {
       }
 
     } catch (error) {
-      logger.error({ error }, 'Webhook processing error');
+      logger.error({ error }, 'Deliverability webhook processing error');
     }
   }
 
@@ -62,12 +62,12 @@ export class WebhooksService {
     const domain = await prisma.domain.findUnique({ where: { id: domainId }});
     if (!domain) return;
 
-    const newBounceRate = type === 'bounce' ? domain.bounceRate + 0.01 : domain.bounceRate;
-    const newComplaintRate = type === 'complaint' ? domain.complaintRate + 0.005 : domain.complaintRate;
+    const totalSent = (domain.sentCountToday || 0) + (domain.warmupDay * 20) || 1;
+    const newBounceRate = type === 'bounce' ? (domain.bounceRate * totalSent + 1) / (totalSent + 1) : domain.bounceRate;
+    const newComplaintRate = type === 'complaint' ? (domain.complaintRate * totalSent + 1) / (totalSent + 1) : domain.complaintRate;
 
     let status = domain.status;
-    
-    if (newBounceRate >= 0.03 || newComplaintRate >= 0.001) {
+    if (newBounceRate >= 0.05 || newComplaintRate >= 0.003) {
       status = 'paused_health_risk';
       logger.warn({ domainId, newBounceRate, newComplaintRate }, 'AUTO-PAUSE KILLSWITCH ACTIVATED FOR DOMAIN');
     }
@@ -82,39 +82,62 @@ export class WebhooksService {
     });
   }
 
-  // --- Phase 5: Inbound Reply Handling ---
   async processInboundEmail(payload: any) {
     try {
-      const messageId = payload['Message-Id'];
-      const inReplyTo = payload['In-Reply-To'];
+      const messageId = payload['Message-Id'] || payload['message-id'];
+      const rawInReplyTo = payload['In-Reply-To'] || payload['in-reply-to'] || payload['References'] || payload['references'];
       const from = payload.sender || payload.from;
       const to = payload.recipient || payload.to;
-      const subject = payload.subject;
-      
-      // Mailgun extracts just the user's reply, stripping out the massive quoted history!
-      const body = payload['stripped-text'] || payload['body-plain'];
+      const subject = payload.subject || 'Re: Outreach';
+      const body = payload['stripped-text'] || payload['body-plain'] || payload['stripped-html'] || '';
 
-      if (!inReplyTo) {
-        logger.debug({ messageId }, 'Inbound email has no In-Reply-To header. Skipping.');
-        return;
+      const cleanInReplyTo = rawInReplyTo ? rawInReplyTo.replace(/^<|>$/g, '').trim() : null;
+
+      let originalEmail = null;
+      if (cleanInReplyTo) {
+        originalEmail = await prisma.outboundEmail.findFirst({
+          where: {
+            isIncoming: false,
+            OR: [
+              { messageId: cleanInReplyTo },
+              { messageId: `<${cleanInReplyTo}>` }
+            ]
+          },
+          select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true }
+        });
       }
 
-      // Find original outbound email
-      const originalEmail = await prisma.outboundEmail.findFirst({
-        where: { messageId: inReplyTo, isIncoming: false },
-        select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true }
-      });
+      // Fallback: match most recently contacted lead by email address if In-Reply-To header is omitted
+      if (!originalEmail && from) {
+        const senderEmailMatch = from.match(/<(.+)>/)?.[1] || from.trim().toLowerCase();
+        const matchedLead = await prisma.lead.findFirst({
+          where: { email: senderEmailMatch },
+          include: {
+            sentEmails: {
+              where: { isIncoming: false },
+              orderBy: { sentAt: 'desc' },
+              take: 1
+            }
+          }
+        });
+        if (matchedLead && matchedLead.sentEmails.length > 0) {
+          const latestSent = matchedLead.sentEmails[0];
+          originalEmail = {
+            id: latestSent.id,
+            leadId: matchedLead.id,
+            campaignId: latestSent.campaignId,
+            userId: latestSent.userId,
+            domainId: latestSent.domainId
+          };
+        }
+      }
 
       if (!originalEmail) {
-        logger.debug({ inReplyTo }, 'Could not map inbound email to an outbound campaign.');
+        logger.debug({ rawInReplyTo, from }, 'Could not map inbound email to outbound campaign');
         return;
       }
 
-      // Check if we already processed this messageId (Mailgun retry protection)
-      const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
-      if (existing) return;
-
-      // 1. Run AI Sentiment & Intent Analysis
+      // Run AI Sentiment & Intent Analysis
       let analysisPayload = null;
       try {
         const analysis = await aiService.analyzeReply(body);
@@ -123,7 +146,7 @@ export class WebhooksService {
         logger.error({ err }, 'AI Analysis failed for inbound email');
       }
 
-      // 2. Save the inbound message
+      // Save Inbound Email
       const inboundEmail = await prisma.outboundEmail.create({
         data: {
           userId: originalEmail.userId,
@@ -133,8 +156,8 @@ export class WebhooksService {
           subject,
           body,
           isIncoming: true,
-          messageId,
-          inReplyTo,
+          messageId: messageId ? messageId.replace(/^<|>$/g, '').trim() : null,
+          inReplyTo: cleanInReplyTo,
           fromAddress: from,
           toAddress: to,
           replyToId: originalEmail.id,
@@ -144,12 +167,13 @@ export class WebhooksService {
         }
       });
 
-      // 3. Mark the Outbound as replied & Lead as REPLIED
+      // Update original outbound email as replied
       await prisma.outboundEmail.update({
         where: { id: originalEmail.id },
         data: { repliedAt: new Date() }
       });
 
+      // Update lead status to REPLIED
       await prisma.lead.update({
         where: { id: originalEmail.leadId },
         data: { 
@@ -158,14 +182,21 @@ export class WebhooksService {
         }
       });
 
-      logger.info({ leadId: originalEmail.leadId }, 'Successfully processed and mapped inbound reply.');
+      // CANCEL ANY REMAINING PENDING FOLLOW-UPS FOR THIS LEAD
+      await prisma.pendingEmail.deleteMany({
+        where: { leadId: originalEmail.leadId }
+      });
 
-      // 4. Trigger Auto-Reply Engine (if enabled on Campaign)
-      const campaign = await prisma.campaign.findUnique({ where: { id: originalEmail.campaignId! }});
-      if (campaign?.autoReplyEnabled) {
-        autoReplyService.processReply(inboundEmail.id).catch(err => {
-          logger.error({ err }, 'Auto-reply engine failed');
-        });
+      logger.info({ leadId: originalEmail.leadId }, 'Successfully processed and mapped inbound reply. Follow-ups cancelled.');
+
+      // Trigger Auto-Reply if enabled on Campaign
+      if (originalEmail.campaignId) {
+        const campaign = await prisma.campaign.findUnique({ where: { id: originalEmail.campaignId } });
+        if (campaign?.autoReplyEnabled) {
+          autoReplyService.processReply(inboundEmail.id).catch(err => {
+            logger.error({ err }, 'Auto-reply engine failed');
+          });
+        }
       }
 
     } catch (error) {

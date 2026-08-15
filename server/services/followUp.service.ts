@@ -42,29 +42,45 @@ export class FollowUpService {
           const initialEmail = lead.sentEmails[0];
           if (!initialEmail) continue;
 
+          // Stop sequence if the prospect has replied
           const hasReplied = await prisma.outboundEmail.findFirst({
             where: {
               leadId: lead.id,
               campaignId: campaign.id,
               isIncoming: true,
-              sentAt: { gt: initialEmail.sentAt },
             },
           });
           if (hasReplied) continue;
 
-          const sentSteps = await prisma.outboundEmail.findMany({
+          // Cross-reference both sent outbound AND queued pending steps to prevent duplicate queuing
+          const sentOutbound = await prisma.outboundEmail.findMany({
             where: {
               leadId: lead.id,
               campaignId: campaign.id,
               isIncoming: false,
               NOT: { id: initialEmail.id },
             },
+            include: { draft: true },
           });
 
-          const sentStepNumbers = new Set(sentSteps.map((_, idx) => idx + 1));
+          const queuedPending = await prisma.pendingEmail.findMany({
+            where: {
+              leadId: lead.id,
+              campaignId: campaign.id,
+            },
+            include: { draft: true },
+          });
+
+          const completedStepNumbers = new Set<number>();
+          sentOutbound.forEach(e => {
+            if (e.draft?.stepNumber) completedStepNumbers.add(e.draft.stepNumber);
+          });
+          queuedPending.forEach(e => {
+            if (e.draft?.stepNumber) completedStepNumbers.add(e.draft.stepNumber);
+          });
 
           for (const step of campaign.followUpSteps) {
-            if (sentStepNumbers.has(step.stepNumber)) continue;
+            if (completedStepNumbers.has(step.stepNumber)) continue;
 
             const targetDate = new Date(initialEmail.sentAt);
             targetDate.setDate(targetDate.getDate() + step.delayDays);
@@ -82,7 +98,7 @@ export class FollowUpService {
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Follow-up check failed');
+      logger.error({ error }, 'Follow-up sequencer execution failed');
     } finally {
       this.isRunning = false;
     }
@@ -104,7 +120,6 @@ export class FollowUpService {
 
       const draft = await prisma.draft.findFirst({
         where: {
-          userId,
           campaignId,
           useCase: 'followup',
           stepNumber: step.stepNumber,

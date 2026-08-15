@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import { inboxAPI } from '../services/api';
 
 export const Inbox: React.FC = () => {
   const [threads, setThreads] = useState<any[]>([]);
@@ -10,13 +10,13 @@ export const Inbox: React.FC = () => {
 
   const fetchInbox = async () => {
     try {
-      const res = await axios.get('/api/inbox');
+      const res = await inboxAPI.getThreads();
       setThreads(res.data);
       if (res.data.length > 0 && !activeThreadId) {
         setActiveThreadId(res.data[0].id);
       }
     } catch (error) {
-      console.error('Failed to load inbox');
+      console.error('Failed to load inbox', error);
     } finally {
       setLoading(false);
     }
@@ -24,7 +24,6 @@ export const Inbox: React.FC = () => {
 
   useEffect(() => {
     fetchInbox();
-    // Poll for new replies every 30 seconds
     const interval = setInterval(fetchInbox, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -32,12 +31,34 @@ export const Inbox: React.FC = () => {
   const handleSendReply = async () => {
     if (!replyBody.trim() || !activeThreadId) return;
     setSending(true);
+    
+    // Optimistically update thread view for immediate feedback
+    const activeLead = threads.find(t => t.id === activeThreadId);
+    const optimisticMessage = {
+      id: `temp-${Date.now()}`,
+      subject: activeLead?.sentEmails?.[activeLead.sentEmails.length - 1]?.subject || 'Re: Outreach',
+      body: replyBody,
+      sentAt: new Date().toISOString(),
+      isIncoming: false,
+    };
+
+    setThreads(prev =>
+      prev.map(t =>
+        t.id === activeThreadId
+          ? { ...t, sentEmails: [...(t.sentEmails || []), optimisticMessage] }
+          : t
+      )
+    );
+
+    const bodyToSend = replyBody;
+    setReplyBody('');
+
     try {
-      await axios.post(`/api/inbox/${activeThreadId}/reply`, { body: replyBody });
-      setReplyBody('');
-      await fetchInbox(); // Refresh thread to show new message
+      await inboxAPI.sendReply(activeThreadId, bodyToSend);
+      await fetchInbox();
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to send reply');
+      await fetchInbox();
     } finally {
       setSending(false);
     }
@@ -48,7 +69,7 @@ export const Inbox: React.FC = () => {
   const getSentimentBadge = (analysisStr: string) => {
     if (!analysisStr) return null;
     try {
-      const analysis = JSON.parse(analysisStr);
+      const analysis = typeof analysisStr === 'string' ? JSON.parse(analysisStr) : analysisStr;
       const s = analysis.sentiment;
       const colors: any = {
         'very positive': 'bg-green-600 text-white',
@@ -74,10 +95,10 @@ export const Inbox: React.FC = () => {
           </div>
           <div className="flex-1 overflow-y-auto">
             {threads.length === 0 ? (
-              <div className="p-4 text-center text-sm text-gray-500">No replies yet.</div>
+              <div className="p-4 text-center text-sm text-gray-500">No replies recorded yet.</div>
             ) : (
               threads.map(thread => {
-                const latestEmail = thread.sentEmails[thread.sentEmails.length - 1];
+                const latestEmail = thread.sentEmails?.[thread.sentEmails.length - 1];
                 return (
                   <div 
                     key={thread.id} 
@@ -86,12 +107,14 @@ export const Inbox: React.FC = () => {
                   >
                     <div className="flex justify-between items-start mb-1">
                       <span className="font-semibold text-gray-900 truncate">{thread.name}</span>
-                      <span className="text-xs text-gray-500">{new Date(latestEmail?.sentAt).toLocaleDateString()}</span>
+                      <span className="text-xs text-gray-500">
+                        {latestEmail ? new Date(latestEmail.sentAt).toLocaleDateString() : ''}
+                      </span>
                     </div>
                     <div className="text-xs text-blue-600 mb-1 truncate">{thread.campaign?.name}</div>
-                    <div className="text-sm text-gray-600 truncate mb-2">{latestEmail?.subject}</div>
+                    <div className="text-sm text-gray-600 truncate mb-2">{latestEmail?.subject || 'No subject'}</div>
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-gray-400 truncate w-2/3">{latestEmail?.body}</span>
+                      <span className="text-xs text-gray-400 truncate w-2/3">{latestEmail?.body || ''}</span>
                       {latestEmail?.isIncoming && getSentimentBadge(latestEmail.analysis)}
                     </div>
                   </div>
@@ -108,17 +131,17 @@ export const Inbox: React.FC = () => {
               <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">{activeThread.name} <span className="text-sm font-normal text-gray-500">({activeThread.email})</span></h2>
-                  <p className="text-xs text-gray-500">{activeThread.company} | {activeThread.position}</p>
+                  <p className="text-xs text-gray-500">{activeThread.company || 'No company'} | {activeThread.position || 'No position'}</p>
                 </div>
               </div>
 
               {/* Conversation History */}
               <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50">
-                {activeThread.sentEmails.map((msg: any) => {
+                {(activeThread.sentEmails || []).map((msg: any) => {
                   const isIncoming = msg.isIncoming;
                   let analysis = null;
                   if (msg.analysis) {
-                    try { analysis = JSON.parse(msg.analysis); } catch(e){}
+                    try { analysis = typeof msg.analysis === 'string' ? JSON.parse(msg.analysis) : msg.analysis; } catch(e){}
                   }
 
                   return (
@@ -135,7 +158,7 @@ export const Inbox: React.FC = () => {
                           {msg.body}
                         </div>
                         
-                        {/* AI Insights (Only on inbound) */}
+                        {/* AI Insights on inbound replies */}
                         {isIncoming && analysis && (
                           <div className="mt-4 pt-3 border-t border-dashed border-gray-200">
                             <div className="flex items-center gap-2 mb-2">
@@ -174,7 +197,7 @@ export const Inbox: React.FC = () => {
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-400">
-              Select a thread to view conversation
+              Select a thread to view the conversation
             </div>
           )}
         </div>

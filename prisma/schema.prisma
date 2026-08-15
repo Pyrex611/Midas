@@ -72,6 +72,39 @@ model CampaignDomain {
   @@unique([campaignId, domainId])
 }
 
+enum CampaignRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model CampaignMember {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String       @map("user_id") @db.Uuid
+  role       CampaignRole @default(EDITOR)
+  joinedAt   DateTime     @default(now()) @map("joined_at")
+
+  @@unique([campaignId, userId])
+  @@index([userId])
+}
+
+model CampaignInvite {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  senderId   String       @map("sender_id") @db.Uuid
+  email      String
+  role       CampaignRole @default(EDITOR)
+  token      String       @unique
+  accepted   Boolean      @default(false)
+  expiresAt  DateTime     @map("expires_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@index([email])
+}
+
 model Campaign {
   id               String   @id @default(cuid())
   userId           String   @map("user_id") @db.Uuid
@@ -91,6 +124,9 @@ model Campaign {
   activeStartHour  Int?     @map("active_start_hour")
   activeEndHour    Int?     @map("active_end_hour")
   timezone         String?
+  objective         String?
+  targetTool        String?  @map("target_tool")
+  extendedObjective String?  @map("extended_objective")
 
   followUpSteps FollowUpStep[]
   leads         Lead[]
@@ -98,6 +134,9 @@ model Campaign {
   drafts        Draft[]
   pendingEmails PendingEmail[]
   domainLinks   CampaignDomain[] 
+  members       CampaignMember[]
+  invites       CampaignInvite[]
+
   @@index([userId])
 }
 
@@ -151,6 +190,9 @@ model Lead {
   replyDrafts    Draft[]         @relation("LeadDrafts")
   pendingEmails  PendingEmail[]
   @@unique([userId, email])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([status])
 }
 
 model Draft {
@@ -200,7 +242,7 @@ model OutboundEmail {
   domainId    String?  @map("domain_id")
   domain      Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
   leadId      String   @map("lead_id")
-  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaignId  String?  @map("campaign_id")
   campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   draftId     String?  @map("draft_id")
@@ -231,6 +273,11 @@ model OutboundEmail {
   sentiment     String?
   intent        String?
   analysis      String?
+
+  @@index([userId])
+  @@index([campaignId])
+  @@index([leadId])
+  @@index([messageId])
 }
 
 model PendingEmail {
@@ -257,6 +304,9 @@ model PendingEmail {
   preferredDomainId  String?  @map("preferred_domain_id")
   preferredDomain    Domain?  @relation("PendingEmailPreferred", fields: [preferredDomainId], references: [id], onDelete: SetNull)
   @@index([status, scheduledAt])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([leadId])
 }
 
 model UserSettings {
