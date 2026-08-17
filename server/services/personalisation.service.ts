@@ -3,7 +3,7 @@ export class PersonalisationService {
     const spintaxRegex = /\{([^{}]+)\}/g;
     let result = text;
     let iterations = 0;
-    const maxIterations = 50; // Safeguard against recursive loop freezes
+    const maxIterations = 50;
 
     while (spintaxRegex.test(result) && iterations < maxIterations) {
       result = result.replace(spintaxRegex, (_, choices) => {
@@ -63,7 +63,6 @@ export class PersonalisationService {
       pSubject = pSubject.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
     }
 
-    // Clean up any remaining unparsed placeholders
     pSubject = pSubject.replace(/\{\{[^}]+\}\}/g, '').trim();
     pBody = pBody.replace(/\{\{[^}]+\}\}/g, '').trim();
 

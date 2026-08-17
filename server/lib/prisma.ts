@@ -1,20 +1,26 @@
 import { PrismaNeonHttp } from '@prisma/adapter-neon';
 import { PrismaClient } from '@prisma/client';
 
-console.log('[DEBUG PRISMA] Initializing Stateless Prisma Neon HTTP Fetch Adapter...');
+console.log('[DEBUG PRISMA] Initializing Neon HTTP Query Driver...');
 
 const prismaClientSingleton = () => {
-  const connectionString = process.env.DATABASE_URL;
+  let connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is not set in environment variables');
   }
 
-  // Set up the Prisma 7 Neon HTTP stateless adapter (exactly 2 arguments required: connectionString, options)
+  // Ensure connection URL targets direct compute endpoint for HTTP queries
+  connectionString = connectionString.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
+  connectionString = connectionString.replace(/&?channel_binding=[^&]*/g, '');
+  connectionString = connectionString.replace(/&?pgbouncer=[^&]*/g, '');
+  connectionString = connectionString.replace(/&?connection_limit=[^&]*/g, '');
+  connectionString = connectionString.replace(/\?&/, '?').replace(/\?$/, '').trim();
+
   const adapter = new PrismaNeonHttp(connectionString, {});
-  
+
   return new PrismaClient({
     adapter,
-    log: ['query', 'error', 'warn'],
+    log: ['error', 'warn'],
   });
 };
 

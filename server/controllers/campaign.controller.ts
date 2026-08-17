@@ -47,7 +47,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       return camp;
     });
 
-    // Generate Initial Draft Variations
     const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
     const createdDrafts = [];
     for (let i = 0; i < 5; i++) {
@@ -73,7 +72,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       createdDrafts.push(savedDraft);
     }
 
-    // Create Initial Follow-Up Sequence Step
     await prisma.followUpStep.create({
       data: {
         campaignId: campaign.id,
@@ -82,7 +80,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       },
     });
 
-    // AUTOMATIC INITIAL QUEUE DISPATCH FOR ATTACHED LEADS
+    // Auto-queue initial outreach emails when starting campaign with leads
     if (leadIds?.length && createdDrafts.length > 0) {
       await prisma.lead.updateMany({
         where: { id: { in: leadIds }, userId },
@@ -152,7 +150,7 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
   try {
     const userId = req.user!.id;
     const id = req.params.id as string;
-    
+
     const isMember = await prisma.campaignMember.findFirst({
       where: { campaignId: id, userId },
     });
@@ -162,7 +160,7 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
     });
 
     if (!isMember && !isCreator) {
-      return res.status(403).json({ error: 'Forbidden: You do not have access to this campaign' });
+      return res.status(403).json({ error: 'Forbidden: Access denied' });
     }
 
     const campaign = await prisma.campaign.findUnique({
@@ -242,7 +240,7 @@ export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: 
       });
     }
 
-    // AUTOMATIC QUEUE INJECTION FOR NEWLY ADDED LEADS
+    // Auto-generate queue records for newly added leads
     const initialDraft = await prisma.draft.findFirst({
       where: { campaignId: id, isActive: true, useCase: 'initial' },
       orderBy: { createdAt: 'asc' },
@@ -266,7 +264,7 @@ export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: 
       });
 
       emailQueueService.processQueue().catch(err => {
-        logger.error({ err }, 'Background queue execution error');
+        logger.error({ err }, 'Background queue trigger failed');
       });
     }
 
@@ -334,14 +332,14 @@ export const createInvite = async (req: AuthRequest, res: Response, next: NextFu
     const campaignId = req.params.id;
     const { email, role } = req.body;
 
-    if (!email) return res.status(400).json({ error: 'Email address is required' });
+    if (!email) return res.status(400).json({ error: 'Email is required' });
 
     const membership = await prisma.campaignMember.findFirst({
       where: { campaignId, userId: senderId },
     });
 
     if (!membership || membership.role === 'VIEWER') {
-      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to invite collaborators.' });
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions.' });
     }
 
     const token = crypto.randomBytes(32).toString('hex');
@@ -398,7 +396,6 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
   try {
     const campaignId = req.params.campaignId as string;
     const leadId = req.params.leadId as string;
-    const userId = req.user!.id;
 
     const emails = await prisma.outboundEmail.findMany({
       where: { campaignId, leadId },
@@ -605,7 +602,7 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
     if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found' });
 
     const activeDomain = campaign.domainLinks.map(l => l.domain).find(d => d.status === 'active');
-    if (!activeDomain) return res.status(400).json({ error: 'No active domain found for sending reply' });
+    if (!activeDomain) return res.status(400).json({ error: 'No active domain found' });
 
     const latestIncoming = await prisma.outboundEmail.findFirst({
       where: { leadId, campaignId, isIncoming: true },

@@ -13,11 +13,11 @@ export const uploadLeads = [
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-      
+
       const userId = req.user!.id;
       const fileExt = req.file.originalname.split('.').pop() || 'csv';
       const safeName = `uploads/${userId}-${Date.now()}.${fileExt}`;
-      
+
       const blobUrl = await blobService.uploadFile(safeName, req.file.buffer);
 
       const job = await prisma.uploadJob.create({
@@ -29,7 +29,7 @@ export const uploadLeads = [
         }
       });
 
-      // TRIGGER BACKGROUND PROCESSING IMMEDIATELY
+      // Trigger background processing asynchronously
       leadQueueService.processPendingUploads().catch(err => {
         logger.error({ err }, 'Background lead upload worker error');
       });
@@ -65,8 +65,8 @@ export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFu
   try {
     const { pattern } = req.body;
     if (!pattern) return res.status(400).json({ error: 'Pattern is required' });
-    const block = await prisma.blocklist.create({ 
-      data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() } 
+    const block = await prisma.blocklist.create({
+      data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() }
     });
     res.status(201).json(block);
   } catch (error) { next(error); }

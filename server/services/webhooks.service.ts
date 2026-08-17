@@ -5,7 +5,7 @@ import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
 
 export class WebhooksService {
-  
+
   verifyMailgunSignature(timestamp: string, token: string, signature: string): boolean {
     const webhookKey = process.env.MAILGUN_WEBHOOK_KEY;
     if (!webhookKey) return false;
@@ -23,14 +23,14 @@ export class WebhooksService {
     if (!eventData) return;
 
     const outboundEmailId = eventData['user-variables']?.outbound_email_id;
-    if (!outboundEmailId) return; 
+    if (!outboundEmailId) return;
 
-    const eventType = eventData.event; 
+    const eventType = eventData.event;
 
     try {
-      const email = await prisma.outboundEmail.findUnique({ 
+      const email = await prisma.outboundEmail.findUnique({
         where: { id: outboundEmailId },
-        include: { domain: true } 
+        include: { domain: true }
       });
       if (!email) return;
 
@@ -38,18 +38,18 @@ export class WebhooksService {
 
       if (eventType === 'opened' && !email.openedAt) {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { openedAt: now } });
-      } 
+      }
       else if (eventType === 'clicked' && !email.clickedAt) {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { clickedAt: now } });
-      } 
+      }
       else if (eventType === 'bounced' || eventType === 'failed') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { bouncedAt: now, status: 'BOUNCED' } });
         await prisma.lead.update({ where: { id: email.leadId }, data: { outreachStatus: 'BOUNCED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'bounce');
-      } 
+      }
       else if (eventType === 'complained') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { spamComplaint: true } });
-        await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED' } }); 
+        await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'complaint');
       }
 
@@ -107,7 +107,7 @@ export class WebhooksService {
         });
       }
 
-      // Fallback: match most recently contacted lead by email address if In-Reply-To header is omitted
+      // Fallback: match most recently contacted lead by email address
       if (!originalEmail && from) {
         const senderEmailMatch = from.match(/<(.+)>/)?.[1] || from.trim().toLowerCase();
         const matchedLead = await prisma.lead.findFirst({
@@ -137,7 +137,6 @@ export class WebhooksService {
         return;
       }
 
-      // Run AI Sentiment & Intent Analysis
       let analysisPayload = null;
       try {
         const analysis = await aiService.analyzeReply(body);
@@ -146,7 +145,6 @@ export class WebhooksService {
         logger.error({ err }, 'AI Analysis failed for inbound email');
       }
 
-      // Save Inbound Email
       const inboundEmail = await prisma.outboundEmail.create({
         data: {
           userId: originalEmail.userId,
@@ -167,29 +165,26 @@ export class WebhooksService {
         }
       });
 
-      // Update original outbound email as replied
       await prisma.outboundEmail.update({
         where: { id: originalEmail.id },
         data: { repliedAt: new Date() }
       });
 
-      // Update lead status to REPLIED
       await prisma.lead.update({
         where: { id: originalEmail.leadId },
-        data: { 
-          outreachStatus: 'REPLIED', 
-          status: 'REPLIED' 
+        data: {
+          outreachStatus: 'REPLIED',
+          status: 'REPLIED'
         }
       });
 
-      // CANCEL ANY REMAINING PENDING FOLLOW-UPS FOR THIS LEAD
+      // Cancel any remaining queued follow-up steps for this lead
       await prisma.pendingEmail.deleteMany({
         where: { leadId: originalEmail.leadId }
       });
 
-      logger.info({ leadId: originalEmail.leadId }, 'Successfully processed and mapped inbound reply. Follow-ups cancelled.');
+      logger.info({ leadId: originalEmail.leadId }, 'Inbound reply processed, follow-ups cancelled.');
 
-      // Trigger Auto-Reply if enabled on Campaign
       if (originalEmail.campaignId) {
         const campaign = await prisma.campaign.findUnique({ where: { id: originalEmail.campaignId } });
         if (campaign?.autoReplyEnabled) {

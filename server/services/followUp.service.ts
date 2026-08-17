@@ -42,7 +42,7 @@ export class FollowUpService {
           const initialEmail = lead.sentEmails[0];
           if (!initialEmail) continue;
 
-          // Stop sequence if the prospect has replied
+          // Stop follow-ups if prospect replied
           const hasReplied = await prisma.outboundEmail.findFirst({
             where: {
               leadId: lead.id,
@@ -52,7 +52,7 @@ export class FollowUpService {
           });
           if (hasReplied) continue;
 
-          // Cross-reference both sent outbound AND queued pending steps to prevent duplicate queuing
+          // Verify both sent outbound and queued pending steps to prevent duplicates
           const sentOutbound = await prisma.outboundEmail.findMany({
             where: {
               leadId: lead.id,

@@ -4,27 +4,25 @@ import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
 
 export class EmailQueueService {
-  
+
   private checkTimezone(timezone: string | null, startHour: number | null, endHour: number | null): boolean {
     if (startHour === null || startHour === undefined || endHour === null || endHour === undefined) return true;
     const tz = timezone || 'UTC';
     try {
       const formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: tz });
       let currentHour = parseInt(formatter.format(new Date()), 10);
-      if (currentHour === 24) currentHour = 0; // Normalize midnight 24 -> 0
-      
-      // Support overnight windows (e.g. 20:00 to 04:00) as well as daytime windows
+      if (currentHour === 24) currentHour = 0;
+
       return startHour <= endHour
         ? currentHour >= startHour && currentHour < endHour
         : currentHour >= startHour || currentHour < endHour;
     } catch (e) {
-      return true; 
+      return true;
     }
   }
 
   async processQueue() {
     try {
-      // 1. Recover any stale processing tasks older than 10 minutes
       await prisma.$executeRaw`
         UPDATE "PendingEmail"
         SET status = 'PENDING'
@@ -32,7 +30,6 @@ export class EmailQueueService {
         AND updated_at < NOW() - INTERVAL '10 minutes'
       `;
 
-      // 2. Concurrency-Safe Claiming with SKIP LOCKED
       const lockedEmails = await prisma.$queryRaw<{id: string}[]>`
         SELECT id FROM "PendingEmail"
         WHERE status = 'PENDING'
@@ -64,7 +61,6 @@ export class EmailQueueService {
         try {
           const campaign = pending.campaign;
 
-          // Guard against timezone windows
           if (!this.checkTimezone(campaign.timezone, campaign.activeStartHour, campaign.activeEndHour)) {
             await prisma.pendingEmail.update({
               where: { id: pending.id },
@@ -78,15 +74,14 @@ export class EmailQueueService {
 
           let selectedDomain = activeDomains[campaign.lastDomainIndex % activeDomains.length];
 
-          // Daily quota reset
           const today = new Date().toISOString().split('T')[0];
           const lastReset = new Date(selectedDomain.lastSentReset).toISOString().split('T')[0];
-          
+
           if (today !== lastReset) {
             selectedDomain = await prisma.domain.update({
               where: { id: selectedDomain.id },
-              data: { 
-                sentCountToday: 0, 
+              data: {
+                sentCountToday: 0,
                 lastSentReset: new Date(),
                 warmupDay: { increment: 1 },
                 dailyLimit: { increment: 5 }
@@ -94,7 +89,6 @@ export class EmailQueueService {
             });
           }
 
-          // Limit protection: Reschedule for tomorrow without dropping or failing the email
           if (selectedDomain.sentCountToday >= selectedDomain.dailyLimit) {
             const tomorrow = new Date();
             tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
@@ -104,11 +98,10 @@ export class EmailQueueService {
               where: { id: pending.id },
               data: { status: 'PENDING', scheduledAt: tomorrow }
             });
-            logger.info({ domain: selectedDomain.domainName }, 'Domain daily limit reached. Re-queued for next window.');
+            logger.info({ domain: selectedDomain.domainName }, 'Domain limit reached. Deferring to next window.');
             continue;
           }
 
-          // Personalize text with smart fallbacks
           const { subject, body } = personalisationService.personalise(
             pending.lead,
             pending.subject,
@@ -134,9 +127,9 @@ export class EmailQueueService {
             selectedDomain,
             pending.lead.email,
             subject,
-            body.replace(/\n/g, '<br>'), 
+            body.replace(/\n/g, '<br>'),
             body,
-            outboundRecord.id, 
+            outboundRecord.id,
             campaign.senderName,
             pending.inReplyTo
           );
@@ -152,7 +145,7 @@ export class EmailQueueService {
               data: { sentCountToday: { increment: 1 } }
             });
 
-            // Persist round-robin rotation index
+            // Update round-robin rotation counter
             await prisma.campaign.update({
               where: { id: campaign.id },
               data: { lastDomainIndex: { increment: 1 } }

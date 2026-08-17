@@ -42,10 +42,10 @@ export class LeadQueueService {
         try {
           if (job.status === 'PENDING') {
             await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } });
-            
+
             const response = await fetch(job.blobUrl);
             const csvText = await response.text();
-            
+
             const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
             const rawLeads: any[] = parsed.data;
 
@@ -53,7 +53,7 @@ export class LeadQueueService {
 
             const validRows: any[] = [];
             let blockedCount = 0;
-            
+
             for (const row of rawLeads) {
               const keys = Object.keys(row);
               const emailKey = keys.find(k => /email/i.test(k));
@@ -86,9 +86,9 @@ export class LeadQueueService {
             }
 
             if (validRows.length === 0) {
-              await prisma.uploadJob.update({ 
-                where: { id: job.id }, 
-                data: { status: 'COMPLETED', totalRows: rawLeads.length, blockedLeads: blockedCount } 
+              await prisma.uploadJob.update({
+                where: { id: job.id },
+                data: { status: 'COMPLETED', totalRows: rawLeads.length, blockedLeads: blockedCount }
               });
               continue;
             }
@@ -98,23 +98,23 @@ export class LeadQueueService {
 
             await prisma.uploadJob.update({
               where: { id: job.id },
-              data: { 
-                status: 'VERIFYING', 
-                verificationId, 
+              data: {
+                status: 'VERIFYING',
+                verificationId,
                 totalRows: rawLeads.length,
                 blockedLeads: blockedCount,
-                error: JSON.stringify(validRows) 
+                error: JSON.stringify(validRows)
               }
             });
             logger.info(`Job ${job.id} sent to verification.`);
-          } 
-          
+          }
+
           else if (job.status === 'VERIFYING' && job.verificationId) {
             const rawRows = JSON.parse(job.error || '[]');
             const emails = rawRows.map((r: any) => r.email);
-            
+
             const { isComplete, results } = await verificationService.getBulkJobResults(job.verificationId, emails);
-            
+
             if (!isComplete) {
               logger.debug(`Job ${job.id} still verifying...`);
               continue;
@@ -143,7 +143,6 @@ export class LeadQueueService {
               }
             }
 
-            // High-Speed Chunked Batch Inserts
             const CHUNK_SIZE = 500;
             let insertedCount = 0;
             let duplicatesCount = 0;
@@ -166,7 +165,7 @@ export class LeadQueueService {
                 catchAllLeads: catchAllCount,
                 invalidLeads: invalidCount,
                 duplicates: duplicatesCount,
-                error: null 
+                error: null
               }
             });
             logger.info(`Job ${job.id} completed. Inserted ${insertedCount} leads.`);
