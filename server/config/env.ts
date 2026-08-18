@@ -20,7 +20,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  CORS_ORIGIN: z.string().default('http://localhost:5173,https://midas-aem.vercel.app'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
   // Fallback 64-char hex key prevents startup crashes if unconfigured

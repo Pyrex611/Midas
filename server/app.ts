@@ -15,17 +15,36 @@ import userSettingsRoutes from './routes/userSettings.routes';
 
 const app = express();
 
-// Secure CORS policy with multiple origins support
-const allowedOrigins = (env.CORS_ORIGIN || '').split(',').map(o => o.trim());
+// Parse and clean configured allowed origins
+const allowedOrigins = (env.CORS_ORIGIN || '')
+  .split(',')
+  .map(o => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || env.NODE_ENV === 'development') {
+    // Allow non-browser requests (e.g. server-to-server, webhooks, curl, VPS crons)
+    if (!origin) return callback(null, true);
+
+    const cleanOrigin = origin.trim().replace(/\/$/, '');
+
+    // Allow configured origins, all Vercel deployments, localhost, and dev environments
+    const isAllowed =
+      allowedOrigins.includes(cleanOrigin) ||
+      cleanOrigin.endsWith('.vercel.app') ||
+      /^https?:\/\/localhost(:\d+)?$/.test(cleanOrigin) ||
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(cleanOrigin) ||
+      env.NODE_ENV === 'development';
+
+    if (isAllowed) {
       callback(null, true);
     } else {
-      callback(new Error('Blocked by CORS policy'));
+      callback(null, false);
     }
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
 
 // Body parsing with support for JSON and URL-encoded forms (required for Mailgun webhooks)
