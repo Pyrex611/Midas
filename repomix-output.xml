@@ -1755,12 +1755,18 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Standardize database connection strings
+// Standardize and sanitize the database connection URL for Neon's HTTP SQL Gateway
 const rawDatabaseUrl = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL || '';
 
 if (rawDatabaseUrl) {
-  // Clean trailing characters from standard pooled connection urls
-  let cleanUrl = rawDatabaseUrl.trim();
+  // 1. Strip out "-pooler" from hostname (HTTP SQL Gateway only accepts direct compute endpoints)
+  let cleanUrl = rawDatabaseUrl.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
+  // 2. Strip out TCP PgBouncer parameters that interfere with HTTP queries
+  cleanUrl = cleanUrl.replace(/&?channel_binding=[^&]*/g, '');
+  cleanUrl = cleanUrl.replace(/&?pgbouncer=[^&]*/g, '');
+  cleanUrl = cleanUrl.replace(/&?connection_limit=[^&]*/g, '');
+  cleanUrl = cleanUrl.replace(/\?&/, '?').replace(/\?$/, '').trim();
+
   process.env.DATABASE_URL = cleanUrl;
 }
 
@@ -1774,10 +1780,8 @@ const envSchema = z.object({
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
   ENCRYPTION_KEY: z.string().length(64),
-  // Email service selector
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp']).default('ethereal'),
 
-  // SMTP settings (required if EMAIL_SERVICE=smtp)
   EMAIL_FROM: z.string().default('noreply@outreach.local'),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
@@ -1785,7 +1789,6 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
 
-  // AI Provider
   AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).default('mock'),
   PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).optional(),
   OPENAI_API_KEY: z.string().optional(),
@@ -1800,7 +1803,6 @@ const envSchema = z.object({
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),
 
-  // IMAP settings
   IMAP_HOST: z.string().optional(),
   IMAP_PORT: z.string().transform(Number).optional(),
   IMAP_USER: z.string().optional(),
@@ -1809,13 +1811,13 @@ const envSchema = z.object({
   IMAP_MAILBOX: z.string().default('INBOX'),
   IMAP_POLL_INTERVAL: z.string().default('300000').transform(Number),
   IMAP_CONN_TIMEOUT: z.string().default('30000').transform(Number),
-  
+
   AI_REQUEST_DELAY_MS: z.string().default('500').transform(Number),
 });
 
 const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
-  console.error('❌ Invalid environment variables:', parsed.error.format());
+  console.error('Invalid environment variables:', parsed.error.format());
   process.exit(1);
 }
 
@@ -2011,6 +2013,7 @@ import prisma from '../lib/prisma';
 import { personalisationService } from '../services/personalisation.service';
 import { emailService } from '../services/email.service';
 import { aiService } from '../services/ai.service';
+import { emailQueueService } from '../services/emailQueue.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
 
@@ -2020,7 +2023,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
     const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC, objective, targetTool, extendedObjective } = req.body;
     if (!name) return res.status(400).json({ error: 'Campaign name is required' });
 
-    // Use a transactional write to create campaign AND set automatic owner membership
     const campaign = await prisma.$transaction(async (tx) => {
       const camp = await tx.campaign.create({
         data: {
@@ -2054,15 +2056,9 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       return camp;
     });
 
-    if (leadIds?.length) {
-      await prisma.lead.updateMany({
-        where: { id: { in: leadIds }, userId },
-        data: { outreachStatus: 'PENDING', campaignId: campaign.id },
-      });
-    }
-
+    const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
+    const createdDrafts = [];
     for (let i = 0; i < 5; i++) {
-      const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
       const draft = await aiService.generateDraft(
         tones[i % tones.length],
         'initial',
@@ -2072,7 +2068,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
         undefined,
         undefined
       );
-      await prisma.draft.create({
+      const savedDraft = await prisma.draft.create({
         data: {
           userId,
           campaignId: campaign.id,
@@ -2082,6 +2078,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
           useCase: 'initial',
         },
       });
+      createdDrafts.push(savedDraft);
     }
 
     await prisma.followUpStep.create({
@@ -2092,10 +2089,39 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       },
     });
 
+    // Auto-queue initial outreach emails when starting campaign with leads
+    if (leadIds?.length && createdDrafts.length > 0) {
+      await prisma.lead.updateMany({
+        where: { id: { in: leadIds }, userId },
+        data: { outreachStatus: 'PENDING', campaignId: campaign.id },
+      });
+
+      const initialDraft = createdDrafts[0];
+      const pendingRecords = leadIds.map((leadId: string) => ({
+        userId,
+        campaignId: campaign.id,
+        leadId,
+        draftId: initialDraft.id,
+        subject: initialDraft.subject,
+        body: initialDraft.body,
+        status: 'PENDING',
+        priority: 1,
+        scheduledAt: new Date(),
+      }));
+
+      await prisma.pendingEmail.createMany({
+        data: pendingRecords,
+      });
+
+      emailQueueService.processQueue().catch(err => {
+        logger.error({ err }, 'Background queue trigger failed');
+      });
+    }
+
     res.status(201).json({
       success: true,
       campaignId: campaign.id,
-      message: leadIds?.length ? `Campaign started with ${leadIds.length} leads` : 'Campaign created',
+      message: leadIds?.length ? `Campaign started with ${leadIds.length} leads queued` : 'Campaign created',
     });
   } catch (error) {
     next(error);
@@ -2105,7 +2131,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
 export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    // Query campaigns where user is EITHER the original owner OR is a verified member
     const campaigns = await prisma.campaign.findMany({
       where: {
         OR: [
@@ -2134,8 +2159,7 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
   try {
     const userId = req.user!.id;
     const id = req.params.id as string;
-    
-    // Check if the user is the owner or member
+
     const isMember = await prisma.campaignMember.findFirst({
       where: { campaignId: id, userId },
     });
@@ -2145,7 +2169,7 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
     });
 
     if (!isMember && !isCreator) {
-      return res.status(403).json({ error: 'Forbidden: You do not have access to this campaign' });
+      return res.status(403).json({ error: 'Forbidden: Access denied' });
     }
 
     const campaign = await prisma.campaign.findUnique({
@@ -2191,7 +2215,74 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
   }
 };
 
-// --- Campaign Collaboration Backend Handlers ---
+export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const id = req.params.id as string;
+    const { leadIds } = req.body;
+    if (!Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({ error: 'leadIds must be a non-empty array' });
+    }
+
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, OR: [{ userId }, { members: { some: { userId } } }] },
+      include: { leads: { select: { id: true } } },
+    });
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+    const existingLeadIds = new Set(campaign.leads.map(l => l.id));
+    const newLeadIds = leadIds.filter(lid => !existingLeadIds.has(lid));
+
+    if (newLeadIds.length === 0) {
+      return res.json({ added: 0, skipped: leadIds.length });
+    }
+
+    await prisma.lead.updateMany({
+      where: { id: { in: newLeadIds } },
+      data: { campaignId: id, outreachStatus: 'PENDING' },
+    });
+
+    if (campaign.status === 'DRAFT') {
+      await prisma.campaign.update({
+        where: { id },
+        data: { status: 'ACTIVE', startedAt: new Date() },
+      });
+    }
+
+    // Auto-generate queue records for newly added leads
+    const initialDraft = await prisma.draft.findFirst({
+      where: { campaignId: id, isActive: true, useCase: 'initial' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (initialDraft) {
+      const pendingRecords = newLeadIds.map((leadId: string) => ({
+        userId,
+        campaignId: id,
+        leadId,
+        draftId: initialDraft.id,
+        subject: initialDraft.subject,
+        body: initialDraft.body,
+        status: 'PENDING',
+        priority: 1,
+        scheduledAt: new Date(),
+      }));
+
+      await prisma.pendingEmail.createMany({
+        data: pendingRecords,
+      });
+
+      emailQueueService.processQueue().catch(err => {
+        logger.error({ err }, 'Background queue trigger failed');
+      });
+    }
+
+    res.json({ added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getMyInvites = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const email = req.user!.email;
@@ -2204,9 +2295,7 @@ export const getMyInvites = async (req: AuthRequest, res: Response, next: NextFu
         expiresAt: { gt: new Date() },
       },
       include: {
-        campaign: {
-          select: { name: true },
-        },
+        campaign: { select: { name: true } },
       },
     });
     res.json(invites);
@@ -2220,9 +2309,7 @@ export const acceptInvite = async (req: AuthRequest, res: Response, next: NextFu
     const userId = req.user!.id;
     const { token } = req.params;
 
-    const invite = await prisma.campaignInvite.findUnique({
-      where: { token },
-    });
+    const invite = await prisma.campaignInvite.findUnique({ where: { token } });
 
     if (!invite || invite.accepted || invite.expiresAt < new Date()) {
       return res.status(400).json({ error: 'Invalid or expired invitation token.' });
@@ -2254,20 +2341,19 @@ export const createInvite = async (req: AuthRequest, res: Response, next: NextFu
     const campaignId = req.params.id;
     const { email, role } = req.body;
 
-    if (!email) return res.status(400).json({ error: 'Email address is required' });
+    if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    // Ensure sender is the owner or editor
     const membership = await prisma.campaignMember.findFirst({
       where: { campaignId, userId: senderId },
     });
 
     if (!membership || membership.role === 'VIEWER') {
-      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to invite collaborators.' });
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions.' });
     }
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // Expirations after 7 days
+    expiresAt.setDate(expiresAt.getDate() + 7);
 
     const invite = await prisma.campaignInvite.create({
       data: {
@@ -2315,85 +2401,22 @@ export const updateCampaignStrategy = async (req: AuthRequest, res: Response, ne
   }
 };
 
-export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const id = req.params.id as string;
-    const { leadIds } = req.body;
-    if (!Array.isArray(leadIds) || leadIds.length === 0) {
-      return res.status(400).json({ error: 'leadIds must be a non-empty array' });
-    }
-
-    const campaign = await prisma.campaign.findFirst({
-      where: { id, userId },
-      include: { leads: { select: { id: true } } },
-    });
-    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
-
-    const existingLeadIds = new Set(campaign.leads.map(l => l.id));
-    const newLeadIds = leadIds.filter(lid => !existingLeadIds.has(lid));
-
-    if (newLeadIds.length === 0) {
-      return res.json({ added: 0, skipped: leadIds.length });
-    }
-
-    await prisma.lead.updateMany({
-      where: { id: { in: newLeadIds }, userId },
-      data: { campaignId: id, outreachStatus: 'PENDING' },
-    });
-
-    if (campaign.status === 'DRAFT') {
-      await prisma.campaign.update({
-        where: { id },
-        data: { status: 'ACTIVE', startedAt: new Date() },
-      });
-    }
-
-    res.json({ added: newLeadIds.length, skipped: leadIds.length - newLeadIds.length });
-  } catch (error) {
-    next(error);
-  }
-};
-
 export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.campaignId as string;
     const leadId = req.params.leadId as string;
-    const userId = req.user!.id;
 
     const emails = await prisma.outboundEmail.findMany({
-      where: { userId, campaignId, leadId },
+      where: { campaignId, leadId },
       orderBy: { sentAt: 'asc' },
     });
 
-    const unanalyzed = emails.filter(e => e.isIncoming && !e.analysis);
-    for (const email of unanalyzed) {
-      try {
-        const analysis = await aiService.analyzeReply(email.body);
-        await prisma.outboundEmail.update({
-          where: { id: email.id },
-          data: {
-            sentiment: analysis.sentiment,
-            intent: analysis.intent,
-            analysis: JSON.stringify(analysis),
-          },
-        });
-      } catch (err) {
-        logger.error({ err, emailId: email.id }, 'Failed to analyze reply thread');
-      }
-    }
-
-    const updatedEmails = await prisma.outboundEmail.findMany({
-      where: { userId, campaignId, leadId },
-      orderBy: { sentAt: 'asc' },
-    });
-
-    const emailsWithParsedAnalysis = updatedEmails.map(email => ({
+    const parsedEmails = emails.map(email => ({
       ...email,
-      analysis: email.analysis ? JSON.parse(email.analysis) : null,
+      analysis: email.analysis ? (typeof email.analysis === 'string' ? JSON.parse(email.analysis) : email.analysis) : null,
     }));
 
-    res.json(emailsWithParsedAnalysis);
+    res.json(parsedEmails);
   } catch (error) {
     next(error);
   }
@@ -2404,12 +2427,11 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
     const campaignId = req.params.campaignId as string;
     const leadId = req.params.leadId as string;
     const draftId = req.params.draftId as string;
-    const userId = req.user!.id;
 
     const [lead, campaign, draft] = await Promise.all([
-      prisma.lead.findFirst({ where: { id: leadId, userId } }),
-      prisma.campaign.findFirst({ where: { id: campaignId, userId } }),
-      prisma.draft.findFirst({ where: { id: draftId, userId } }),
+      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.campaign.findUnique({ where: { id: campaignId } }),
+      prisma.draft.findUnique({ where: { id: draftId } }),
     ]);
 
     if (!lead || !campaign || !draft) {
@@ -2437,9 +2459,9 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
     const userId = req.user!.id;
 
     const [lead, campaign] = await Promise.all([
-      prisma.lead.findFirst({ where: { id: leadId, userId } }),
-      prisma.campaign.findFirst({
-        where: { id: campaignId, userId },
+      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
         include: {
           drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' }, take: 1 },
           domainLinks: { include: { domain: true } },
@@ -2523,7 +2545,7 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
     const leadId = req.params.leadId as string;
     const userId = req.user!.id;
 
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, userId } });
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
     const latestReply = await prisma.outboundEmail.findFirst({
@@ -2532,8 +2554,13 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
     });
     if (!latestReply) return res.status(400).json({ error: 'No incoming reply found' });
 
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
-    const analysis = latestReply.analysis ? JSON.parse(latestReply.analysis) : { sentiment: 'neutral' };
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+    let analysis = { sentiment: 'neutral' };
+    if (latestReply.analysis) {
+      try {
+        analysis = typeof latestReply.analysis === 'string' ? JSON.parse(latestReply.analysis) : latestReply.analysis;
+      } catch (e) {}
+    }
 
     const draftData = await aiService.generateDraft(
       'professional',
@@ -2575,16 +2602,16 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
     const { subject, body } = req.body;
     const userId = req.user!.id;
 
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, userId } });
-    const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, userId },
+    const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
       include: { domainLinks: { include: { domain: true } } },
     });
 
     if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found' });
 
     const activeDomain = campaign.domainLinks.map(l => l.domain).find(d => d.status === 'active');
-    if (!activeDomain) return res.status(400).json({ error: 'No active domain found for sending reply' });
+    if (!activeDomain) return res.status(400).json({ error: 'No active domain found' });
 
     const latestIncoming = await prisma.outboundEmail.findFirst({
       where: { leadId, campaignId, isIncoming: true },
@@ -2644,7 +2671,7 @@ export const updateAutoReply = async (req: AuthRequest, res: Response, next: Nex
     const id = req.params.id as string;
     const { autoReplyEnabled } = req.body;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: { autoReplyEnabled },
     });
     res.json(updated);
@@ -2656,7 +2683,7 @@ export const updateSendHour = async (req: AuthRequest, res: Response, next: Next
     const id = req.params.id as string;
     const { sendHourUTC } = req.body;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: { sendHourUTC },
     });
     res.json(updated);
@@ -2668,7 +2695,7 @@ export const updateActiveHours = async (req: AuthRequest, res: Response, next: N
     const id = req.params.id as string;
     const { activeStartHour, activeEndHour, timezone } = req.body;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: { activeStartHour, activeEndHour, timezone },
     });
     res.json(updated);
@@ -2718,7 +2745,7 @@ export const updateCampaign = async (req: AuthRequest, res: Response, next: Next
   try {
     const id = req.params.id as string;
     const updated = await prisma.campaign.update({
-      where: { id, userId: req.user!.id },
+      where: { id },
       data: req.body,
     });
     res.json(updated);
@@ -2728,7 +2755,7 @@ export const updateCampaign = async (req: AuthRequest, res: Response, next: Next
 export const deleteCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    await prisma.campaign.delete({ where: { id, userId: req.user!.id } });
+    await prisma.campaign.delete({ where: { id } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
@@ -2737,7 +2764,7 @@ export const getCampaignDrafts = async (req: AuthRequest, res: Response, next: N
   try {
     const campaignId = req.params.campaignId as string;
     const drafts = await prisma.draft.findMany({
-      where: { campaignId, userId: req.user!.id, isActive: true },
+      where: { campaignId, isActive: true },
       orderBy: { createdAt: 'desc' },
     });
     res.json(drafts);
@@ -2748,7 +2775,7 @@ export const updateDraft = async (req: AuthRequest, res: Response, next: NextFun
   try {
     const draftId = req.params.draftId as string;
     const updated = await prisma.draft.update({
-      where: { id: draftId, userId: req.user!.id },
+      where: { id: draftId },
       data: req.body,
     });
     res.json(updated);
@@ -2758,7 +2785,7 @@ export const updateDraft = async (req: AuthRequest, res: Response, next: NextFun
 export const deleteDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const draftId = req.params.draftId as string;
-    await prisma.draft.delete({ where: { id: draftId, userId: req.user!.id } });
+    await prisma.draft.delete({ where: { id: draftId } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
@@ -2784,8 +2811,7 @@ export const createCustomDraft = async (req: AuthRequest, res: Response, next: N
 export const generateCampaignDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.campaignId as string;
-    const userId = req.user!.id;
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
     const draftData = await aiService.generateDraft(
@@ -2797,7 +2823,7 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
 
     const draft = await prisma.draft.create({
       data: {
-        userId,
+        userId: req.user!.id,
         campaignId,
         subject: draftData.subject,
         body: draftData.body,
@@ -2814,10 +2840,9 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
   try {
     const campaignId = req.params.campaignId as string;
     const stepNumber = req.params.stepNumber as string;
-    const userId = req.user!.id;
     const stepNum = parseInt(stepNumber, 10);
 
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
     const draftData = await aiService.generateDraft(
@@ -2833,7 +2858,7 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
 
     const draft = await prisma.draft.create({
       data: {
-        userId,
+        userId: req.user!.id,
         campaignId,
         subject: draftData.subject,
         body: draftData.body,
@@ -2862,9 +2887,18 @@ export const addDomainToCampaign = async (req: AuthRequest, res: Response, next:
   try {
     const id = req.params.id as string;
     const { domainId } = req.body;
-    const link = await prisma.campaignDomain.create({
-      data: { campaignId: id, domainId },
+
+    const link = await prisma.campaignDomain.upsert({
+      where: {
+        campaignId_domainId: {
+          campaignId: id,
+          domainId,
+        },
+      },
+      update: {},
+      create: { campaignId: id, domainId },
     });
+
     res.status(201).json(link);
   } catch (error) { next(error); }
 };
@@ -2985,8 +3019,10 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
 import { Response, NextFunction } from 'express';
 import multer from 'multer';
 import { blobService } from '../services/blob.service';
+import { leadQueueService } from '../services/leadQueue.service';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { logger } from '../config/logger';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
 
@@ -2995,11 +3031,11 @@ export const uploadLeads = [
   async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-      
+
       const userId = req.user!.id;
       const fileExt = req.file.originalname.split('.').pop() || 'csv';
       const safeName = `uploads/${userId}-${Date.now()}.${fileExt}`;
-      
+
       const blobUrl = await blobService.uploadFile(safeName, req.file.buffer);
 
       const job = await prisma.uploadJob.create({
@@ -3009,6 +3045,11 @@ export const uploadLeads = [
           blobUrl,
           status: 'PENDING'
         }
+      });
+
+      // Trigger background processing asynchronously
+      leadQueueService.processPendingUploads().catch(err => {
+        logger.error({ err }, 'Background lead upload worker error');
       });
 
       res.status(202).json({ success: true, jobId: job.id, status: 'PENDING' });
@@ -3042,7 +3083,9 @@ export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFu
   try {
     const { pattern } = req.body;
     if (!pattern) return res.status(400).json({ error: 'Pattern is required' });
-    const block = await prisma.blocklist.create({ data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() } });
+    const block = await prisma.blocklist.create({
+      data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() }
+    });
     res.status(201).json(block);
   } catch (error) { next(error); }
 };
@@ -3341,20 +3384,26 @@ export function decrypt(text: string): string {
 import { PrismaNeonHttp } from '@prisma/adapter-neon';
 import { PrismaClient } from '@prisma/client';
 
-console.log('[DEBUG PRISMA] Initializing Stateless Prisma Neon HTTP Fetch Adapter...');
+console.log('[DEBUG PRISMA] Initializing Neon HTTP Query Driver...');
 
 const prismaClientSingleton = () => {
-  const connectionString = process.env.DATABASE_URL;
+  let connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is not set in environment variables');
   }
 
-  // Set up the Prisma 7 Neon HTTP stateless adapter (exactly 2 arguments required: connectionString, options)
+  // Ensure connection URL targets direct compute endpoint for HTTP queries
+  connectionString = connectionString.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
+  connectionString = connectionString.replace(/&?channel_binding=[^&]*/g, '');
+  connectionString = connectionString.replace(/&?pgbouncer=[^&]*/g, '');
+  connectionString = connectionString.replace(/&?connection_limit=[^&]*/g, '');
+  connectionString = connectionString.replace(/\?&/, '?').replace(/\?$/, '').trim();
+
   const adapter = new PrismaNeonHttp(connectionString, {});
-  
+
   return new PrismaClient({
     adapter,
-    log: ['query', 'error', 'warn'],
+    log: ['error', 'warn'],
   });
 };
 
@@ -3377,40 +3426,46 @@ import { ClerkExpressRequireAuth } from '@clerk/clerk-sdk-node';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
-// Export AuthRequest interface to resolve downstream controller compilation errors
 export interface AuthRequest extends Request {
-  user?: any;
+  user?: {
+    id: string;
+    email: string;
+  };
   auth?: any;
 }
 
+// In-memory cache to map Clerk IDs to local PostgreSQL UUIDs without blocking DB queries
+const userCache = new Map<string, { id: string; email: string }>();
+
 export const requireAuth = (req: any, res: Response, next: NextFunction) => {
-  // Execute Clerk's official token validation (called with zero arguments to automatically consume environment keys)
   ClerkExpressRequireAuth()(req, res, async (err: any) => {
     if (err) {
-      logger.error({ err }, 'Clerk verification failed');
-      return res.status(401).json({ error: 'Unauthorized: Invalid or expired Clerk session' });
+      logger.error({ err }, 'Clerk authentication failed');
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
     try {
-      const clerkId = req.auth.userId;
+      const clerkId = req.auth?.userId;
       if (!clerkId) {
-        return res.status(401).json({ error: 'Unauthorized: Missing Clerk User ID' });
+        return res.status(401).json({ error: 'Unauthorized: Missing User Identity' });
       }
 
-      // Self-healing check: Fetch user's local database UUID mapping
+      // Check in-memory cache first for fast 0ms resolution
+      if (userCache.has(clerkId)) {
+        req.user = userCache.get(clerkId)!;
+        return next();
+      }
+
+      // Retrieve or create user record
       let user = await prisma.user.findUnique({
         where: { clerkId },
         select: { id: true, email: true },
       });
 
       if (!user) {
-        logger.info({ clerkId }, 'Clerk user not found in local DB. Performing self-healing syncing...');
-        
-        // Fetch fallback email from Clerk's session claims
         const email = req.auth.sessionClaims?.email || `user-${clerkId.substring(0, 8)}@clerk.local`;
         const name = req.auth.sessionClaims?.fullName || email.split('@')[0];
 
-        // Perform an upsert to prevent any race conditions during registration
         user = await prisma.user.upsert({
           where: { email },
           update: { clerkId },
@@ -3423,11 +3478,14 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
         });
       }
 
-      // Populate req.user so that downstream Express controllers continue to work with zero refactoring
-      req.user = { id: user.id, email: user.email };
+      // Cache the result in-memory
+      const resolvedUser = { id: user.id, email: user.email };
+      userCache.set(clerkId, resolvedUser);
+
+      req.user = resolvedUser;
       next();
     } catch (dbErr: any) {
-      logger.error({ dbErr }, 'Database verification/syncing during auth failed');
+      logger.error({ dbErr }, 'Database session resolution failed');
       res.status(500).json({ error: 'Database session validation failed' });
     }
   });
@@ -4976,22 +5034,25 @@ import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
 
 export class EmailQueueService {
-  
+
   private checkTimezone(timezone: string | null, startHour: number | null, endHour: number | null): boolean {
-    if (!startHour || !endHour) return true; 
+    if (startHour === null || startHour === undefined || endHour === null || endHour === undefined) return true;
     const tz = timezone || 'UTC';
     try {
       const formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: tz });
-      const currentHour = parseInt(formatter.format(new Date()), 10);
-      return currentHour >= startHour && currentHour < endHour;
+      let currentHour = parseInt(formatter.format(new Date()), 10);
+      if (currentHour === 24) currentHour = 0;
+
+      return startHour <= endHour
+        ? currentHour >= startHour && currentHour < endHour
+        : currentHour >= startHour || currentHour < endHour;
     } catch (e) {
-      return true; 
+      return true;
     }
   }
 
   async processQueue() {
     try {
-      // 1. Stale Job Recovery
       await prisma.$executeRaw`
         UPDATE "PendingEmail"
         SET status = 'PENDING'
@@ -4999,7 +5060,6 @@ export class EmailQueueService {
         AND updated_at < NOW() - INTERVAL '10 minutes'
       `;
 
-      // 2. Concurrency-Safe Claiming
       const lockedEmails = await prisma.$queryRaw<{id: string}[]>`
         SELECT id FROM "PendingEmail"
         WHERE status = 'PENDING'
@@ -5013,10 +5073,9 @@ export class EmailQueueService {
 
       const emailIds = lockedEmails.map(e => e.id);
 
-      // Prisma automatically updates 'updatedAt' due to @updatedAt in schema
       await prisma.pendingEmail.updateMany({
         where: { id: { in: emailIds } },
-        data: { status: 'PROCESSING' } // <-- Removed manual updatedAt
+        data: { status: 'PROCESSING' }
       });
 
       const emailsToProcess = await prisma.pendingEmail.findMany({
@@ -5032,7 +5091,6 @@ export class EmailQueueService {
         try {
           const campaign = pending.campaign;
 
-          // Timezone Guard
           if (!this.checkTimezone(campaign.timezone, campaign.activeStartHour, campaign.activeEndHour)) {
             await prisma.pendingEmail.update({
               where: { id: pending.id },
@@ -5048,12 +5106,12 @@ export class EmailQueueService {
 
           const today = new Date().toISOString().split('T')[0];
           const lastReset = new Date(selectedDomain.lastSentReset).toISOString().split('T')[0];
-          
+
           if (today !== lastReset) {
             selectedDomain = await prisma.domain.update({
               where: { id: selectedDomain.id },
-              data: { 
-                sentCountToday: 0, 
+              data: {
+                sentCountToday: 0,
                 lastSentReset: new Date(),
                 warmupDay: { increment: 1 },
                 dailyLimit: { increment: 5 }
@@ -5061,7 +5119,6 @@ export class EmailQueueService {
             });
           }
 
-          // Domain Limit Guard: Safely defer to tomorrow instead of failing
           if (selectedDomain.sentCountToday >= selectedDomain.dailyLimit) {
             const tomorrow = new Date();
             tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
@@ -5071,11 +5128,10 @@ export class EmailQueueService {
               where: { id: pending.id },
               data: { status: 'PENDING', scheduledAt: tomorrow }
             });
-            logger.info({ domain: selectedDomain.domainName }, 'Domain daily limit reached. Re-queued for tomorrow.');
+            logger.info({ domain: selectedDomain.domainName }, 'Domain limit reached. Deferring to next window.');
             continue;
           }
 
-          // Personalize & Send
           const { subject, body } = personalisationService.personalise(
             pending.lead,
             pending.subject,
@@ -5101,9 +5157,9 @@ export class EmailQueueService {
             selectedDomain,
             pending.lead.email,
             subject,
-            body.replace(/\n/g, '<br>'), 
+            body.replace(/\n/g, '<br>'),
             body,
-            outboundRecord.id, 
+            outboundRecord.id,
             campaign.senderName,
             pending.inReplyTo
           );
@@ -5117,6 +5173,12 @@ export class EmailQueueService {
             await prisma.domain.update({
               where: { id: selectedDomain.id },
               data: { sentCountToday: { increment: 1 } }
+            });
+
+            // Update round-robin rotation counter
+            await prisma.campaign.update({
+              where: { id: campaign.id },
+              data: { lastDomainIndex: { increment: 1 } }
             });
 
             await prisma.lead.update({
@@ -5144,7 +5206,7 @@ export class EmailQueueService {
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Fatal Queue Error');
+      logger.error({ error }, 'Fatal Queue Processing Error');
     }
   }
 }
@@ -5197,29 +5259,45 @@ export class FollowUpService {
           const initialEmail = lead.sentEmails[0];
           if (!initialEmail) continue;
 
+          // Stop follow-ups if prospect replied
           const hasReplied = await prisma.outboundEmail.findFirst({
             where: {
               leadId: lead.id,
               campaignId: campaign.id,
               isIncoming: true,
-              sentAt: { gt: initialEmail.sentAt },
             },
           });
           if (hasReplied) continue;
 
-          const sentSteps = await prisma.outboundEmail.findMany({
+          // Verify both sent outbound and queued pending steps to prevent duplicates
+          const sentOutbound = await prisma.outboundEmail.findMany({
             where: {
               leadId: lead.id,
               campaignId: campaign.id,
               isIncoming: false,
               NOT: { id: initialEmail.id },
             },
+            include: { draft: true },
           });
 
-          const sentStepNumbers = new Set(sentSteps.map((_, idx) => idx + 1));
+          const queuedPending = await prisma.pendingEmail.findMany({
+            where: {
+              leadId: lead.id,
+              campaignId: campaign.id,
+            },
+            include: { draft: true },
+          });
+
+          const completedStepNumbers = new Set<number>();
+          sentOutbound.forEach(e => {
+            if (e.draft?.stepNumber) completedStepNumbers.add(e.draft.stepNumber);
+          });
+          queuedPending.forEach(e => {
+            if (e.draft?.stepNumber) completedStepNumbers.add(e.draft.stepNumber);
+          });
 
           for (const step of campaign.followUpSteps) {
-            if (sentStepNumbers.has(step.stepNumber)) continue;
+            if (completedStepNumbers.has(step.stepNumber)) continue;
 
             const targetDate = new Date(initialEmail.sentAt);
             targetDate.setDate(targetDate.getDate() + step.delayDays);
@@ -5237,7 +5315,7 @@ export class FollowUpService {
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Follow-up check failed');
+      logger.error({ error }, 'Follow-up sequencer execution failed');
     } finally {
       this.isRunning = false;
     }
@@ -5259,7 +5337,6 @@ export class FollowUpService {
 
       const draft = await prisma.draft.findFirst({
         where: {
-          userId,
           campaignId,
           useCase: 'followup',
           stepNumber: step.stepNumber,
@@ -5385,17 +5462,18 @@ import { verificationService } from './verification.service';
 export class LeadQueueService {
 
   private isEmailBlocked(email: string, blocklist: { pattern: string }[]): boolean {
+    const cleanEmail = email.trim().toLowerCase();
+    const emailDomain = cleanEmail.split('@')[1] || '';
+
     return blocklist.some(b => {
-      if (b.pattern.startsWith('*@')) {
-        return email.endsWith(b.pattern.replace('*@', '@'));
-      }
-      return email === b.pattern;
+      const cleanPattern = b.pattern.trim().toLowerCase().replace(/^\*@?/, '').replace(/^@/, '');
+      if (!cleanPattern) return false;
+      return cleanEmail === cleanPattern || emailDomain === cleanPattern || cleanEmail.endsWith('@' + cleanPattern) || cleanEmail.endsWith('.' + cleanPattern);
     });
   }
 
   async processPendingUploads() {
     try {
-      // 1. Stale Job Recovery
       await prisma.$executeRaw`
         UPDATE "UploadJob"
         SET status = 'PENDING'
@@ -5403,7 +5481,6 @@ export class LeadQueueService {
         AND updated_at < NOW() - INTERVAL '15 minutes'
       `;
 
-      // 2. Lock pending jobs
       const lockedJobs = await prisma.$queryRaw<{id: string}[]>`
         SELECT id FROM "UploadJob"
         WHERE status IN ('PENDING', 'VERIFYING')
@@ -5420,36 +5497,54 @@ export class LeadQueueService {
 
         try {
           if (job.status === 'PENDING') {
-            // Prisma automatically updates 'updatedAt' due to @updatedAt in schema
-            await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } }); // <-- Removed manual updatedAt
-            
+            await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } });
+
             const response = await fetch(job.blobUrl);
             const csvText = await response.text();
-            
+
             const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
             const rawLeads: any[] = parsed.data;
 
             const blocklist = await prisma.blocklist.findMany({ where: { userId: job.userId } });
 
-            const validRows = [];
+            const validRows: any[] = [];
             let blockedCount = 0;
-            
+
             for (const row of rawLeads) {
-              const email = (row.email || row.Email || '').trim().toLowerCase();
-              const name = (row.name || row.Name || '').trim();
-              if (!email || !name) continue;
+              const keys = Object.keys(row);
+              const emailKey = keys.find(k => /email/i.test(k));
+              const nameKey = keys.find(k => /^(full ?name|name|contact ?name)$/i.test(k));
+              const firstNameKey = keys.find(k => /first ?name/i.test(k));
+              const lastNameKey = keys.find(k => /last ?name/i.test(k));
+              const companyKey = keys.find(k => /company|organization|account/i.test(k));
+              const positionKey = keys.find(k => /title|position|role/i.test(k));
+
+              const email = emailKey ? String(row[emailKey] || '').trim().toLowerCase() : '';
+              let name = nameKey ? String(row[nameKey] || '').trim() : '';
+              if (!name && firstNameKey) {
+                const first = String(row[firstNameKey] || '').trim();
+                const last = lastNameKey ? String(row[lastNameKey] || '').trim() : '';
+                name = `${first} ${last}`.trim();
+              }
+
+              const company = companyKey ? String(row[companyKey] || '').trim() : null;
+              const position = positionKey ? String(row[positionKey] || '').trim() : null;
+
+              if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+              if (!name) name = email.split('@')[0];
 
               if (this.isEmailBlocked(email, blocklist)) {
                 blockedCount++;
                 continue;
               }
-              validRows.push({ name, email, company: row.company || null, position: row.position || null });
+
+              validRows.push({ name, email, company, position });
             }
 
             if (validRows.length === 0) {
-              await prisma.uploadJob.update({ 
-                where: { id: job.id }, 
-                data: { status: 'COMPLETED', totalRows: rawLeads.length, blockedLeads: blockedCount } 
+              await prisma.uploadJob.update({
+                where: { id: job.id },
+                data: { status: 'COMPLETED', totalRows: rawLeads.length, blockedLeads: blockedCount }
               });
               continue;
             }
@@ -5459,29 +5554,29 @@ export class LeadQueueService {
 
             await prisma.uploadJob.update({
               where: { id: job.id },
-              data: { 
-                status: 'VERIFYING', 
-                verificationId, 
+              data: {
+                status: 'VERIFYING',
+                verificationId,
                 totalRows: rawLeads.length,
                 blockedLeads: blockedCount,
-                error: JSON.stringify(validRows) 
+                error: JSON.stringify(validRows)
               }
             });
             logger.info(`Job ${job.id} sent to verification.`);
-          } 
-          
+          }
+
           else if (job.status === 'VERIFYING' && job.verificationId) {
             const rawRows = JSON.parse(job.error || '[]');
             const emails = rawRows.map((r: any) => r.email);
-            
+
             const { isComplete, results } = await verificationService.getBulkJobResults(job.verificationId, emails);
-            
+
             if (!isComplete) {
               logger.debug(`Job ${job.id} still verifying...`);
               continue;
             }
 
-            let validCount = 0, catchAllCount = 0, invalidCount = 0, duplicatesCount = 0;
+            let validCount = 0, catchAllCount = 0, invalidCount = 0;
             const leadsToInsert = [];
 
             for (const row of rawRows) {
@@ -5504,32 +5599,32 @@ export class LeadQueueService {
               }
             }
 
-            // CSV Chunking: Insert in batches of 500 to prevent Prisma limits
             const CHUNK_SIZE = 500;
+            let insertedCount = 0;
+            let duplicatesCount = 0;
+
             for (let i = 0; i < leadsToInsert.length; i += CHUNK_SIZE) {
               const chunk = leadsToInsert.slice(i, i + CHUNK_SIZE);
-              
-              for (const lead of chunk) {
-                try {
-                  await prisma.lead.create({ data: lead });
-                } catch (e: any) {
-                  if (e.code === 'P2002') duplicatesCount++;
-                }
-              }
+              const insertResult = await prisma.lead.createMany({
+                data: chunk,
+                skipDuplicates: true,
+              });
+              insertedCount += insertResult.count;
+              duplicatesCount += (chunk.length - insertResult.count);
             }
 
             await prisma.uploadJob.update({
               where: { id: job.id },
               data: {
                 status: 'COMPLETED',
-                validLeads: validCount,
+                validLeads: insertedCount,
                 catchAllLeads: catchAllCount,
                 invalidLeads: invalidCount,
                 duplicates: duplicatesCount,
-                error: null 
+                error: null
               }
             });
-            logger.info(`Job ${job.id} completed. Inserted valid leads.`);
+            logger.info(`Job ${job.id} completed. Inserted ${insertedCount} leads.`);
           }
         } catch (jobError: any) {
           await prisma.uploadJob.update({
@@ -5549,20 +5644,18 @@ export const leadQueueService = new LeadQueueService();
 
 <file path="server/services/personalisation.service.ts">
 export class PersonalisationService {
-  /**
-   * Resolves Spintax formatted strings: {Word A|Word B|Word C}
-   */
   private resolveSpintax(text: string): string {
     const spintaxRegex = /\{([^{}]+)\}/g;
     let result = text;
-    let match;
-    
-    // Iteratively resolve nested or flat spintax
-    while ((match = spintaxRegex.exec(result)) !== null) {
-      const options = match[1].split('|');
-      const choice = options[Math.floor(Math.random() * options.length)];
-      result = result.substring(0, match.index) + choice + result.substring(match.index + match[0].length);
-      spintaxRegex.lastIndex = 0; // reset to process newly formed string if needed
+    let iterations = 0;
+    const maxIterations = 50;
+
+    while (spintaxRegex.test(result) && iterations < maxIterations) {
+      result = result.replace(spintaxRegex, (_, choices) => {
+        const options = choices.split('|');
+        return options[Math.floor(Math.random() * options.length)] || '';
+      });
+      iterations++;
     }
     return result;
   }
@@ -5574,35 +5667,47 @@ export class PersonalisationService {
     reference?: string | null,
     senderName?: string | null
   ): { subject: string; body: string } {
-    
-    // First, resolve Spintax to lock in the variation
     let pSubject = this.resolveSpintax(subject);
     let pBody = this.resolveSpintax(body);
 
-    const placeholders: Record<string, string> = {
-      '{{name}}': lead.name,
-      '{{company}}': lead.company || '',
-      '{{position}}': lead.position || '',
-      '{{firstName}}': lead.name.split(' ')[0],
-      '{{lastName}}': lead.name.split(' ').slice(1).join(' ') || '',
-      '{{senderName}}': senderName || 'Your Name',
+    const firstName = lead.name ? lead.name.split(' ')[0] : '';
+    const lastName = lead.name && lead.name.split(' ').length > 1 ? lead.name.split(' ').slice(1).join(' ') : '';
+
+    // Smart Variable Fallbacks: {{variable|fallback}}
+    const replaceWithFallback = (text: string, varName: string, value: string | null | undefined, defaultFallback = '') => {
+      const regexWithPipe = new RegExp(`\\{\\{${varName}\\|([^}]+)\\}\\}`, 'gi');
+      text = text.replace(regexWithPipe, (_, fallback) => (value && value.trim() ? value : fallback.trim()));
+
+      const standardRegex = new RegExp(`\\{\\{${varName}\\}\\}`, 'gi');
+      text = text.replace(standardRegex, value && value.trim() ? value : defaultFallback);
+      return text;
     };
 
-    Object.entries(placeholders).forEach(([key, value]) => {
-      const regex = new RegExp(key, 'gi');
-      pSubject = pSubject.replace(regex, value);
-      pBody = pBody.replace(regex, value);
-    });
+    pSubject = replaceWithFallback(pSubject, 'name', lead.name, 'there');
+    pBody = replaceWithFallback(pBody, 'name', lead.name, 'there');
+
+    pSubject = replaceWithFallback(pSubject, 'firstName', firstName, 'there');
+    pBody = replaceWithFallback(pBody, 'firstName', firstName, 'there');
+
+    pSubject = replaceWithFallback(pSubject, 'lastName', lastName, '');
+    pBody = replaceWithFallback(pBody, 'lastName', lastName, '');
+
+    pSubject = replaceWithFallback(pSubject, 'company', lead.company, 'your company');
+    pBody = replaceWithFallback(pBody, 'company', lead.company, 'your company');
+
+    pSubject = replaceWithFallback(pSubject, 'position', lead.position, 'your role');
+    pBody = replaceWithFallback(pBody, 'position', lead.position, 'your role');
+
+    pSubject = replaceWithFallback(pSubject, 'senderName', senderName, 'Team');
+    pBody = replaceWithFallback(pBody, 'senderName', senderName, 'Team');
 
     if (!reference) {
-      // Remove lines trying to use the reference
       pBody = pBody.split('\n').filter(line => !line.includes('{{reference_company}}')).join('\n');
     } else {
-      pBody = pBody.replace(/\{\{reference_company\}\}/gi, 'a recent client');
-      pSubject = pSubject.replace(/\{\{reference_company\}\}/gi, 'a recent client');
+      pBody = pBody.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
+      pSubject = pSubject.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
     }
 
-    // Cleanup lingering unresolved placeholders
     pSubject = pSubject.replace(/\{\{[^}]+\}\}/g, '').trim();
     pBody = pBody.replace(/\{\{[^}]+\}\}/g, '').trim();
 
@@ -5797,7 +5902,7 @@ import { aiService } from './ai.service';
 import { autoReplyService } from './autoReply.service';
 
 export class WebhooksService {
-  
+
   verifyMailgunSignature(timestamp: string, token: string, signature: string): boolean {
     const webhookKey = process.env.MAILGUN_WEBHOOK_KEY;
     if (!webhookKey) return false;
@@ -5815,14 +5920,14 @@ export class WebhooksService {
     if (!eventData) return;
 
     const outboundEmailId = eventData['user-variables']?.outbound_email_id;
-    if (!outboundEmailId) return; 
+    if (!outboundEmailId) return;
 
-    const eventType = eventData.event; 
+    const eventType = eventData.event;
 
     try {
-      const email = await prisma.outboundEmail.findUnique({ 
+      const email = await prisma.outboundEmail.findUnique({
         where: { id: outboundEmailId },
-        include: { domain: true } 
+        include: { domain: true }
       });
       if (!email) return;
 
@@ -5830,23 +5935,23 @@ export class WebhooksService {
 
       if (eventType === 'opened' && !email.openedAt) {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { openedAt: now } });
-      } 
+      }
       else if (eventType === 'clicked' && !email.clickedAt) {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { clickedAt: now } });
-      } 
+      }
       else if (eventType === 'bounced' || eventType === 'failed') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { bouncedAt: now, status: 'BOUNCED' } });
         await prisma.lead.update({ where: { id: email.leadId }, data: { outreachStatus: 'BOUNCED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'bounce');
-      } 
+      }
       else if (eventType === 'complained') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { spamComplaint: true } });
-        await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED' } }); 
+        await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'complaint');
       }
 
     } catch (error) {
-      logger.error({ error }, 'Webhook processing error');
+      logger.error({ error }, 'Deliverability webhook processing error');
     }
   }
 
@@ -5854,12 +5959,12 @@ export class WebhooksService {
     const domain = await prisma.domain.findUnique({ where: { id: domainId }});
     if (!domain) return;
 
-    const newBounceRate = type === 'bounce' ? domain.bounceRate + 0.01 : domain.bounceRate;
-    const newComplaintRate = type === 'complaint' ? domain.complaintRate + 0.005 : domain.complaintRate;
+    const totalSent = (domain.sentCountToday || 0) + (domain.warmupDay * 20) || 1;
+    const newBounceRate = type === 'bounce' ? (domain.bounceRate * totalSent + 1) / (totalSent + 1) : domain.bounceRate;
+    const newComplaintRate = type === 'complaint' ? (domain.complaintRate * totalSent + 1) / (totalSent + 1) : domain.complaintRate;
 
     let status = domain.status;
-    
-    if (newBounceRate >= 0.03 || newComplaintRate >= 0.001) {
+    if (newBounceRate >= 0.05 || newComplaintRate >= 0.003) {
       status = 'paused_health_risk';
       logger.warn({ domainId, newBounceRate, newComplaintRate }, 'AUTO-PAUSE KILLSWITCH ACTIVATED FOR DOMAIN');
     }
@@ -5874,39 +5979,61 @@ export class WebhooksService {
     });
   }
 
-  // --- Phase 5: Inbound Reply Handling ---
   async processInboundEmail(payload: any) {
     try {
-      const messageId = payload['Message-Id'];
-      const inReplyTo = payload['In-Reply-To'];
+      const messageId = payload['Message-Id'] || payload['message-id'];
+      const rawInReplyTo = payload['In-Reply-To'] || payload['in-reply-to'] || payload['References'] || payload['references'];
       const from = payload.sender || payload.from;
       const to = payload.recipient || payload.to;
-      const subject = payload.subject;
-      
-      // Mailgun extracts just the user's reply, stripping out the massive quoted history!
-      const body = payload['stripped-text'] || payload['body-plain'];
+      const subject = payload.subject || 'Re: Outreach';
+      const body = payload['stripped-text'] || payload['body-plain'] || payload['stripped-html'] || '';
 
-      if (!inReplyTo) {
-        logger.debug({ messageId }, 'Inbound email has no In-Reply-To header. Skipping.');
-        return;
+      const cleanInReplyTo = rawInReplyTo ? rawInReplyTo.replace(/^<|>$/g, '').trim() : null;
+
+      let originalEmail = null;
+      if (cleanInReplyTo) {
+        originalEmail = await prisma.outboundEmail.findFirst({
+          where: {
+            isIncoming: false,
+            OR: [
+              { messageId: cleanInReplyTo },
+              { messageId: `<${cleanInReplyTo}>` }
+            ]
+          },
+          select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true }
+        });
       }
 
-      // Find original outbound email
-      const originalEmail = await prisma.outboundEmail.findFirst({
-        where: { messageId: inReplyTo, isIncoming: false },
-        select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true }
-      });
+      // Fallback: match most recently contacted lead by email address
+      if (!originalEmail && from) {
+        const senderEmailMatch = from.match(/<(.+)>/)?.[1] || from.trim().toLowerCase();
+        const matchedLead = await prisma.lead.findFirst({
+          where: { email: senderEmailMatch },
+          include: {
+            sentEmails: {
+              where: { isIncoming: false },
+              orderBy: { sentAt: 'desc' },
+              take: 1
+            }
+          }
+        });
+        if (matchedLead && matchedLead.sentEmails.length > 0) {
+          const latestSent = matchedLead.sentEmails[0];
+          originalEmail = {
+            id: latestSent.id,
+            leadId: matchedLead.id,
+            campaignId: latestSent.campaignId,
+            userId: latestSent.userId,
+            domainId: latestSent.domainId
+          };
+        }
+      }
 
       if (!originalEmail) {
-        logger.debug({ inReplyTo }, 'Could not map inbound email to an outbound campaign.');
+        logger.debug({ rawInReplyTo, from }, 'Could not map inbound email to outbound campaign');
         return;
       }
 
-      // Check if we already processed this messageId (Mailgun retry protection)
-      const existing = await prisma.outboundEmail.findFirst({ where: { messageId } });
-      if (existing) return;
-
-      // 1. Run AI Sentiment & Intent Analysis
       let analysisPayload = null;
       try {
         const analysis = await aiService.analyzeReply(body);
@@ -5915,7 +6042,6 @@ export class WebhooksService {
         logger.error({ err }, 'AI Analysis failed for inbound email');
       }
 
-      // 2. Save the inbound message
       const inboundEmail = await prisma.outboundEmail.create({
         data: {
           userId: originalEmail.userId,
@@ -5925,8 +6051,8 @@ export class WebhooksService {
           subject,
           body,
           isIncoming: true,
-          messageId,
-          inReplyTo,
+          messageId: messageId ? messageId.replace(/^<|>$/g, '').trim() : null,
+          inReplyTo: cleanInReplyTo,
           fromAddress: from,
           toAddress: to,
           replyToId: originalEmail.id,
@@ -5936,7 +6062,6 @@ export class WebhooksService {
         }
       });
 
-      // 3. Mark the Outbound as replied & Lead as REPLIED
       await prisma.outboundEmail.update({
         where: { id: originalEmail.id },
         data: { repliedAt: new Date() }
@@ -5944,20 +6069,26 @@ export class WebhooksService {
 
       await prisma.lead.update({
         where: { id: originalEmail.leadId },
-        data: { 
-          outreachStatus: 'REPLIED', 
-          status: 'REPLIED' 
+        data: {
+          outreachStatus: 'REPLIED',
+          status: 'REPLIED'
         }
       });
 
-      logger.info({ leadId: originalEmail.leadId }, 'Successfully processed and mapped inbound reply.');
+      // Cancel any remaining queued follow-up steps for this lead
+      await prisma.pendingEmail.deleteMany({
+        where: { leadId: originalEmail.leadId }
+      });
 
-      // 4. Trigger Auto-Reply Engine (if enabled on Campaign)
-      const campaign = await prisma.campaign.findUnique({ where: { id: originalEmail.campaignId! }});
-      if (campaign?.autoReplyEnabled) {
-        autoReplyService.processReply(inboundEmail.id).catch(err => {
-          logger.error({ err }, 'Auto-reply engine failed');
-        });
+      logger.info({ leadId: originalEmail.leadId }, 'Inbound reply processed, follow-ups cancelled.');
+
+      if (originalEmail.campaignId) {
+        const campaign = await prisma.campaign.findUnique({ where: { id: originalEmail.campaignId } });
+        if (campaign?.autoReplyEnabled) {
+          autoReplyService.processReply(inboundEmail.id).catch(err => {
+            logger.error({ err }, 'Auto-reply engine failed');
+          });
+        }
       }
 
     } catch (error) {
@@ -8213,7 +8344,7 @@ export const RenameCampaignModal: React.FC<Props> = ({
 <file path="src/components/UploadArea.tsx">
 import React, { useCallback, useState, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import axios from 'axios';
+import { leadAPI } from '../services/api';
 
 interface Job {
   id: string;
@@ -8233,15 +8364,16 @@ export const UploadArea: React.FC<{ onJobComplete: () => void }> = ({ onJobCompl
 
   const fetchJobs = async () => {
     try {
-      const res = await axios.get('/api/leads/jobs');
+      const res = await leadAPI.getJobs();
       setJobs(res.data);
-      // If any job is PENDING, PROCESSING, or VERIFYING, poll again in 5 seconds
       if (res.data.some((j: Job) => ['PENDING', 'PROCESSING', 'VERIFYING'].includes(j.status))) {
-        setTimeout(fetchJobs, 5000);
+        setTimeout(fetchJobs, 4000);
       } else {
-        onJobComplete(); // Trigger refresh on main dashboard
+        onJobComplete();
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Failed to poll jobs', e);
+    }
   };
 
   useEffect(() => {
@@ -8252,20 +8384,20 @@ export const UploadArea: React.FC<{ onJobComplete: () => void }> = ({ onJobCompl
     if (acceptedFiles.length === 0) return;
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append('file', acceptedFiles[0]);
-      await axios.post('/api/leads/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      fetchJobs();
+      await leadAPI.upload(acceptedFiles[0]);
+      await fetchJobs();
     } catch (error) {
-      alert('Upload failed');
+      alert('Upload failed. Please check file format.');
     } finally {
       setUploading(false);
     }
   }, []);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, maxFiles: 1, accept: { 'text/csv': ['.csv'] } });
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    maxFiles: 1,
+    accept: { 'text/csv': ['.csv'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }
+  });
 
   const getStatusColor = (status: string) => {
     if (status === 'COMPLETED') return 'bg-green-100 text-green-800';
@@ -8280,20 +8412,20 @@ export const UploadArea: React.FC<{ onJobComplete: () => void }> = ({ onJobCompl
       <div {...getRootProps()} className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}>
         <input {...getInputProps()} disabled={uploading} />
         <p className="text-sm text-gray-600">
-          {uploading ? 'Uploading...' : isDragActive ? 'Drop CSV here' : 'Drag & drop a CSV file, or click to select'}
+          {uploading ? 'Uploading and processing...' : isDragActive ? 'Drop file here' : 'Drag & drop a CSV or Excel file, or click to browse'}
         </p>
       </div>
 
       {jobs.length > 0 && (
         <div className="mt-6">
-          <h3 className="text-sm font-medium text-gray-700 mb-3">Recent Imports & Verification Jobs</h3>
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Recent Imports & Verification Status</h3>
           <div className="space-y-3">
             {jobs.map(job => (
               <div key={job.id} className="p-4 border rounded-lg bg-gray-50 flex justify-between items-center">
                 <div>
                   <p className="font-medium text-gray-900">{job.filename}</p>
                   <p className="text-xs text-gray-500 mt-1">
-                    Valid: {job.validLeads} | Catch-All: {job.catchAllLeads} | Invalid: {job.invalidLeads} | Blocked: {job.blockedLeads} | Duplicates: {job.duplicates}
+                    Valid: {job.validLeads} | Catch-All: {job.catchAllLeads} | Invalid: {job.invalidLeads} | Suppressed: {job.blockedLeads} | Duplicates: {job.duplicates}
                   </p>
                 </div>
                 <span className={`px-3 py-1 text-xs font-bold rounded-full ${getStatusColor(job.status)}`}>
@@ -9190,7 +9322,7 @@ export const Dashboard: React.FC = () => {
 
 <file path="src/pages/Domains.tsx">
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import { domainAPI } from '../services/api';
 
 interface DnsRecord {
   record_type: string;
@@ -9208,7 +9340,7 @@ export const Domains: React.FC = () => {
 
   const fetchDomains = async () => {
     try {
-      const res = await axios.get('/api/domains');
+      const res = await domainAPI.getAll();
       setDomains(res.data);
     } catch (err) {
       console.error('Failed to load domains', err);
@@ -9226,9 +9358,9 @@ export const Domains: React.FC = () => {
     if (!newDomain.trim()) return;
     setAdding(true);
     try {
-      await axios.post('/api/domains', { domainName: newDomain });
+      await domainAPI.add(newDomain.trim());
       setNewDomain('');
-      fetchDomains();
+      await fetchDomains();
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to add domain');
     } finally {
@@ -9238,13 +9370,13 @@ export const Domains: React.FC = () => {
 
   const handleVerify = async (id: string) => {
     try {
-      const res = await axios.post(`/api/domains/${id}/verify`);
+      const res = await domainAPI.verify(id);
       if (res.data.status === 'active') {
         alert('Domain successfully verified and ready for sending!');
       } else {
         alert('DNS records not propagated yet. Please check your registrar and try again in 5 minutes.');
       }
-      fetchDomains();
+      await fetchDomains();
     } catch (err) {
       alert('Verification request failed.');
     }
@@ -9253,11 +9385,11 @@ export const Domains: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this domain? This stops all sending via this domain.')) return;
     try {
-      await axios.delete(`/api/domains/${id}`);
-      fetchDomains();
+      await domainAPI.delete(id);
+      await fetchDomains();
       setActiveDomainDetails(null);
     } catch (err) {
-      alert('Failed to delete');
+      alert('Failed to delete domain');
     }
   };
 
@@ -9297,7 +9429,7 @@ export const Domains: React.FC = () => {
 
       <div className="bg-white shadow rounded-lg p-6 mb-8">
         <h2 className="text-lg font-medium text-gray-900 mb-2">Connect a New Subdomain</h2>
-        <p className="text-sm text-gray-600 mb-4">We highly recommend using subdomains (e.g., outreach.yourdomain.com) to protect your root domain reputation.</p>
+        <p className="text-sm text-gray-600 mb-4">We recommend using subdomains (e.g., outreach.yourdomain.com) to protect your root domain reputation.</p>
         <form onSubmit={handleAddDomain} className="flex gap-4">
           <input
             type="text"
@@ -9313,52 +9445,63 @@ export const Domains: React.FC = () => {
         </form>
       </div>
 
-      <div className="space-y-6">
-        {domains.map(domain => {
-          const isExpanded = activeDomainDetails?.id === domain.id;
-          const records = domain.dnsRecords ? JSON.parse(domain.dnsRecords) : { receiving: [], sending: [] };
+      {loading ? (
+        <div className="text-center py-12 text-gray-500">Loading domains...</div>
+      ) : domains.length === 0 ? (
+        <div className="bg-white shadow rounded-lg p-12 text-center text-gray-500">
+          No sending domains configured yet. Add a domain above to start sending campaigns.
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {domains.map(domain => {
+            const isExpanded = activeDomainDetails?.id === domain.id;
+            let records = { receiving: [], sending: [] };
+            try {
+              if (domain.dnsRecords) records = JSON.parse(domain.dnsRecords);
+            } catch (e) {}
 
-          return (
-            <div key={domain.id} className="bg-white shadow rounded-lg overflow-hidden">
-              <div className="p-6 flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-bold text-gray-900">{domain.domainName}</h3>
-                  <div className="flex items-center gap-3 mt-2 text-sm">
-                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${domain.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                      {domain.status.toUpperCase()}
-                    </span>
-                    <span className="text-gray-500">Warmup Day: {domain.warmupDay} (Limit: {domain.dailyLimit}/day)</span>
-                    <span className="text-gray-500">Bounce Rate: {(domain.bounceRate * 100).toFixed(1)}%</span>
+            return (
+              <div key={domain.id} className="bg-white shadow rounded-lg overflow-hidden">
+                <div className="p-6 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xl font-bold text-gray-900">{domain.domainName}</h3>
+                    <div className="flex items-center gap-3 mt-2 text-sm">
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${domain.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                        {domain.status.toUpperCase()}
+                      </span>
+                      <span className="text-gray-500">Warmup Day: {domain.warmupDay} (Limit: {domain.dailyLimit}/day)</span>
+                      <span className="text-gray-500">Bounce Rate: {(domain.bounceRate * 100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    {domain.status !== 'active' && (
+                      <button onClick={() => handleVerify(domain.id)} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm">
+                        Verify DNS
+                      </button>
+                    )}
+                    <button onClick={() => setActiveDomainDetails(isExpanded ? null : domain)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm">
+                      {isExpanded ? 'Hide Records' : 'View DNS Records'}
+                    </button>
+                    <button onClick={() => handleDelete(domain.id)} className="px-4 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm">
+                      Delete
+                    </button>
                   </div>
                 </div>
-                <div className="flex gap-3">
-                  {domain.status !== 'active' && (
-                    <button onClick={() => handleVerify(domain.id)} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm">
-                      Verify DNS
-                    </button>
-                  )}
-                  <button onClick={() => setActiveDomainDetails(isExpanded ? null : domain)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm">
-                    {isExpanded ? 'Hide Records' : 'View DNS Records'}
-                  </button>
-                  <button onClick={() => handleDelete(domain.id)} className="px-4 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm">
-                    Delete
-                  </button>
-                </div>
-              </div>
 
-              {isExpanded && (
-                <div className="p-6 border-t bg-gray-50">
-                  <p className="text-sm text-gray-600 mb-4">
-                    Add the following records to your DNS provider (e.g., Cloudflare, GoDaddy, Namecheap) to verify ownership and enable strict deliverability protocols.
-                  </p>
-                  {renderDnsTable('Sending Records (SPF, DKIM, Tracking)', records.sending)}
-                  {renderDnsTable('Receiving Records (MX for inbound replies)', records.receiving)}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {isExpanded && (
+                  <div className="p-6 border-t bg-gray-50">
+                    <p className="text-sm text-gray-600 mb-4">
+                      Add the following records to your DNS provider (e.g., Cloudflare, GoDaddy, Namecheap) to verify ownership and enable strict deliverability protocols.
+                    </p>
+                    {renderDnsTable('Sending Records (SPF, DKIM, Tracking)', records.sending || [])}
+                    {renderDnsTable('Receiving Records (MX for inbound replies)', records.receiving || [])}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -9367,7 +9510,7 @@ export const Domains: React.FC = () => {
 <file path="src/pages/Home.tsx">
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { leadAPI } from '../services/api';
 import { UploadArea } from '../components/UploadArea';
 
 export const Home: React.FC = () => {
@@ -9377,9 +9520,11 @@ export const Home: React.FC = () => {
 
   const fetchBlocklist = async () => {
     try {
-      const res = await axios.get('/api/leads/blocklist');
+      const res = await leadAPI.getBlocklist();
       setBlocklist(res.data);
-    } catch (e) {}
+    } catch (e) {
+      console.error('Failed to fetch blocklist', e);
+    }
   };
 
   useEffect(() => {
@@ -9390,17 +9535,21 @@ export const Home: React.FC = () => {
     e.preventDefault();
     if (!newBlock.trim()) return;
     try {
-      await axios.post('/api/leads/blocklist', { pattern: newBlock });
+      await leadAPI.addBlocklist(newBlock.trim());
       setNewBlock('');
-      fetchBlocklist();
-    } catch (e) { alert('Failed to add to blocklist'); }
+      await fetchBlocklist();
+    } catch (e) {
+      alert('Failed to add pattern to blocklist');
+    }
   };
 
   const handleDeleteBlock = async (id: string) => {
     try {
-      await axios.delete(`/api/leads/blocklist/${id}`);
-      fetchBlocklist();
-    } catch (e) {}
+      await leadAPI.deleteBlocklist(id);
+      await fetchBlocklist();
+    } catch (e) {
+      console.error('Failed to delete blocklist entry', e);
+    }
   };
 
   return (
@@ -9412,31 +9561,35 @@ export const Home: React.FC = () => {
         </button>
       </div>
 
-      <UploadArea onJobComplete={() => console.log('Job refreshed')} />
+      <UploadArea onJobComplete={() => console.log('Job completed and refreshed')} />
 
       <div className="bg-white shadow sm:rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-2 text-red-600">Global Blocklist (Suppression)</h2>
-        <p className="text-sm text-gray-600 mb-4">Emails matching these patterns will be automatically discarded during import.</p>
+        <p className="text-sm text-gray-600 mb-4">Emails matching these patterns will be automatically discarded during lead imports.</p>
         
         <form onSubmit={handleAddBlock} className="flex gap-4 mb-4">
           <input
             type="text"
             value={newBlock}
             onChange={(e) => setNewBlock(e.target.value)}
-            placeholder="e.g., *@competitor.com or ceo@acme.com"
+            placeholder="e.g., competitor.com, *@agency.com, or ceo@target.com"
             className="flex-1 px-4 py-2 border rounded-md"
             required
           />
-          <button type="submit" className="px-6 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Add</button>
+          <button type="submit" className="px-6 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Add Pattern</button>
         </form>
 
         <ul className="space-y-2">
-          {blocklist.map(b => (
-            <li key={b.id} className="flex justify-between items-center p-3 bg-gray-50 border rounded-md">
-              <span className="font-mono text-sm text-gray-800">{b.pattern}</span>
-              <button onClick={() => handleDeleteBlock(b.id)} className="text-red-500 hover:text-red-700 text-sm font-semibold">Delete</button>
-            </li>
-          ))}
+          {blocklist.length === 0 ? (
+            <li className="text-sm text-gray-400 italic p-2">No active suppression patterns configured.</li>
+          ) : (
+            blocklist.map(b => (
+              <li key={b.id} className="flex justify-between items-center p-3 bg-gray-50 border rounded-md">
+                <span className="font-mono text-sm text-gray-800">{b.pattern}</span>
+                <button onClick={() => handleDeleteBlock(b.id)} className="text-red-500 hover:text-red-700 text-sm font-semibold">Delete</button>
+              </li>
+            ))
+          )}
         </ul>
       </div>
     </div>
@@ -9446,7 +9599,7 @@ export const Home: React.FC = () => {
 
 <file path="src/pages/Inbox.tsx">
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import { inboxAPI } from '../services/api';
 
 export const Inbox: React.FC = () => {
   const [threads, setThreads] = useState<any[]>([]);
@@ -9457,13 +9610,13 @@ export const Inbox: React.FC = () => {
 
   const fetchInbox = async () => {
     try {
-      const res = await axios.get('/api/inbox');
+      const res = await inboxAPI.getThreads();
       setThreads(res.data);
       if (res.data.length > 0 && !activeThreadId) {
         setActiveThreadId(res.data[0].id);
       }
     } catch (error) {
-      console.error('Failed to load inbox');
+      console.error('Failed to load inbox', error);
     } finally {
       setLoading(false);
     }
@@ -9471,7 +9624,6 @@ export const Inbox: React.FC = () => {
 
   useEffect(() => {
     fetchInbox();
-    // Poll for new replies every 30 seconds
     const interval = setInterval(fetchInbox, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -9479,12 +9631,34 @@ export const Inbox: React.FC = () => {
   const handleSendReply = async () => {
     if (!replyBody.trim() || !activeThreadId) return;
     setSending(true);
+    
+    // Optimistically update thread view for immediate feedback
+    const activeLead = threads.find(t => t.id === activeThreadId);
+    const optimisticMessage = {
+      id: `temp-${Date.now()}`,
+      subject: activeLead?.sentEmails?.[activeLead.sentEmails.length - 1]?.subject || 'Re: Outreach',
+      body: replyBody,
+      sentAt: new Date().toISOString(),
+      isIncoming: false,
+    };
+
+    setThreads(prev =>
+      prev.map(t =>
+        t.id === activeThreadId
+          ? { ...t, sentEmails: [...(t.sentEmails || []), optimisticMessage] }
+          : t
+      )
+    );
+
+    const bodyToSend = replyBody;
+    setReplyBody('');
+
     try {
-      await axios.post(`/api/inbox/${activeThreadId}/reply`, { body: replyBody });
-      setReplyBody('');
-      await fetchInbox(); // Refresh thread to show new message
+      await inboxAPI.sendReply(activeThreadId, bodyToSend);
+      await fetchInbox();
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to send reply');
+      await fetchInbox();
     } finally {
       setSending(false);
     }
@@ -9495,7 +9669,7 @@ export const Inbox: React.FC = () => {
   const getSentimentBadge = (analysisStr: string) => {
     if (!analysisStr) return null;
     try {
-      const analysis = JSON.parse(analysisStr);
+      const analysis = typeof analysisStr === 'string' ? JSON.parse(analysisStr) : analysisStr;
       const s = analysis.sentiment;
       const colors: any = {
         'very positive': 'bg-green-600 text-white',
@@ -9521,10 +9695,10 @@ export const Inbox: React.FC = () => {
           </div>
           <div className="flex-1 overflow-y-auto">
             {threads.length === 0 ? (
-              <div className="p-4 text-center text-sm text-gray-500">No replies yet.</div>
+              <div className="p-4 text-center text-sm text-gray-500">No replies recorded yet.</div>
             ) : (
               threads.map(thread => {
-                const latestEmail = thread.sentEmails[thread.sentEmails.length - 1];
+                const latestEmail = thread.sentEmails?.[thread.sentEmails.length - 1];
                 return (
                   <div 
                     key={thread.id} 
@@ -9533,12 +9707,14 @@ export const Inbox: React.FC = () => {
                   >
                     <div className="flex justify-between items-start mb-1">
                       <span className="font-semibold text-gray-900 truncate">{thread.name}</span>
-                      <span className="text-xs text-gray-500">{new Date(latestEmail?.sentAt).toLocaleDateString()}</span>
+                      <span className="text-xs text-gray-500">
+                        {latestEmail ? new Date(latestEmail.sentAt).toLocaleDateString() : ''}
+                      </span>
                     </div>
                     <div className="text-xs text-blue-600 mb-1 truncate">{thread.campaign?.name}</div>
-                    <div className="text-sm text-gray-600 truncate mb-2">{latestEmail?.subject}</div>
+                    <div className="text-sm text-gray-600 truncate mb-2">{latestEmail?.subject || 'No subject'}</div>
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-gray-400 truncate w-2/3">{latestEmail?.body}</span>
+                      <span className="text-xs text-gray-400 truncate w-2/3">{latestEmail?.body || ''}</span>
                       {latestEmail?.isIncoming && getSentimentBadge(latestEmail.analysis)}
                     </div>
                   </div>
@@ -9555,17 +9731,17 @@ export const Inbox: React.FC = () => {
               <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">{activeThread.name} <span className="text-sm font-normal text-gray-500">({activeThread.email})</span></h2>
-                  <p className="text-xs text-gray-500">{activeThread.company} | {activeThread.position}</p>
+                  <p className="text-xs text-gray-500">{activeThread.company || 'No company'} | {activeThread.position || 'No position'}</p>
                 </div>
               </div>
 
               {/* Conversation History */}
               <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50">
-                {activeThread.sentEmails.map((msg: any) => {
+                {(activeThread.sentEmails || []).map((msg: any) => {
                   const isIncoming = msg.isIncoming;
                   let analysis = null;
                   if (msg.analysis) {
-                    try { analysis = JSON.parse(msg.analysis); } catch(e){}
+                    try { analysis = typeof msg.analysis === 'string' ? JSON.parse(msg.analysis) : msg.analysis; } catch(e){}
                   }
 
                   return (
@@ -9582,7 +9758,7 @@ export const Inbox: React.FC = () => {
                           {msg.body}
                         </div>
                         
-                        {/* AI Insights (Only on inbound) */}
+                        {/* AI Insights on inbound replies */}
                         {isIncoming && analysis && (
                           <div className="mt-4 pt-3 border-t border-dashed border-gray-200">
                             <div className="flex items-center gap-2 mb-2">
@@ -9621,7 +9797,7 @@ export const Inbox: React.FC = () => {
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-400">
-              Select a thread to view conversation
+              Select a thread to view the conversation
             </div>
           )}
         </div>

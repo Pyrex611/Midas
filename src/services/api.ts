@@ -8,7 +8,7 @@ const api = axios.create({
 
 axios.defaults.withCredentials = true;
 
-// Scope Token Injection to our Custom API instance to fix app-wide 401s
+// Token injection directly on the custom API instance
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('midas_auth_token');
   if (token) {
@@ -16,15 +16,6 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
-
-export const authAPI = {
-  signUp: (email: string, password: string, name?: string) =>
-    api.post('/auth/signup', { email, password, name }),
-  signIn: (email: string, password: string) =>
-    api.post('/auth/callback/credentials', { email, password }),
-  signOut: () => api.post('/auth/signout'),
-  getSession: () => api.get('/auth/session'),
-};
 
 export const userAPI = {
   getProfile: () => api.get('/user/profile'),
@@ -65,6 +56,9 @@ export const campaignAPI = {
     leadIds?: string[];
     autoReplyEnabled?: boolean;
     sendHourUTC?: number;
+    objective?: string;
+    targetTool?: string;
+    extendedObjective?: string;
   }) => api.post('/campaigns', data),
 
   getAll: () => api.get('/campaigns'),
@@ -117,7 +111,7 @@ export const campaignAPI = {
   addDomainToCampaign: (campaignId: string, domainId: string) => api.post(`/campaigns/${campaignId}/domains`, { domainId }),
   removeDomainFromCampaign: (campaignId: string, domainId: string) => api.delete(`/campaigns/${campaignId}/domains/${domainId}`),
 
-  // Core Campaign Collaboration Operations Linked to CampaignInvite/CampaignMember Schemas
+  // Collaboration Operations
   getMyInvites: () => api.get('/campaigns/invites/my'),
   acceptInvite: (token: string) => api.post(`/campaigns/invites/${token}/accept`),
   createInvite: (campaignId: string, data: { email: string; role: string }) =>
@@ -132,7 +126,7 @@ export const campaignAPI = {
 
 export const domainAPI = {
   getAll: () => api.get('/domains'),
-  add: (domainName: string) => api.post('/domains', { domainName }),
+  add: (domainName: string, senderLocalPart?: string) => api.post('/domains', { domainName, senderLocalPart }),
   verify: (id: string) => api.post(`/domains/${id}/verify`),
   delete: (id: string) => api.delete(`/domains/${id}`),
 };

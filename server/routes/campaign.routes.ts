@@ -35,7 +35,7 @@ import {
 
 const router = Router();
 
-// Core Collaboration endpoints
+// Collaboration & Team Management
 router.get('/invites/my', getMyInvites);
 router.post('/invites/:token/accept', acceptInvite);
 

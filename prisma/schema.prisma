@@ -25,34 +25,39 @@ model User {
   pendingEmails  PendingEmail[]
   uploadJobs     UploadJob[]
   blocklist      Blocklist[]
+  memberships    CampaignMember[]
+  invitesSent    CampaignInvite[]
 
   @@map("users")
 }
 
 // --- Domain & Deliverability Engine ---
 model Domain {
-  id             String   @id @default(cuid())
-  userId         String   @map("user_id") @db.Uuid
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id") @db.Uuid
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  domainName     String   @unique @map("domain_name")
-  status         String   @default("unverified") 
+  domainName       String   @unique @map("domain_name")
+  senderLocalPart  String   @default("hello") @map("sender_local_part")
+  status           String   @default("unverified") 
   
-  dkimStatus     Boolean  @default(false)
-  spfStatus      Boolean  @default(false)
-  mxStatus       Boolean  @default(false)
-  trackingStatus Boolean  @default(false)
-  dnsRecords     String?  @db.Text 
+  dkimStatus       Boolean  @default(false)
+  spfStatus        Boolean  @default(false)
+  mxStatus         Boolean  @default(false)
+  trackingStatus   Boolean  @default(false)
+  dnsRecords       String?  @db.Text 
   
-  warmupDay      Int      @default(1)
-  dailyLimit     Int      @default(20) 
-  sentCountToday Int      @default(0)
-  bounceRate     Float    @default(0.0)
-  complaintRate  Float    @default(0.0)
-  lastSentReset  DateTime @default(now()) @map("last_sent_reset")
+  warmupDay        Int      @default(1)
+  dailyLimit       Int      @default(20) 
+  sentCountToday   Int      @default(0)
+  bounceCount      Int      @default(0) @map("bounce_count")
+  replyCount       Int      @default(0) @map("reply_count")
+  bounceRate       Float    @default(0.0)
+  complaintRate    Float    @default(0.0)
+  lastSentReset    DateTime @default(now()) @map("last_sent_reset")
   
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   campaigns              CampaignDomain[]
   outboundEmails         OutboundEmail[]  @relation("OutboundEmailDomain")
@@ -83,6 +88,7 @@ model CampaignMember {
   campaignId String       @map("campaign_id")
   campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   userId     String       @map("user_id") @db.Uuid
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   role       CampaignRole @default(EDITOR)
   joinedAt   DateTime     @default(now()) @map("joined_at")
 
@@ -95,6 +101,7 @@ model CampaignInvite {
   campaignId String       @map("campaign_id")
   campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   senderId   String       @map("sender_id") @db.Uuid
+  sender     User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
   email      String
   role       CampaignRole @default(EDITOR)
   token      String       @unique
@@ -106,24 +113,24 @@ model CampaignInvite {
 }
 
 model Campaign {
-  id               String   @id @default(cuid())
-  userId           String   @map("user_id") @db.Uuid
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name             String
-  description      String?
-  context          String?
-  reference        String?
-  senderName       String?  @map("sender_name")
-  status           String   @default("DRAFT")
-  createdAt        DateTime @default(now()) @map("created_at")
-  startedAt        DateTime? @map("started_at")
-  completedAt      DateTime? @map("completed_at")
-  lastDomainIndex  Int      @default(0) @map("last_domain_index")
-  autoReplyEnabled Boolean  @default(false) @map("auto_reply_enabled")
-  sendHourUTC      Int      @default(9) @map("send_hour_utc")
-  activeStartHour  Int?     @map("active_start_hour")
-  activeEndHour    Int?     @map("active_end_hour")
-  timezone         String?
+  id                String   @id @default(cuid())
+  userId            String   @map("user_id") @db.Uuid
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  context           String?
+  reference         String?
+  senderName        String?  @map("sender_name")
+  status            String   @default("DRAFT")
+  createdAt         DateTime @default(now()) @map("created_at")
+  startedAt         DateTime? @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+  lastDomainIndex   Int      @default(0) @map("last_domain_index")
+  autoReplyEnabled  Boolean  @default(false) @map("auto_reply_enabled")
+  sendHourUTC       Int      @default(9) @map("send_hour_utc")
+  activeStartHour   Int?     @map("active_start_hour")
+  activeEndHour     Int?     @map("active_end_hour")
+  timezone          String?
   objective         String?
   targetTool        String?  @map("target_tool")
   extendedObjective String?  @map("extended_objective")
@@ -242,7 +249,7 @@ model OutboundEmail {
   domainId    String?  @map("domain_id")
   domain      Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
   leadId      String   @map("lead_id")
-  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaignId  String?  @map("campaign_id")
   campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   draftId     String?  @map("draft_id")

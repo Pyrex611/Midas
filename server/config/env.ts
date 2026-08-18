@@ -3,13 +3,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Standardize and sanitize the database connection URL for Neon's HTTP SQL Gateway
+// Sanitize connection URL for Neon's HTTP SQL Gateway (stripping -pooler and TCP parameters)
 const rawDatabaseUrl = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL || '';
 
 if (rawDatabaseUrl) {
-  // 1. Strip out "-pooler" from hostname (HTTP SQL Gateway only accepts direct compute endpoints)
   let cleanUrl = rawDatabaseUrl.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
-  // 2. Strip out TCP PgBouncer parameters that interfere with HTTP queries
   cleanUrl = cleanUrl.replace(/&?channel_binding=[^&]*/g, '');
   cleanUrl = cleanUrl.replace(/&?pgbouncer=[^&]*/g, '');
   cleanUrl = cleanUrl.replace(/&?connection_limit=[^&]*/g, '');
@@ -22,21 +20,28 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
-  SUPABASE_URL: z.string().url().optional(),
-  SUPABASE_ANON_KEY: z.string().optional(),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
   ENCRYPTION_KEY: z.string().length(64),
-  EMAIL_SERVICE: z.enum(['ethereal', 'smtp']).default('ethereal'),
-
+  EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('noreply@outreach.local'),
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.string().optional(),
-  SMTP_SECURE: z.enum(['true', 'false']).optional(),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
 
+  // Clerk Authentication Keys
+  CLERK_SECRET_KEY: z.string().optional(),
+  VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
+  CLERK_WEBHOOK_SECRET: z.string().optional(),
+
+  // Mailgun Deliverability Infrastructure
+  MAILGUN_API_KEY: z.string().optional(),
+  MAILGUN_WEBHOOK_KEY: z.string().optional(),
+
+  // Automation & Cron Infrastructure
+  CRON_SECRET: z.string().optional(),
+  BLOB_READ_WRITE_TOKEN: z.string().optional(),
+  BOUNCEBAN_API_KEY: z.string().optional(),
+
+  // AI Provider Credentials
   AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).default('mock'),
   PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).optional(),
   OPENAI_API_KEY: z.string().optional(),
@@ -50,15 +55,6 @@ const envSchema = z.object({
   OLLAMA_URL: z.string().default('http://localhost:11434'),
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),
-
-  IMAP_HOST: z.string().optional(),
-  IMAP_PORT: z.string().transform(Number).optional(),
-  IMAP_USER: z.string().optional(),
-  IMAP_PASS: z.string().optional(),
-  IMAP_TLS: z.enum(['true', 'false']).default('true'),
-  IMAP_MAILBOX: z.string().default('INBOX'),
-  IMAP_POLL_INTERVAL: z.string().default('300000').transform(Number),
-  IMAP_CONN_TIMEOUT: z.string().default('30000').transform(Number),
 
   AI_REQUEST_DELAY_MS: z.string().default('500').transform(Number),
 });

@@ -11,13 +11,13 @@ export interface AuthRequest extends Request {
   auth?: any;
 }
 
-// In-memory cache to map Clerk IDs to local PostgreSQL UUIDs without blocking DB queries
+// In-memory cache to map Clerk IDs to local PostgreSQL UUIDs for 0ms middleware lookups
 const userCache = new Map<string, { id: string; email: string }>();
 
 export const requireAuth = (req: any, res: Response, next: NextFunction) => {
   ClerkExpressRequireAuth()(req, res, async (err: any) => {
     if (err) {
-      logger.error({ err }, 'Clerk authentication failed');
+      logger.error({ err }, 'Clerk verification failed');
       return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
@@ -27,13 +27,12 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
         return res.status(401).json({ error: 'Unauthorized: Missing User Identity' });
       }
 
-      // Check in-memory cache first for fast 0ms resolution
+      // Check cache first for 0ms resolution
       if (userCache.has(clerkId)) {
         req.user = userCache.get(clerkId)!;
         return next();
       }
 
-      // Retrieve or create user record
       let user = await prisma.user.findUnique({
         where: { clerkId },
         select: { id: true, email: true },
@@ -55,7 +54,6 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
         });
       }
 
-      // Cache the result in-memory
       const resolvedUser = { id: user.id, email: user.email };
       userCache.set(clerkId, resolvedUser);
 

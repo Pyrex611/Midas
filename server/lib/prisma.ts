@@ -9,7 +9,7 @@ const prismaClientSingleton = () => {
     throw new Error('DATABASE_URL is not set in environment variables');
   }
 
-  // Ensure connection URL targets direct compute endpoint for HTTP queries
+  // Ensure connection URL targets the direct compute endpoint for HTTP queries
   connectionString = connectionString.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
   connectionString = connectionString.replace(/&?channel_binding=[^&]*/g, '');
   connectionString = connectionString.replace(/&?pgbouncer=[^&]*/g, '');

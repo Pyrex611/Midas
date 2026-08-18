@@ -9,11 +9,11 @@ export class DomainService {
     return `Basic ${Buffer.from(`api:${process.env.MAILGUN_API_KEY}`).toString('base64')}`;
   }
 
-  async addDomain(userId: string, domainName: string) {
+  async addDomain(userId: string, domainName: string, senderLocalPart: string = 'hello') {
     const cleanDomain = domainName.toLowerCase().trim();
     const apiKey = process.env.MAILGUN_API_KEY;
 
-    // High-Fidelity Sandbox Fallback Mock Mode if no live keys exist or are set to 'mock'
+    // Sandbox/Mock Fallback Mode if keys are not live or set to 'mock'
     if (!apiKey || apiKey === 'mock') {
       logger.info({ domainName }, 'Mailgun API key is unconfigured or mock. Simulating domain addition.');
 
@@ -21,6 +21,7 @@ export class DomainService {
         data: {
           userId,
           domainName: cleanDomain,
+          senderLocalPart: senderLocalPart || 'hello',
           status: 'unverified',
           dnsRecords: JSON.stringify({
             receiving: [
@@ -33,7 +34,7 @@ export class DomainService {
               { record_type: 'CNAME', name: `email.${cleanDomain}`, value: 'mailgun.org', valid: 'unverified' }
             ]
           }),
-          dailyLimit: 20, // Strict Warmup Day 1 Constraint
+          dailyLimit: 20,
           warmupDay: 1
         }
       });
@@ -61,12 +62,13 @@ export class DomainService {
         data: {
           userId,
           domainName: cleanDomain,
+          senderLocalPart: senderLocalPart || 'hello',
           status: 'unverified',
           dnsRecords: JSON.stringify({
             receiving: mgData.receiving_dns_records || [],
             sending: mgData.sending_dns_records || []
           }),
-          dailyLimit: 20, // STRICT WARMUP DAY 1 LIMIT
+          dailyLimit: 20,
           warmupDay: 1
         }
       });
@@ -79,18 +81,17 @@ export class DomainService {
   }
 
   async verifyDomain(userId: string, domainId: string) {
-    const domain = await prisma.domain.findUnique({ where: { id: domainId, userId } });
+    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
 
     const apiKey = process.env.MAILGUN_API_KEY;
 
-    // High-Fidelity Sandbox Mock verification simulation
     if (!apiKey || apiKey === 'mock') {
-      logger.info({ domainId }, 'Mailgun API key is unconfigured or mock. Simulating DNS verification success.');
+      logger.info({ domainId }, 'Simulating DNS verification.');
       
       const records = domain.dnsRecords ? JSON.parse(domain.dnsRecords) : { receiving: [], sending: [] };
-      const verifiedReceiving = records.receiving.map((r: any) => ({ ...r, valid: 'valid' }));
-      const verifiedSending = records.sending.map((r: any) => ({ ...r, valid: 'valid' }));
+      const verifiedReceiving = (records.receiving || []).map((r: any) => ({ ...r, valid: 'valid' }));
+      const verifiedSending = (records.sending || []).map((r: any) => ({ ...r, valid: 'valid' }));
 
       return prisma.domain.update({
         where: { id: domainId },
@@ -123,7 +124,7 @@ export class DomainService {
       const mxState = mgData.receiving_dns_records?.find((r: any) => r.record_type === 'MX')?.valid === 'valid';
       const trackingState = mgData.sending_dns_records?.find((r: any) => r.record_type === 'CNAME')?.valid === 'valid';
 
-      const updatedDomain = await prisma.domain.update({
+      return prisma.domain.update({
         where: { id: domainId },
         data: {
           status: isActive ? 'active' : 'unverified',
@@ -137,8 +138,6 @@ export class DomainService {
           })
         }
       });
-
-      return updatedDomain;
     } catch (error: any) {
       logger.error({ error: error.message, domainId }, 'Failed to verify domain');
       throw error;
@@ -153,12 +152,11 @@ export class DomainService {
   }
 
   async deleteDomain(userId: string, domainId: string) {
-    const domain = await prisma.domain.findUnique({ where: { id: domainId, userId } });
+    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
 
     const apiKey = process.env.MAILGUN_API_KEY;
     if (!apiKey || apiKey === 'mock') {
-      logger.info({ domainId }, 'Mailgun API key is unconfigured or mock. Simulating domain deletion.');
       await prisma.domain.delete({ where: { id: domainId } });
       return;
     }
