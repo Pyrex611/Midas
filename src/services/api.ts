@@ -17,6 +17,26 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Robust, human-readable error extractor preventing "[object Object]" UI alerts
+export const getErrorMessage = (err: any, fallback: string = 'An unexpected error occurred'): string => {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+  
+  const data = err.response?.data;
+  if (data) {
+    if (typeof data.error === 'string') return data.error;
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data === 'string') return data;
+    if (data.error && typeof data.error === 'object') {
+      if (typeof data.error.message === 'string') return data.error.message;
+      return JSON.stringify(data.error);
+    }
+  }
+  
+  if (err.message && typeof err.message === 'string') return err.message;
+  return fallback;
+};
+
 export const userAPI = {
   getProfile: () => api.get('/user/profile'),
   updateProfile: (data: { name: string }) => api.put('/user/profile', data),

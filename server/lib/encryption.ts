@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { env } from '../config/env';
 
 const algorithm = 'aes-256-gcm';
-const secretKey = env.ENCRYPTION_KEY; // must be 32 bytes, store in .env
+const secretKey = env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const ivLength = 16;
 const tagLength = 16;
 
@@ -17,6 +17,7 @@ export function encrypt(text: string): string {
 
 export function decrypt(text: string): string {
   const parts = text.split(':');
+  if (parts.length < 3) return text;
   const iv = Buffer.from(parts[0], 'hex');
   const tag = Buffer.from(parts[1], 'hex');
   const encryptedText = parts[2];

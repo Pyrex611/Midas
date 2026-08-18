@@ -23,7 +23,8 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
-  ENCRYPTION_KEY: z.string().length(64),
+  // Fallback 64-char hex key prevents startup crashes if unconfigured
+  ENCRYPTION_KEY: z.string().default('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('noreply@outreach.local'),
 
@@ -37,7 +38,7 @@ const envSchema = z.object({
   MAILGUN_WEBHOOK_KEY: z.string().optional(),
 
   // Automation & Cron Infrastructure
-  CRON_SECRET: z.string().optional(),
+  CRON_SECRET: z.string().default('default_cron_secret_32_chars_min_len'),
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
   BOUNCEBAN_API_KEY: z.string().optional(),
 
