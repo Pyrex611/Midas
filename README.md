@@ -1,201 +1,500 @@
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+# Midas: AI-Powered Cold Email Outreach & Follow-up System
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+> A semi-automated cold email outreach and follow-up agent with intelligent leads management, powered by multiple AI providers and deployed on Vercel.
 
-   1. Definitions.
+**Branch:** `vercel` | **Status:** Production-ready MVP with Phase 3.5+ features
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+---
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+## 🎯 Overview
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+Midas is a full-stack TypeScript/Python application that automates the entire cold email outreach workflow:
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+1. **Lead Management** – Upload and manage CSV/XLSX files with prospect data
+2. **Campaign Orchestration** – Create campaigns with customizable follow-up sequences
+3. **Intelligent Email Drafting** – AI-powered email generation based on tone, use case, and campaign context
+4. **Automated Sending** – Scheduled delivery via Mailgun with domain deliverability management
+5. **Reply Intelligence** – Automatic sentiment analysis and reply-to-reply generation
+6. **Inbox Management** – Centralized inbox for monitoring opens, clicks, bounces, and replies
+7. **Domain Warmup** – Built-in sender reputation management with daily send limits and bounce tracking
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+**Key Stats:**
+- **84.5% TypeScript** | 12.9% Python | 3.6% Other
+- **Tech Stack:** Vite + React, Express.js, Prisma, PostgreSQL (Neon), Clerk Auth, Mailgun, Multiple AI Providers
+- **Deployment:** Vercel (serverless) with scheduled cron jobs
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+---
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+## 🚀 Quick Start
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+### Prerequisites
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
+- **Node.js** 18+ 
+- **PostgreSQL** database (Neon recommended for serverless)
+- **Environment variables** (see Configuration section)
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+### Installation
 
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
+```bash
+# Clone the repository
+git clone https://github.com/Pyrex611/Midas.git
+cd Midas
+git checkout vercel
 
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
+# Install dependencies
+npm install
 
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
+# Generate Prisma client
+npx prisma generate
 
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
+# Setup database
+npx prisma db push
 
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
+# Start development server
+npm run dev
+```
 
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
+**Frontend:** Accessible at `http://localhost:5173`  
+**Backend API:** Accessible at `http://localhost:3000/api`
 
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
+### Build & Deploy
 
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
+```bash
+# Build for production
+npm run build
 
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
+# Start production server
+npm start
 
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
+# Vercel deployment
+npm run vercel-build
+```
 
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
+---
 
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
+## 📋 Configuration
 
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
+Create a `.env.local` file in the project root with the following variables:
 
-   END OF TERMS AND CONDITIONS
+```env
+# Database
+DATABASE_URL=postgresql://user:password@host/dbname
+DATABASE_URL_POOLED=postgresql://user:password@host/dbname?sslmode=require
 
-   APPENDIX: How to apply the Apache License to your work.
+# Frontend
+VITE_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
 
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
+# Backend Authentication
+CLERK_SECRET_KEY=your_clerk_secret_key
+CLERK_WEBHOOK_SECRET=your_clerk_webhook_secret
 
-   Copyright [yyyy] [name of copyright owner]
+# CORS & Deployment
+CORS_ORIGIN=http://localhost:5173,https://midas-aem.vercel.app
+NODE_ENV=development
+PORT=3000
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+# Email Service (Mailgun)
+EMAIL_SERVICE=mailgun
+EMAIL_FROM=hello@yourdomain.com
+MAILGUN_API_KEY=your_mailgun_api_key
+MAILGUN_WEBHOOK_KEY=your_mailgun_webhook_key
 
-       http://www.apache.org/licenses/LICENSE-2.0
+# File Storage
+BLOB_READ_WRITE_TOKEN=your_vercel_blob_token
+MAX_FILE_SIZE_MB=10
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+# Cron Job Security
+CRON_SECRET=your_32_char_minimum_secret
+
+# AI Provider (choose one or multiple)
+AI_PROVIDER=openrouter
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4-turbo-preview
+GEMINI_API_KEY=your_gemini_key
+GEMINI_MODEL=gemini-2.5-flash-lite
+DEEPSEEK_API_KEY=your_deepseek_key
+DEEPSEEK_MODEL=deepseek-chat
+OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_MODEL=deepseek/deepseek-r1:free
+
+# Optional: Local LLM (Ollama)
+OLLAMA_URL=http://localhost:11434
+OLLAMA_FAST_MODEL=llama3.2:1b
+OLLAMA_POWERFUL_MODEL=llama3.1:8b
+
+# Optional: Email Verification
+BOUNCEBAN_API_KEY=your_bounceban_key
+
+# Encryption (generate a 64-char hex key or use default for dev)
+ENCRYPTION_KEY=your_64_char_hex_encryption_key
+```
+
+---
+
+## 🏗️ Architecture
+
+### Project Structure
+
+```
+Midas/
+├── src/                          # React Frontend (84.5% TypeScript)
+│   ├── main.tsx                 # Entry point with Clerk provider
+│   ├── App.tsx                  # Router & route definitions
+│   ├── pages/                   # Route components (Home, Leads, Campaigns, etc.)
+│   ├── components/              # Reusable UI components
+│   ├── context/                 # React context (AuthContext)
+│   └── index.css                # Tailwind CSS styles
+│
+├── server/                       # Express.js Backend
+│   ├── app.ts                   # Express app setup with CORS & routes
+│   ├── index.ts                 # Server entry point (port 3000)
+│   ├── config/                  # Configuration modules
+│   │   ├── env.ts              # Environment validation (Zod)
+│   │   └── logger.ts           # Winston logging
+│   ├── middleware/              # Auth & request handlers
+│   │   └── auth.middleware.ts  # Clerk JWT verification + user sync
+│   └── routes/                  # API route handlers
+│       ├── lead.routes.ts      # Lead CRUD & upload
+│       ├── campaign.routes.ts  # Campaign management
+│       ├── domain.routes.ts    # Domain verification & warmup
+│       ├── inbox.routes.ts     # Email tracking & replies
+│       ├── ai.routes.ts        # Draft generation & sentiment analysis
+│       ├── webhooks.routes.ts  # Mailgun & Clerk webhooks
+│       ├── cron.routes.ts      # Scheduled email sending
+│       ├── user.routes.ts      # User profile
+│       └── diagnostic.routes.ts # Health checks
+│
+├── api/                         # Vercel Serverless Functions
+│   └── index.ts                # Serverless HTTP wrapper (serverless-http)
+│
+├── prisma/                      # Database Schema
+│   └── schema.prisma           # 14+ models (User, Campaign, Lead, etc.)
+│
+├── vite.config.ts              # Vite build configuration
+├── tsconfig.json               # TypeScript config (frontend)
+├── tsconfig.server.json        # TypeScript config (backend)
+├── vercel.json                 # Vercel deployment & cron config
+├── package.json                # Dependencies & build scripts
+└── .dockerfile                 # Docker image for Cloud Run deployment
+```
+
+### Database Schema (Prisma)
+
+**Core Models:**
+- **User** – Clerk-integrated user accounts with UUID primary key
+- **Campaign** – Email campaigns with follow-up steps, timezones, and status tracking
+- **Lead** – Prospects with email verification status and outreach tracking
+- **Domain** – Sender domains with DKIM/SPF/MX/tracking verification, warmup day, daily limits
+- **Draft** – Email templates (subject + body) with version control and reusability
+- **OutboundEmail** – Sent emails with delivery tracking (open, click, reply, bounce)
+- **PendingEmail** – Scheduled emails awaiting dispatch
+- **FollowUpStep** – Configured delays between campaign steps
+- **CampaignMember** – Multi-user collaboration (OWNER/EDITOR/VIEWER roles)
+- **CampaignInvite** – Email invitations with expiration tokens
+- **Blocklist** – Regex patterns to filter leads
+- **UploadJob** – Async lead upload progress tracking
+- **UserSettings** – User preferences and configuration
+
+[View full schema](https://github.com/Pyrex611/Midas/blob/vercel/prisma/schema.prisma)
+
+---
+
+## 🔐 Authentication & Security
+
+### Clerk Integration
+- **Frontend:** React SDK with `@clerk/clerk-react`
+- **Backend:** Node SDK with JWT verification via `@clerk/clerk-sdk-node`
+- **Middleware:** `requireAuth` middleware validates RS256 signatures and auto-syncs users to PostgreSQL
+- **User Cache:** In-memory cache maps Clerk IDs to local UUIDs for 0ms resolution
+
+### CORS Policy
+Allowed origins include:
+- Configured `CORS_ORIGIN` list
+- All `*.vercel.app` deployments
+- `localhost:*` and `127.0.0.1:*` (development)
+- All origins in development mode
+
+### Protected Routes
+- `/api/leads`, `/api/campaigns`, `/api/domains`, `/api/inbox`, `/api/ai`, `/api/user`, `/api/diagnostics` – Protected by Clerk auth
+- `/api/webhooks` – Public (Mailgun & Clerk webhooks)
+- `/api/cron` – Protected by `CRON_SECRET` bearer token
+- `/api/health` – Public health check
+
+---
+
+## 📧 Email Infrastructure
+
+### Mailgun Integration
+- **API Key:** Validated during domain setup
+- **Webhook Key:** Verifies webhook signatures
+- **Events Tracked:** Delivered, opened, clicked, bounced, complained
+- **Sender Format:** `{senderLocalPart}@{domainName}` (default: `hello@domain.com`)
+
+### Domain Verification
+- **DKIM, SPF, MX Verification** – Status flags for each domain
+- **Tracking Enabled** – Optional tracking domain for open/click events
+- **Warmup Protocol:**
+  - Day 1 warmup start
+  - Configurable daily send limit (default: 20)
+  - Bounce/complaint rate tracking
+  - Automatic rate limiting based on reputation
+
+### Email Delivery Flow
+1. **Draft Generation** – AI creates email from campaign context
+2. **Pending Queue** – Email scheduled with optional domain preference
+3. **Cron Dispatch** – 09:00 UTC daily (`/api/cron/queue`)
+4. **Mailgun Send** – Domain selected via round-robin or preference
+5. **Webhook Events** – Real-time delivery status updates
+6. **Reply Capture** – Incoming replies parsed and stored
+7. **Sentiment Analysis** – AI analyzes reply tone
+8. **Auto-Reply Draft** – AI generates contextual response (user approval required)
+
+---
+
+## 🤖 AI & Automation
+
+### Supported Providers
+- **OpenAI** – `gpt-4-turbo-preview` (default for powerful tasks)
+- **Google Gemini** – `gemini-2.5-flash-lite`
+- **DeepSeek** – `deepseek-chat`
+- **OpenRouter** – `deepseek/deepseek-r1:free` (free tier default)
+- **Ollama** – Local models for privacy (`llama3.2:1b`, `llama3.1:8b`)
+- **Mock** – Development mode (returns static responses)
+
+### AI Capabilities
+- **Email Draft Generation** – Contextual cold emails from tone, use case, and campaign objective
+- **Sentiment Analysis** – Reply classification (positive, negative, neutral, interested, not-interested)
+- **Intent Recognition** – Detect action items in replies
+- **Auto-Reply Drafting** – Generate follow-ups based on sentiment and thread context
+- **Request Delay** – Configurable delay between AI requests (default: 500ms) to respect rate limits
+
+### Configuration
+```env
+AI_PROVIDER=openrouter                          # Primary provider
+PRIMARY_FALLBACK_PROVIDER=gemini               # Fallback if primary fails
+OPENROUTER_API_KEY=sk-...
+OPENROUTER_MODEL=deepseek/deepseek-r1:free
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash-lite
+AI_REQUEST_DELAY_MS=500                        # Delay between API calls
+```
+
+---
+
+## 🔄 Automation & Cron Jobs
+
+### Scheduled Tasks (Vercel Cron)
+
+**Queue Processing:** `0 9 * * *` (09:00 UTC daily)
+- Dispatches pending emails respecting domain daily limits
+- Checks warmup status and adjusts send rates
+- Handles retries for failed sends
+
+**Lead Processing:** `0 10 * * *` (10:00 UTC daily)
+- Processes incoming replies
+- Runs sentiment analysis
+- Generates auto-reply drafts
+
+### Configuration
+```json
+{
+  "crons": [
+    { "path": "/api/cron/queue", "schedule": "0 9 * * *" },
+    { "path": "/api/cron/leads", "schedule": "0 10 * * *" }
+  ]
+}
+```
+
+Secure cron requests with `CRON_SECRET` header:
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" https://midas-aem.vercel.app/api/cron/queue
+```
+
+---
+
+## 🎨 Frontend Features
+
+### Pages
+- **Home** – Dashboard overview
+- **Leads** – Lead list with CSV/XLSX upload, status filters, verification tracking
+- **Campaigns** – Campaign creation, editing, follow-up step configuration
+- **Campaign Detail** – Per-campaign email tracking and member collaboration
+- **Domains** – Domain verification, DNS record display, warmup status
+- **Inbox** – Unified inbox for sent emails, replies, opens, clicks
+- **Profile** – User settings and account management
+
+### UI/UX
+- **Responsive Design** – Tailwind CSS v4 for modern styling
+- **Dropzone** – `react-dropzone` for file uploads
+- **CSV Parsing** – `papaparse` for lead import
+- **Routing** – React Router v6 for SPA navigation
+- **Error Boundaries** – Graceful error handling
+
+---
+
+## 📦 Build & Deployment
+
+### Development Build
+```bash
+npm run dev
+```
+- Vite dev server on port 5173 (frontend)
+- Express server on port 3000 (backend)
+- Hot module replacement enabled
+
+### Production Build
+```bash
+npm run build
+```
+Executes:
+1. `prisma generate` – Generate Prisma client
+2. `tsc -p tsconfig.server.json` – Compile backend to `dist/server`
+3. `vite build` – Bundle frontend to `dist/client`
+
+### Vercel Deployment
+```bash
+npm run vercel-build
+```
+Executes:
+1. `prisma generate`
+2. `prisma db push --accept-data-loss` – Auto-migrate schema
+3. `tsc -p tsconfig.server.json`
+4. `vite build`
+
+**Deployment Config** (`vercel.json`):
+- Rewrites `/api/*` requests to `/api/index.ts` (serverless function)
+- Rewrites all other requests to `/index.html` (SPA routing)
+- Cron jobs configured for background tasks
+
+### Docker Deployment
+A multi-stage `.dockerfile` is included for Cloud Run:
+```dockerfile
+FROM node:18-slim AS build
+# Build backend and frontend
+
+FROM node:18-slim
+# Copy dist and node_modules, expose port 8080
+```
+
+---
+
+## 🔧 Dependencies
+
+### Frontend
+- `react` – UI framework
+- `react-router-dom` – Client-side routing
+- `@clerk/clerk-react` – Authentication UI
+- `tailwindcss` – Styling
+- `axios` – HTTP client
+- `papaparse` – CSV parsing
+- `react-dropzone` – File upload
+
+### Backend
+- `express` – Web framework
+- `prisma` & `@prisma/client` – ORM & database client
+- `@neondatabase/serverless` – Neon PostgreSQL driver
+- `@clerk/clerk-sdk-node` – Server-side auth
+- `mailgun.js` – Email API
+- `svix` – Webhook verification
+- `bcryptjs` – Password hashing
+- `jsonwebtoken` – JWT handling
+- `winston` – Logging
+- `zod` – Schema validation
+- `serverless-http` – HTTP wrapper for serverless
+
+### Build Tools
+- `vite` – Build bundler
+- `typescript` – Type safety
+- `@vitejs/plugin-react` – React plugin
+
+---
+
+## 🧪 Testing & Monitoring
+
+### Health Check
+```bash
+curl https://midas-aem.vercel.app/api/health
+# Returns: { "status": "ok", "timestamp": "2026-..." }
+```
+
+### Logging
+- **Winston Logger** – Structured JSON logs
+- **Environment-aware** – `debug` level in development, `info` in production
+- **Console Transport** – Logs to stdout (Vercel compatible)
+
+### Error Handling
+- Clerk auth failures return `401 Unauthorized`
+- Database errors return `500 Internal Server Error` with logging
+- Input validation via Zod schemas
+- Error boundary component on frontend
+
+---
+
+## 📝 Development Workflow
+
+### Local Development
+```bash
+# Terminal 1: Backend (Express + Prisma)
+npm run dev
+
+# Terminal 2: Database (if running locally)
+docker run -e POSTGRES_PASSWORD=password postgres:15
+
+# Terminal 3: Sync database schema
+npx prisma studio  # Open Prisma GUI at http://localhost:5555
+```
+
+### Database Migrations
+```bash
+# Create a new migration
+npx prisma migrate dev --name migration_name
+
+# Push schema changes (Vercel build)
+npx prisma db push
+
+# View database GUI
+npx prisma studio
+```
+
+### Git Workflow
+- **Branch:** `vercel` is the production branch
+- **Main branch:** Contains alternate implementations
+- **Commits:** Descriptive messages with feature/phase numbers (Phase 3.5, etc.)
+
+---
+
+## 🐛 Known Limitations & Future Work
+
+- **Google Cloud ADK** – Limited support due to API key acquisition challenges
+- **Reply Threading** – Basic reply-to tracking; full thread reconstruction in progress
+- **Real-time Updates** – Webhook events processed via cron; WebSocket support pending
+- **Advanced Analytics** – Campaign performance metrics available via email tracking data
+
+---
+
+## 📄 License
+
+This project includes a LICENSE file. See [LICENSE](https://github.com/Pyrex611/Midas/blob/vercel/LICENSE) for details.
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes with clear messages
+4. Push to your fork
+5. Open a pull request
+
+---
+
+## 📞 Support & Contact
+
+For issues, questions, or feature requests:
+- Open a GitHub issue: [Midas Issues](https://github.com/Pyrex611/Midas/issues)
+- Contact the author: [Pyrex611](https://github.com/Pyrex611)
+
+---
+
+**Last Updated:** February 2026 | **Phase:** 3.5+ (Reply Analysis & Automation)
