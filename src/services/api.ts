@@ -47,10 +47,17 @@ export const userSettingsAPI = {
   update: (data: any) => api.put('/user/settings', data),
 };
 
+export const configAPI = {
+  // Public feature flags — currently just whether a real email-verification
+  // vendor is configured, which drives the "Verify emails" checkbox on upload.
+  get: () => api.get('/config'),
+};
+
 export const leadAPI = {
-  upload: (file: File) => {
+  upload: (file: File, verifyEmails: boolean = false) => {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('verifyEmails', String(verifyEmails));
     return api.post('/leads/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -147,6 +154,9 @@ export const campaignAPI = {
 export const domainAPI = {
   getAll: () => api.get('/domains'),
   add: (domainName: string, senderLocalPart?: string) => api.post('/domains', { domainName, senderLocalPart }),
+  // Adopts a domain already created directly in Mailgun's dashboard — use
+  // this when your Mailgun plan doesn't allow programmatic domain creation.
+  connect: (domainName: string, senderLocalPart?: string) => api.post('/domains/connect', { domainName, senderLocalPart }),
   verify: (id: string) => api.post(`/domains/${id}/verify`),
   delete: (id: string) => api.delete(`/domains/${id}`),
 };

@@ -2,7 +2,11 @@ import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
 export class DomainService {
-  private readonly baseUrl = 'https://api.mailgun.net/v3';
+  // Mailgun accounts are region-locked at signup; using the wrong base URL
+  // fails every request for EU-region accounts. Set MAILGUN_REGION=eu to switch.
+  private readonly baseUrl = process.env.MAILGUN_REGION === 'eu'
+    ? 'https://api.eu.mailgun.net/v3'
+    : 'https://api.mailgun.net/v3';
   
   private get authHeader() {
     if (!process.env.MAILGUN_API_KEY) throw new Error('MAILGUN_API_KEY is not set in .env');
@@ -78,6 +82,67 @@ export class DomainService {
       logger.error({ error: error.message, domainName }, 'Failed to add domain');
       throw error;
     }
+  }
+
+  /**
+   * Adopts a domain the user already created directly in Mailgun's own
+   * dashboard, instead of creating it via `POST /v3/domains`.
+   *
+   * Why this exists: some Mailgun account tiers (free/trial/sandbox) block
+   * or heavily restrict programmatic domain creation, but `GET /v3/domains/:name`
+   * (a read-only lookup) works on every tier. So instead of requiring
+   * domain-creation API access, we just verify the domain already exists on
+   * the account and pull its DNS records + state from that read call. This
+   * makes "add the domain yourself in Mailgun's UI, then connect it here"
+   * work regardless of what your specific Mailgun plan restricts.
+   */
+  async connectExistingDomain(userId: string, domainName: string, senderLocalPart: string = 'hello') {
+    const cleanDomain = domainName.toLowerCase().trim();
+    const apiKey = process.env.MAILGUN_API_KEY;
+
+    const existing = await prisma.domain.findFirst({ where: { userId, domainName: cleanDomain } });
+    if (existing) throw new Error('This domain is already connected to your account');
+
+    if (!apiKey || apiKey === 'mock') {
+      logger.info({ domainName: cleanDomain }, 'Mailgun API key unconfigured — simulating domain connect.');
+      return this.addDomain(userId, cleanDomain, senderLocalPart);
+    }
+
+    const mgRes = await fetch(`${this.baseUrl}/domains/${cleanDomain}`, {
+      method: 'GET',
+      headers: { 'Authorization': this.authHeader },
+    });
+
+    if (mgRes.status === 404) {
+      throw new Error(
+        `"${cleanDomain}" was not found on your Mailgun account. Add it in the Mailgun dashboard ` +
+        `(Sending > Domains > Add New Domain) first, then try connecting it here again.`
+      );
+    }
+
+    const mgData = await mgRes.json();
+    if (!mgRes.ok) throw new Error(mgData.message || 'Failed to look up domain on Mailgun');
+
+    const isActive = mgData.domain?.state === 'active';
+
+    return prisma.domain.create({
+      data: {
+        userId,
+        domainName: cleanDomain,
+        senderLocalPart: senderLocalPart || 'hello',
+        status: isActive ? 'active' : 'unverified',
+        spfStatus: !!mgData.receiving_dns_records?.find((r: any) => r.record_type === 'TXT' && r.value?.includes('v=spf1') && r.valid === 'valid'),
+        dkimStatus: !!mgData.sending_dns_records?.find((r: any) => r.record_type === 'TXT' && r.name?.includes('domainkey') && r.valid === 'valid'),
+        mxStatus: !!mgData.receiving_dns_records?.find((r: any) => r.record_type === 'MX' && r.valid === 'valid'),
+        trackingStatus: !!mgData.sending_dns_records?.find((r: any) => r.record_type === 'CNAME' && r.valid === 'valid'),
+        dnsRecords: JSON.stringify({
+          receiving: mgData.receiving_dns_records || [],
+          sending: mgData.sending_dns_records || [],
+        }),
+        dailyLimit: 20,
+        warmupDay: 1,
+      },
+    });
   }
 
   async verifyDomain(userId: string, domainId: string) {

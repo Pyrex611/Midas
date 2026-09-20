@@ -12,11 +12,27 @@ router.get('/', async (req: any, res) => {
   }
 });
 
+// Creates a brand-new domain via Mailgun's `POST /domains` API. Requires a
+// Mailgun plan/tier that allows programmatic domain creation.
 router.post('/', async (req: any, res) => {
   try {
-    const { domainName } = req.body;
+    const { domainName, senderLocalPart } = req.body;
     if (!domainName) return res.status(400).json({ error: 'domainName is required' });
-    const domain = await domainService.addDomain(req.user.id, domainName);
+    const domain = await domainService.addDomain(req.user.id, domainName, senderLocalPart);
+    res.status(201).json(domain);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Adopts a domain the user already created directly in Mailgun's dashboard —
+// works even on Mailgun tiers that block/limit the domain-creation API call,
+// since this only ever performs a read-only GET against Mailgun.
+router.post('/connect', async (req: any, res) => {
+  try {
+    const { domainName, senderLocalPart } = req.body;
+    if (!domainName) return res.status(400).json({ error: 'domainName is required' });
+    const domain = await domainService.connectExistingDomain(req.user.id, domainName, senderLocalPart);
     res.status(201).json(domain);
   } catch (error: any) {
     res.status(400).json({ error: error.message });

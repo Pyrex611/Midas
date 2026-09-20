@@ -32,49 +32,53 @@ import {
   createInvite,
   updateCampaignStrategy,
 } from '../controllers/campaign.controller';
+import { requireCampaignRole } from '../middleware/campaignAccess.middleware';
 
 const router = Router();
 
-// Collaboration & Team Management
+// Collaboration & Team Management (no campaignId in scope for these two)
 router.get('/invites/my', getMyInvites);
 router.post('/invites/:token/accept', acceptInvite);
 
 router.post('/', createCampaign);
 router.get('/', getCampaigns);
 
-router.put('/:id/auto-reply', updateAutoReply);
-router.put('/:id/active-hours', updateActiveHours);
-router.put('/:id/send-hour', updateSendHour);
-router.put('/:id/strategy', updateCampaignStrategy);
+// --- Everything below targets a specific campaign and MUST be role-gated. ---
+// VIEWER = read-only. EDITOR = manage leads/drafts/automation. OWNER = destructive/ownership actions.
 
-router.get('/:id/followup-steps', getFollowUpSteps);
-router.post('/:id/followup-steps', setFollowUpSteps);
-router.delete('/:id/followup-steps/:stepId', deleteFollowUpStep);
+router.put('/:id/auto-reply', requireCampaignRole('EDITOR'), updateAutoReply);
+router.put('/:id/active-hours', requireCampaignRole('EDITOR'), updateActiveHours);
+router.put('/:id/send-hour', requireCampaignRole('EDITOR'), updateSendHour);
+router.put('/:id/strategy', requireCampaignRole('EDITOR'), updateCampaignStrategy);
 
-router.get('/:id/domains', getCampaignDomains);
-router.post('/:id/domains', addDomainToCampaign);
-router.delete('/:id/domains/:domainId', removeDomainFromCampaign);
+router.get('/:id/followup-steps', requireCampaignRole('VIEWER'), getFollowUpSteps);
+router.post('/:id/followup-steps', requireCampaignRole('EDITOR'), setFollowUpSteps);
+router.delete('/:id/followup-steps/:stepId', requireCampaignRole('EDITOR'), deleteFollowUpStep);
 
-router.put('/:id', updateCampaign);
-router.delete('/:id', deleteCampaign);
-router.get('/:id', getCampaignDetails);
+router.get('/:id/domains', requireCampaignRole('VIEWER'), getCampaignDomains);
+router.post('/:id/domains', requireCampaignRole('EDITOR'), addDomainToCampaign);
+router.delete('/:id/domains/:domainId', requireCampaignRole('EDITOR'), removeDomainFromCampaign);
 
-router.post('/:id/leads', addLeadsToCampaign);
-router.post('/:id/invites', createInvite);
+router.put('/:id', requireCampaignRole('EDITOR'), updateCampaign);
+router.delete('/:id', requireCampaignRole('OWNER'), deleteCampaign);
+router.get('/:id', requireCampaignRole('VIEWER'), getCampaignDetails);
 
-router.get('/:campaignId/leads/:leadId/thread', getLeadEmailThread);
-router.get('/:campaignId/leads/:leadId/preview/:draftId', previewLeadWithDraft);
-router.post('/:campaignId/leads/:leadId/send', sendLeadEmail);
+router.post('/:id/leads', requireCampaignRole('EDITOR'), addLeadsToCampaign);
+router.post('/:id/invites', requireCampaignRole('EDITOR'), createInvite);
 
-router.get('/:campaignId/leads/:leadId/reply-draft', getReplyDraft);
-router.post('/:campaignId/leads/:leadId/generate-reply-draft', generateReplyDraft);
-router.post('/:campaignId/leads/:leadId/send-reply-draft', sendReplyDraft);
+router.get('/:campaignId/leads/:leadId/thread', requireCampaignRole('VIEWER'), getLeadEmailThread);
+router.get('/:campaignId/leads/:leadId/preview/:draftId', requireCampaignRole('VIEWER'), previewLeadWithDraft);
+router.post('/:campaignId/leads/:leadId/send', requireCampaignRole('EDITOR'), sendLeadEmail);
 
-router.get('/:campaignId/drafts', getCampaignDrafts);
-router.put('/:campaignId/drafts/:draftId', updateDraft);
-router.delete('/:campaignId/drafts/:draftId', deleteDraft);
-router.post('/:campaignId/drafts/custom', createCustomDraft);
-router.post('/:campaignId/drafts/generate', generateCampaignDraft);
-router.post('/:campaignId/steps/:stepNumber/generate-draft', generateStepDraft);
+router.get('/:campaignId/leads/:leadId/reply-draft', requireCampaignRole('VIEWER'), getReplyDraft);
+router.post('/:campaignId/leads/:leadId/generate-reply-draft', requireCampaignRole('EDITOR'), generateReplyDraft);
+router.post('/:campaignId/leads/:leadId/send-reply-draft', requireCampaignRole('EDITOR'), sendReplyDraft);
+
+router.get('/:campaignId/drafts', requireCampaignRole('VIEWER'), getCampaignDrafts);
+router.put('/:campaignId/drafts/:draftId', requireCampaignRole('EDITOR'), updateDraft);
+router.delete('/:campaignId/drafts/:draftId', requireCampaignRole('EDITOR'), deleteDraft);
+router.post('/:campaignId/drafts/custom', requireCampaignRole('EDITOR'), createCustomDraft);
+router.post('/:campaignId/drafts/generate', requireCampaignRole('EDITOR'), generateCampaignDraft);
+router.post('/:campaignId/steps/:stepNumber/generate-draft', requireCampaignRole('EDITOR'), generateStepDraft);
 
 export default router;

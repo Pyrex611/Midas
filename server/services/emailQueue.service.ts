@@ -21,7 +21,20 @@ export class EmailQueueService {
     }
   }
 
-  async processQueue() {
+  /**
+   * Processes a batch of due PendingEmail rows and sends them.
+   *
+   * Safe to call concurrently/overlapping: rows are claimed with
+   * `SELECT ... FOR UPDATE SKIP LOCKED`, so it's fine to have multiple
+   * schedulers (Vercel Cron, a GitHub Actions backup poller, and the
+   * opportunistic "trigger on write" calls from controllers) hit this
+   * at the same time without double-sending anything.
+   *
+   * Returns a small summary so cron callers/monitors can see throughput
+   * without needing to inspect logs.
+   */
+  async processQueue(): Promise<{ claimed: number; sent: number; deferred: number; failed: number }> {
+    const summary = { claimed: 0, sent: 0, deferred: 0, failed: 0 };
     try {
       await prisma.$executeRaw`
         UPDATE "PendingEmail"
@@ -30,7 +43,12 @@ export class EmailQueueService {
         AND updated_at < NOW() - INTERVAL '10 minutes'
       `;
 
-      const lockedEmails = await prisma.$queryRaw<{id: string}[]>`
+      // Batch size kept modest (15) so a single invocation comfortably finishes
+      // inside a serverless function's execution window even on a cold start.
+      // On a free/Hobby Vercel plan where cron can only run once a day, this
+      // is compensated for by frequent EXTERNAL triggers (see docs/SCHEDULING.md)
+      // and by opportunistic calls fired from user-facing write endpoints.
+      const lockedEmails = await prisma.$queryRaw<{ id: string }[]>`
         SELECT id FROM "PendingEmail"
         WHERE status = 'PENDING'
         AND (scheduled_at IS NULL OR scheduled_at <= NOW())
@@ -39,9 +57,10 @@ export class EmailQueueService {
         FOR UPDATE SKIP LOCKED
       `;
 
-      if (lockedEmails.length === 0) return;
+      if (lockedEmails.length === 0) return summary;
 
       const emailIds = lockedEmails.map(e => e.id);
+      summary.claimed = emailIds.length;
 
       await prisma.pendingEmail.updateMany({
         where: { id: { in: emailIds } },
@@ -66,6 +85,7 @@ export class EmailQueueService {
               where: { id: pending.id },
               data: { status: 'PENDING', scheduledAt: new Date(Date.now() + 60 * 60 * 1000) }
             });
+            summary.deferred++;
             continue;
           }
 
@@ -89,7 +109,22 @@ export class EmailQueueService {
             });
           }
 
-          if (selectedDomain.sentCountToday >= selectedDomain.dailyLimit) {
+          // Atomically claim a send-slot for this domain: with multiple
+          // schedulers (Vercel Cron, GitHub Actions, Upstash QStash) able to
+          // invoke separate concurrent instances, a plain
+          // "read sentCountToday, compare, then increment later" pattern has
+          // a race where two instances can both pass the check before either
+          // commits — overshooting the domain's daily limit. This single
+          // conditional UPDATE claims the slot (or fails) atomically at the
+          // database level regardless of how many instances are running.
+          const claimResult = await prisma.$queryRaw<{ id: string; sentCountToday: number }[]>`
+            UPDATE "Domain"
+            SET "sentCountToday" = "sentCountToday" + 1
+            WHERE id = ${selectedDomain.id} AND "sentCountToday" < "dailyLimit"
+            RETURNING id, "sentCountToday"
+          `;
+
+          if (claimResult.length === 0) {
             const tomorrow = new Date();
             tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
             tomorrow.setUTCHours(campaign.sendHourUTC || 9, 0, 0, 0);
@@ -98,6 +133,7 @@ export class EmailQueueService {
               where: { id: pending.id },
               data: { status: 'PENDING', scheduledAt: tomorrow }
             });
+            summary.deferred++;
             logger.info({ domain: selectedDomain.domainName }, 'Domain limit reached. Deferring to next window.');
             continue;
           }
@@ -140,10 +176,8 @@ export class EmailQueueService {
               data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() }
             });
 
-            await prisma.domain.update({
-              where: { id: selectedDomain.id },
-              data: { sentCountToday: { increment: 1 } }
-            });
+            // Note: sentCountToday was already incremented atomically above
+            // (the claim IS the increment) — do not increment it again here.
 
             // Update round-robin rotation counter
             await prisma.campaign.update({
@@ -161,13 +195,22 @@ export class EmailQueueService {
             }
 
             await prisma.pendingEmail.delete({ where: { id: pending.id } });
+            summary.sent++;
             logger.info({ leadId: pending.leadId, domain: selectedDomain.domainName }, 'Email Sent Successfully');
 
           } else {
+            // Send failed after the slot was claimed — give the slot back so
+            // a real failure doesn't silently eat into the domain's daily
+            // capacity for no actual delivered email.
+            await prisma.domain.update({
+              where: { id: selectedDomain.id },
+              data: { sentCountToday: { decrement: 1 } }
+            });
             throw new Error(result.error);
           }
 
         } catch (error: any) {
+          summary.failed++;
           logger.error({ error: error.message, pendingId: pending.id }, 'Queue processing failed for email');
           await prisma.pendingEmail.update({
             where: { id: pending.id },
@@ -178,6 +221,7 @@ export class EmailQueueService {
     } catch (error) {
       logger.error({ error }, 'Fatal Queue Processing Error');
     }
+    return summary;
   }
 }
 

@@ -1,7 +1,11 @@
 import { logger } from '../config/logger';
 
 export class EmailService {
-  private readonly baseUrl = 'https://api.mailgun.net/v3';
+  // Mailgun accounts are region-locked at signup; using the wrong base URL
+  // fails every request for EU-region accounts. Set MAILGUN_REGION=eu to switch.
+  private readonly baseUrl = process.env.MAILGUN_REGION === 'eu'
+    ? 'https://api.eu.mailgun.net/v3'
+    : 'https://api.mailgun.net/v3';
 
   private get authHeader() {
     if (!process.env.MAILGUN_API_KEY) throw new Error('MAILGUN_API_KEY is not set in environment');

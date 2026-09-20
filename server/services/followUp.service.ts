@@ -3,11 +3,10 @@ import { logger } from '../config/logger';
 import { personalisationService } from './personalisation.service';
 
 export class FollowUpService {
-  private isRunning = false;
 
-  async checkFollowUps() {
-    if (this.isRunning) return;
-    this.isRunning = true;
+  async checkFollowUps(): Promise<{ queued: number; campaignsScanned: number }> {
+    let queued = 0;
+    let campaignsScanned = 0;
     try {
       const campaigns = await prisma.campaign.findMany({
         where: {
@@ -21,6 +20,7 @@ export class FollowUpService {
           },
         },
       });
+      campaignsScanned = campaigns.length;
 
       for (const campaign of campaigns) {
         const userId = campaign.userId;
@@ -86,22 +86,22 @@ export class FollowUpService {
             targetDate.setDate(targetDate.getDate() + step.delayDays);
 
             if (new Date() >= targetDate) {
-              await this.sendFollowUp(
+              const wasQueued = await this.sendFollowUp(
                 userId,
                 lead.id,
                 campaign.id,
                 step,
                 initialEmail
               );
+              if (wasQueued) queued++;
             }
           }
         }
       }
     } catch (error) {
       logger.error({ error }, 'Follow-up sequencer execution failed');
-    } finally {
-      this.isRunning = false;
     }
+    return { queued, campaignsScanned };
   }
 
   private async sendFollowUp(
@@ -110,13 +110,13 @@ export class FollowUpService {
     campaignId: string,
     step: any,
     initialEmail: any
-  ) {
+  ): Promise<boolean> {
     try {
       const [lead, campaign] = await Promise.all([
         prisma.lead.findUnique({ where: { id: leadId } }),
         prisma.campaign.findUnique({ where: { id: campaignId } }),
       ]);
-      if (!lead || !campaign) return;
+      if (!lead || !campaign) return false;
 
       const draft = await prisma.draft.findFirst({
         where: {
@@ -129,7 +129,7 @@ export class FollowUpService {
 
       if (!draft) {
         logger.warn({ leadId, campaignId, stepNumber: step.stepNumber }, 'No follow-up draft available');
-        return;
+        return false;
       }
 
       const { subject, body } = personalisationService.personalise(
@@ -155,8 +155,10 @@ export class FollowUpService {
       });
 
       logger.info({ leadId, campaignId, step: step.stepNumber }, 'Follow-up queued in PendingEmail');
+      return true;
     } catch (error) {
       logger.error({ error, leadId, campaignId }, 'Failed to queue follow-up');
+      return false;
     }
   }
 }

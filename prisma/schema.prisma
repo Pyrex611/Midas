@@ -171,6 +171,15 @@ model UploadJob {
   blockedLeads   Int      @default(0)
   duplicates     Int      @default(0)
   verificationId String?  
+  // Opt-in flag set by the uploader. Defaults to false because no real
+  // verification provider is configured yet (see server/services/verification).
+  // Once a provider's API key is set, this becomes selectable in the UI.
+  verifyEmails   Boolean  @default(false) @map("verify_emails")
+  // Holds the parsed-but-not-yet-inserted rows while a job sits in
+  // VERIFYING, waiting on a vendor's async job to complete. Kept as its
+  // own column (not overloaded into `error`) so a real error message
+  // during VERIFYING can never corrupt this state.
+  pendingRows    String?  @db.Text
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
   @@index([userId])
@@ -319,6 +328,23 @@ model PendingEmail {
 model UserSettings {
   userId        String   @id @map("user_id") @db.Uuid
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Previously this model had no actual settings columns — the frontend's
+  // "Save Settings" call silently persisted nothing. Now real.
+  sendLimit     Int?     @map("send_limit")
+  sendPeriod    String?  @map("send_period") // 'hour' | 'day'
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
+}
+
+// Cross-instance mutual exclusion for the three scheduled jobs (queue, leads,
+// followups). An in-memory boolean flag (what followUp.service.ts used to
+// use) only guards against concurrent calls within the SAME warm serverless
+// instance — it does nothing when Vercel Cron, a GitHub Actions poller, and
+// an Upstash QStash schedule can all invoke separate instances at once. This
+// table makes "only one of these runs at a time" true regardless of how many
+// schedulers are configured. See server/lib/cronLock.ts.
+model CronLock {
+  name      String    @id
+  lockedAt  DateTime? @map("locked_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
 }

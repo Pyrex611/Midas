@@ -7,6 +7,7 @@ import { aiService } from '../services/ai.service';
 import { emailQueueService } from '../services/emailQueue.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { CampaignRequest } from '../middleware/campaignAccess.middleware';
 
 export const createCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -47,9 +48,14 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       return camp;
     });
 
+    // Generate the 5 tonal drafts with a small delay between calls so we don't
+    // hammer the configured AI provider's rate limit, and so this request
+    // doesn't need to hold open 5 back-to-back LLM round-trips with zero gap.
     const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
+    const requestDelayMs = Number(process.env.AI_REQUEST_DELAY_MS) || 500;
     const createdDrafts = [];
     for (let i = 0; i < 5; i++) {
+      if (i > 0) await new Promise(resolve => setTimeout(resolve, requestDelayMs));
       const draft = await aiService.generateDraft(
         tones[i % tones.length],
         'initial',
@@ -104,6 +110,9 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
         data: pendingRecords,
       });
 
+      // Opportunistic trigger: don't wait on the next cron tick for the first
+      // batch to start moving — kick the queue right now too. Safe to call
+      // concurrently with any scheduled/external trigger (see emailQueue.service.ts).
       emailQueueService.processQueue().catch(err => {
         logger.error({ err }, 'Background queue trigger failed');
       });
@@ -140,28 +149,25 @@ export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFu
         },
       },
     });
-    res.json(campaigns);
+
+    // Resolve an explicit `role` per campaign (OWNER if they created it,
+    // otherwise their membership row) so the frontend can gate UI per-campaign
+    // instead of showing every action to every collaborator.
+    const withRole = campaigns.map(c => ({
+      ...c,
+      role: c.userId === userId ? 'OWNER' : (c.members[0]?.role ?? 'VIEWER'),
+    }));
+
+    res.json(withRole);
   } catch (error) {
     next(error);
   }
 };
 
-export const getCampaignDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const getCampaignDetails = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!.id;
+    // Access already verified by requireCampaignRole('VIEWER') middleware.
     const id = req.params.id as string;
-
-    const isMember = await prisma.campaignMember.findFirst({
-      where: { campaignId: id, userId },
-    });
-
-    const isCreator = await prisma.campaign.findFirst({
-      where: { id, userId },
-    });
-
-    if (!isMember && !isCreator) {
-      return res.status(403).json({ error: 'Forbidden: Access denied' });
-    }
 
     const campaign = await prisma.campaign.findUnique({
       where: { id },
@@ -200,13 +206,13 @@ export const getCampaignDetails = async (req: AuthRequest, res: Response, next: 
       where: { campaignId: id, status: 'PENDING' },
     });
 
-    res.json({ ...campaign, queuedCount });
+    res.json({ ...campaign, queuedCount, role: req.campaignRole });
   } catch (error) {
     next(error);
   }
 };
 
-export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
     const id = req.params.id as string;
@@ -215,8 +221,10 @@ export const addLeadsToCampaign = async (req: AuthRequest, res: Response, next: 
       return res.status(400).json({ error: 'leadIds must be a non-empty array' });
     }
 
-    const campaign = await prisma.campaign.findFirst({
-      where: { id, OR: [{ userId }, { members: { some: { userId } } }] },
+    // Access already verified by requireCampaignRole('EDITOR'). Only need the
+    // leads relation here, which the middleware's lightweight fetch doesn't include.
+    const campaign = await prisma.campaign.findUnique({
+      where: { id },
       include: { leads: { select: { id: true } } },
     });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -326,21 +334,14 @@ export const acceptInvite = async (req: AuthRequest, res: Response, next: NextFu
   }
 };
 
-export const createInvite = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const createInvite = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const senderId = req.user!.id;
     const campaignId = req.params.id;
     const { email, role } = req.body;
 
     if (!email) return res.status(400).json({ error: 'Email is required' });
-
-    const membership = await prisma.campaignMember.findFirst({
-      where: { campaignId, userId: senderId },
-    });
-
-    if (!membership || membership.role === 'VIEWER') {
-      return res.status(403).json({ error: 'Forbidden: Insufficient permissions.' });
-    }
+    // Role floor (EDITOR) already enforced by requireCampaignRole('EDITOR') middleware.
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date();
@@ -351,7 +352,7 @@ export const createInvite = async (req: AuthRequest, res: Response, next: NextFu
         campaignId,
         senderId,
         email: email.toLowerCase().trim(),
-        role: role || 'EDITOR',
+        role: role === 'VIEWER' ? 'VIEWER' : 'EDITOR',
         token,
         expiresAt,
       },
@@ -363,19 +364,11 @@ export const createInvite = async (req: AuthRequest, res: Response, next: NextFu
   }
 };
 
-export const updateCampaignStrategy = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const updateCampaignStrategy = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.id;
-    const userId = req.user!.id;
     const { objective, targetTool, extendedObjective } = req.body;
-
-    const membership = await prisma.campaignMember.findFirst({
-      where: { campaignId, userId },
-    });
-
-    if (!membership || membership.role === 'VIEWER') {
-      return res.status(403).json({ error: 'Forbidden: Insufficient permissions.' });
-    }
+    // Role floor (EDITOR) already enforced by requireCampaignRole('EDITOR') middleware.
 
     const updated = await prisma.campaign.update({
       where: { id: campaignId },
@@ -663,7 +656,7 @@ export const updateAutoReply = async (req: AuthRequest, res: Response, next: Nex
     const { autoReplyEnabled } = req.body;
     const updated = await prisma.campaign.update({
       where: { id },
-      data: { autoReplyEnabled },
+      data: { autoReplyEnabled: !!autoReplyEnabled },
     });
     res.json(updated);
   } catch (error) { next(error); }
@@ -673,9 +666,13 @@ export const updateSendHour = async (req: AuthRequest, res: Response, next: Next
   try {
     const id = req.params.id as string;
     const { sendHourUTC } = req.body;
+    const hour = Number(sendHourUTC);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+      return res.status(400).json({ error: 'sendHourUTC must be an integer between 0 and 23' });
+    }
     const updated = await prisma.campaign.update({
       where: { id },
-      data: { sendHourUTC },
+      data: { sendHourUTC: hour },
     });
     res.json(updated);
   } catch (error) { next(error); }
@@ -726,19 +723,28 @@ export const setFollowUpSteps = async (req: AuthRequest, res: Response, next: Ne
 
 export const deleteFollowUpStep = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    // Note: :stepId belongs to the :id campaign already authorized by the
+    // middleware, but we still scope the delete by campaignId defensively
+    // so a stepId from a *different* campaign can never be deleted via this URL.
+    const id = req.params.id as string;
     const stepId = req.params.stepId as string;
-    await prisma.followUpStep.delete({ where: { id: stepId } });
+    await prisma.followUpStep.deleteMany({ where: { id: stepId, campaignId: id } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
 
+const CAMPAIGN_UPDATABLE_FIELDS = ['name', 'description', 'context', 'reference', 'senderName'] as const;
+
 export const updateCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    const updated = await prisma.campaign.update({
-      where: { id },
-      data: req.body,
-    });
+    // Whitelist fields — `data: req.body` previously allowed a caller to set
+    // ANY campaign column (userId, status, autoReplyEnabled, etc.) via this route.
+    const data: Record<string, any> = {};
+    for (const field of CAMPAIGN_UPDATABLE_FIELDS) {
+      if (req.body[field] !== undefined) data[field] = req.body[field];
+    }
+    const updated = await prisma.campaign.update({ where: { id }, data });
     res.json(updated);
   } catch (error) { next(error); }
 };
@@ -762,21 +768,30 @@ export const getCampaignDrafts = async (req: AuthRequest, res: Response, next: N
   } catch (error) { next(error); }
 };
 
+const DRAFT_UPDATABLE_FIELDS = ['subject', 'body', 'isActive'] as const;
+
 export const updateDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const campaignId = req.params.campaignId as string;
     const draftId = req.params.draftId as string;
-    const updated = await prisma.draft.update({
-      where: { id: draftId },
-      data: req.body,
-    });
+    const data: Record<string, any> = {};
+    for (const field of DRAFT_UPDATABLE_FIELDS) {
+      if (req.body[field] !== undefined) data[field] = req.body[field];
+    }
+    // Scope by campaignId (already authorized) so a draftId from another
+    // campaign can't be edited through this URL.
+    const result = await prisma.draft.updateMany({ where: { id: draftId, campaignId }, data });
+    if (result.count === 0) return res.status(404).json({ error: 'Draft not found on this campaign' });
+    const updated = await prisma.draft.findUnique({ where: { id: draftId } });
     res.json(updated);
   } catch (error) { next(error); }
 };
 
 export const deleteDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const campaignId = req.params.campaignId as string;
     const draftId = req.params.draftId as string;
-    await prisma.draft.delete({ where: { id: draftId } });
+    await prisma.draft.deleteMany({ where: { id: draftId, campaignId } });
     res.status(204).send();
   } catch (error) { next(error); }
 };
@@ -877,7 +892,13 @@ export const getCampaignDomains = async (req: AuthRequest, res: Response, next: 
 export const addDomainToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
+    const userId = req.user!.id;
     const { domainId } = req.body;
+
+    // The domain itself must belong to a member of this campaign — otherwise
+    // any editor could attach someone else's sending domain to their campaign.
+    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
+    if (!domain) return res.status(404).json({ error: 'Domain not found on your account' });
 
     const link = await prisma.campaignDomain.upsert({
       where: {

@@ -60,6 +60,7 @@ prisma/rls.sql
 prisma/schema.prisma
 prisma/seedCollaboration.ts
 prisma/seedDefaultMailboxes.ts
+README.md
 server/app.ts
 server/config/env.ts
 server/config/logger.ts
@@ -1338,34 +1339,39 @@ model User {
   pendingEmails  PendingEmail[]
   uploadJobs     UploadJob[]
   blocklist      Blocklist[]
+  memberships    CampaignMember[]
+  invitesSent    CampaignInvite[]
 
   @@map("users")
 }
 
 // --- Domain & Deliverability Engine ---
 model Domain {
-  id             String   @id @default(cuid())
-  userId         String   @map("user_id") @db.Uuid
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id") @db.Uuid
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  domainName     String   @unique @map("domain_name")
-  status         String   @default("unverified") 
+  domainName       String   @unique @map("domain_name")
+  senderLocalPart  String   @default("hello") @map("sender_local_part")
+  status           String   @default("unverified") 
   
-  dkimStatus     Boolean  @default(false)
-  spfStatus      Boolean  @default(false)
-  mxStatus       Boolean  @default(false)
-  trackingStatus Boolean  @default(false)
-  dnsRecords     String?  @db.Text 
+  dkimStatus       Boolean  @default(false)
+  spfStatus        Boolean  @default(false)
+  mxStatus         Boolean  @default(false)
+  trackingStatus   Boolean  @default(false)
+  dnsRecords       String?  @db.Text 
   
-  warmupDay      Int      @default(1)
-  dailyLimit     Int      @default(20) 
-  sentCountToday Int      @default(0)
-  bounceRate     Float    @default(0.0)
-  complaintRate  Float    @default(0.0)
-  lastSentReset  DateTime @default(now()) @map("last_sent_reset")
+  warmupDay        Int      @default(1)
+  dailyLimit       Int      @default(20) 
+  sentCountToday   Int      @default(0)
+  bounceCount      Int      @default(0) @map("bounce_count")
+  replyCount       Int      @default(0) @map("reply_count")
+  bounceRate       Float    @default(0.0)
+  complaintRate    Float    @default(0.0)
+  lastSentReset    DateTime @default(now()) @map("last_sent_reset")
   
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   campaigns              CampaignDomain[]
   outboundEmails         OutboundEmail[]  @relation("OutboundEmailDomain")
@@ -1396,6 +1402,7 @@ model CampaignMember {
   campaignId String       @map("campaign_id")
   campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   userId     String       @map("user_id") @db.Uuid
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   role       CampaignRole @default(EDITOR)
   joinedAt   DateTime     @default(now()) @map("joined_at")
 
@@ -1408,6 +1415,7 @@ model CampaignInvite {
   campaignId String       @map("campaign_id")
   campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   senderId   String       @map("sender_id") @db.Uuid
+  sender     User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
   email      String
   role       CampaignRole @default(EDITOR)
   token      String       @unique
@@ -1419,24 +1427,24 @@ model CampaignInvite {
 }
 
 model Campaign {
-  id               String   @id @default(cuid())
-  userId           String   @map("user_id") @db.Uuid
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name             String
-  description      String?
-  context          String?
-  reference        String?
-  senderName       String?  @map("sender_name")
-  status           String   @default("DRAFT")
-  createdAt        DateTime @default(now()) @map("created_at")
-  startedAt        DateTime? @map("started_at")
-  completedAt      DateTime? @map("completed_at")
-  lastDomainIndex  Int      @default(0) @map("last_domain_index")
-  autoReplyEnabled Boolean  @default(false) @map("auto_reply_enabled")
-  sendHourUTC      Int      @default(9) @map("send_hour_utc")
-  activeStartHour  Int?     @map("active_start_hour")
-  activeEndHour    Int?     @map("active_end_hour")
-  timezone         String?
+  id                String   @id @default(cuid())
+  userId            String   @map("user_id") @db.Uuid
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  context           String?
+  reference         String?
+  senderName        String?  @map("sender_name")
+  status            String   @default("DRAFT")
+  createdAt         DateTime @default(now()) @map("created_at")
+  startedAt         DateTime? @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+  lastDomainIndex   Int      @default(0) @map("last_domain_index")
+  autoReplyEnabled  Boolean  @default(false) @map("auto_reply_enabled")
+  sendHourUTC       Int      @default(9) @map("send_hour_utc")
+  activeStartHour   Int?     @map("active_start_hour")
+  activeEndHour     Int?     @map("active_end_hour")
+  timezone          String?
   objective         String?
   targetTool        String?  @map("target_tool")
   extendedObjective String?  @map("extended_objective")
@@ -1555,7 +1563,7 @@ model OutboundEmail {
   domainId    String?  @map("domain_id")
   domain      Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
   leadId      String   @map("lead_id")
-  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaignId  String?  @map("campaign_id")
   campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   draftId     String?  @map("draft_id")
@@ -1708,11 +1716,514 @@ main()
   .finally(() => prisma.$disconnect());
 </file>
 
+<file path="README.md">
+# Midas: AI-Powered Cold Email Outreach & Follow-up System
+
+> A semi-automated cold email outreach and follow-up agent with intelligent leads management, powered by multiple AI providers and deployed on Vercel.
+
+**Branch:** `vercel` | **Status:** Production-ready MVP with Phase 3.5+ features
+
+---
+
+## 🎯 Overview
+
+Midas is a full-stack TypeScript/Python application that automates the entire cold email outreach workflow:
+
+1. **Lead Management** – Upload and manage CSV/XLSX files with prospect data
+2. **Campaign Orchestration** – Create campaigns with customizable follow-up sequences
+3. **Intelligent Email Drafting** – AI-powered email generation based on tone, use case, and campaign context
+4. **Automated Sending** – Scheduled delivery via Mailgun with domain deliverability management
+5. **Reply Intelligence** – Automatic sentiment analysis and reply-to-reply generation
+6. **Inbox Management** – Centralized inbox for monitoring opens, clicks, bounces, and replies
+7. **Domain Warmup** – Built-in sender reputation management with daily send limits and bounce tracking
+
+**Key Stats:**
+- **84.5% TypeScript** | 12.9% Python | 3.6% Other
+- **Tech Stack:** Vite + React, Express.js, Prisma, PostgreSQL (Neon), Clerk Auth, Mailgun, Multiple AI Providers
+- **Deployment:** Vercel (serverless) with scheduled cron jobs
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Node.js** 18+ 
+- **PostgreSQL** database (Neon recommended for serverless)
+- **Environment variables** (see Configuration section)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Pyrex611/Midas.git
+cd Midas
+git checkout vercel
+
+# Install dependencies
+npm install
+
+# Generate Prisma client
+npx prisma generate
+
+# Setup database
+npx prisma db push
+
+# Start development server
+npm run dev
+```
+
+**Frontend:** Accessible at `http://localhost:5173`  
+**Backend API:** Accessible at `http://localhost:3000/api`
+
+### Build & Deploy
+
+```bash
+# Build for production
+npm run build
+
+# Start production server
+npm start
+
+# Vercel deployment
+npm run vercel-build
+```
+
+---
+
+## 📋 Configuration
+
+Create a `.env.local` file in the project root with the following variables:
+
+```env
+# Database
+DATABASE_URL=postgresql://user:password@host/dbname
+DATABASE_URL_POOLED=postgresql://user:password@host/dbname?sslmode=require
+
+# Frontend
+VITE_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+
+# Backend Authentication
+CLERK_SECRET_KEY=your_clerk_secret_key
+CLERK_WEBHOOK_SECRET=your_clerk_webhook_secret
+
+# CORS & Deployment
+CORS_ORIGIN=http://localhost:5173,https://midas-aem.vercel.app
+NODE_ENV=development
+PORT=3000
+
+# Email Service (Mailgun)
+EMAIL_SERVICE=mailgun
+EMAIL_FROM=hello@yourdomain.com
+MAILGUN_API_KEY=your_mailgun_api_key
+MAILGUN_WEBHOOK_KEY=your_mailgun_webhook_key
+
+# File Storage
+BLOB_READ_WRITE_TOKEN=your_vercel_blob_token
+MAX_FILE_SIZE_MB=10
+
+# Cron Job Security
+CRON_SECRET=your_32_char_minimum_secret
+
+# AI Provider (choose one or multiple)
+AI_PROVIDER=openrouter
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4-turbo-preview
+GEMINI_API_KEY=your_gemini_key
+GEMINI_MODEL=gemini-2.5-flash-lite
+DEEPSEEK_API_KEY=your_deepseek_key
+DEEPSEEK_MODEL=deepseek-chat
+OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_MODEL=deepseek/deepseek-r1:free
+
+# Optional: Local LLM (Ollama)
+OLLAMA_URL=http://localhost:11434
+OLLAMA_FAST_MODEL=llama3.2:1b
+OLLAMA_POWERFUL_MODEL=llama3.1:8b
+
+# Optional: Email Verification
+BOUNCEBAN_API_KEY=your_bounceban_key
+
+# Encryption (generate a 64-char hex key or use default for dev)
+ENCRYPTION_KEY=your_64_char_hex_encryption_key
+```
+
+---
+
+## 🏗️ Architecture
+
+### Project Structure
+
+```
+Midas/
+├── src/                          # React Frontend (84.5% TypeScript)
+│   ├── main.tsx                 # Entry point with Clerk provider
+│   ├── App.tsx                  # Router & route definitions
+│   ├── pages/                   # Route components (Home, Leads, Campaigns, etc.)
+│   ├── components/              # Reusable UI components
+│   ├── context/                 # React context (AuthContext)
+│   └── index.css                # Tailwind CSS styles
+│
+├── server/                       # Express.js Backend
+│   ├── app.ts                   # Express app setup with CORS & routes
+│   ├── index.ts                 # Server entry point (port 3000)
+│   ├── config/                  # Configuration modules
+│   │   ├── env.ts              # Environment validation (Zod)
+│   │   └── logger.ts           # Winston logging
+│   ├── middleware/              # Auth & request handlers
+│   │   └── auth.middleware.ts  # Clerk JWT verification + user sync
+│   └── routes/                  # API route handlers
+│       ├── lead.routes.ts      # Lead CRUD & upload
+│       ├── campaign.routes.ts  # Campaign management
+│       ├── domain.routes.ts    # Domain verification & warmup
+│       ├── inbox.routes.ts     # Email tracking & replies
+│       ├── ai.routes.ts        # Draft generation & sentiment analysis
+│       ├── webhooks.routes.ts  # Mailgun & Clerk webhooks
+│       ├── cron.routes.ts      # Scheduled email sending
+│       ├── user.routes.ts      # User profile
+│       └── diagnostic.routes.ts # Health checks
+│
+├── api/                         # Vercel Serverless Functions
+│   └── index.ts                # Serverless HTTP wrapper (serverless-http)
+│
+├── prisma/                      # Database Schema
+│   └── schema.prisma           # 14+ models (User, Campaign, Lead, etc.)
+│
+├── vite.config.ts              # Vite build configuration
+├── tsconfig.json               # TypeScript config (frontend)
+├── tsconfig.server.json        # TypeScript config (backend)
+├── vercel.json                 # Vercel deployment & cron config
+├── package.json                # Dependencies & build scripts
+└── .dockerfile                 # Docker image for Cloud Run deployment
+```
+
+### Database Schema (Prisma)
+
+**Core Models:**
+- **User** – Clerk-integrated user accounts with UUID primary key
+- **Campaign** – Email campaigns with follow-up steps, timezones, and status tracking
+- **Lead** – Prospects with email verification status and outreach tracking
+- **Domain** – Sender domains with DKIM/SPF/MX/tracking verification, warmup day, daily limits
+- **Draft** – Email templates (subject + body) with version control and reusability
+- **OutboundEmail** – Sent emails with delivery tracking (open, click, reply, bounce)
+- **PendingEmail** – Scheduled emails awaiting dispatch
+- **FollowUpStep** – Configured delays between campaign steps
+- **CampaignMember** – Multi-user collaboration (OWNER/EDITOR/VIEWER roles)
+- **CampaignInvite** – Email invitations with expiration tokens
+- **Blocklist** – Regex patterns to filter leads
+- **UploadJob** – Async lead upload progress tracking
+- **UserSettings** – User preferences and configuration
+
+[View full schema](https://github.com/Pyrex611/Midas/blob/vercel/prisma/schema.prisma)
+
+---
+
+## 🔐 Authentication & Security
+
+### Clerk Integration
+- **Frontend:** React SDK with `@clerk/clerk-react`
+- **Backend:** Node SDK with JWT verification via `@clerk/clerk-sdk-node`
+- **Middleware:** `requireAuth` middleware validates RS256 signatures and auto-syncs users to PostgreSQL
+- **User Cache:** In-memory cache maps Clerk IDs to local UUIDs for 0ms resolution
+
+### CORS Policy
+Allowed origins include:
+- Configured `CORS_ORIGIN` list
+- All `*.vercel.app` deployments
+- `localhost:*` and `127.0.0.1:*` (development)
+- All origins in development mode
+
+### Protected Routes
+- `/api/leads`, `/api/campaigns`, `/api/domains`, `/api/inbox`, `/api/ai`, `/api/user`, `/api/diagnostics` – Protected by Clerk auth
+- `/api/webhooks` – Public (Mailgun & Clerk webhooks)
+- `/api/cron` – Protected by `CRON_SECRET` bearer token
+- `/api/health` – Public health check
+
+---
+
+## 📧 Email Infrastructure
+
+### Mailgun Integration
+- **API Key:** Validated during domain setup
+- **Webhook Key:** Verifies webhook signatures
+- **Events Tracked:** Delivered, opened, clicked, bounced, complained
+- **Sender Format:** `{senderLocalPart}@{domainName}` (default: `hello@domain.com`)
+
+### Domain Verification
+- **DKIM, SPF, MX Verification** – Status flags for each domain
+- **Tracking Enabled** – Optional tracking domain for open/click events
+- **Warmup Protocol:**
+  - Day 1 warmup start
+  - Configurable daily send limit (default: 20)
+  - Bounce/complaint rate tracking
+  - Automatic rate limiting based on reputation
+
+### Email Delivery Flow
+1. **Draft Generation** – AI creates email from campaign context
+2. **Pending Queue** – Email scheduled with optional domain preference
+3. **Cron Dispatch** – 09:00 UTC daily (`/api/cron/queue`)
+4. **Mailgun Send** – Domain selected via round-robin or preference
+5. **Webhook Events** – Real-time delivery status updates
+6. **Reply Capture** – Incoming replies parsed and stored
+7. **Sentiment Analysis** – AI analyzes reply tone
+8. **Auto-Reply Draft** – AI generates contextual response (user approval required)
+
+---
+
+## 🤖 AI & Automation
+
+### Supported Providers
+- **OpenAI** – `gpt-4-turbo-preview` (default for powerful tasks)
+- **Google Gemini** – `gemini-2.5-flash-lite`
+- **DeepSeek** – `deepseek-chat`
+- **OpenRouter** – `deepseek/deepseek-r1:free` (free tier default)
+- **Ollama** – Local models for privacy (`llama3.2:1b`, `llama3.1:8b`)
+- **Mock** – Development mode (returns static responses)
+
+### AI Capabilities
+- **Email Draft Generation** – Contextual cold emails from tone, use case, and campaign objective
+- **Sentiment Analysis** – Reply classification (positive, negative, neutral, interested, not-interested)
+- **Intent Recognition** – Detect action items in replies
+- **Auto-Reply Drafting** – Generate follow-ups based on sentiment and thread context
+- **Request Delay** – Configurable delay between AI requests (default: 500ms) to respect rate limits
+
+### Configuration
+```env
+AI_PROVIDER=openrouter                          # Primary provider
+PRIMARY_FALLBACK_PROVIDER=gemini               # Fallback if primary fails
+OPENROUTER_API_KEY=sk-...
+OPENROUTER_MODEL=deepseek/deepseek-r1:free
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash-lite
+AI_REQUEST_DELAY_MS=500                        # Delay between API calls
+```
+
+---
+
+## 🔄 Automation & Cron Jobs
+
+### Scheduled Tasks (Vercel Cron)
+
+**Queue Processing:** `0 9 * * *` (09:00 UTC daily)
+- Dispatches pending emails respecting domain daily limits
+- Checks warmup status and adjusts send rates
+- Handles retries for failed sends
+
+**Lead Processing:** `0 10 * * *` (10:00 UTC daily)
+- Processes incoming replies
+- Runs sentiment analysis
+- Generates auto-reply drafts
+
+### Configuration
+```json
+{
+  "crons": [
+    { "path": "/api/cron/queue", "schedule": "0 9 * * *" },
+    { "path": "/api/cron/leads", "schedule": "0 10 * * *" }
+  ]
+}
+```
+
+Secure cron requests with `CRON_SECRET` header:
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" https://midas-aem.vercel.app/api/cron/queue
+```
+
+---
+
+## 🎨 Frontend Features
+
+### Pages
+- **Home** – Dashboard overview
+- **Leads** – Lead list with CSV/XLSX upload, status filters, verification tracking
+- **Campaigns** – Campaign creation, editing, follow-up step configuration
+- **Campaign Detail** – Per-campaign email tracking and member collaboration
+- **Domains** – Domain verification, DNS record display, warmup status
+- **Inbox** – Unified inbox for sent emails, replies, opens, clicks
+- **Profile** – User settings and account management
+
+### UI/UX
+- **Responsive Design** – Tailwind CSS v4 for modern styling
+- **Dropzone** – `react-dropzone` for file uploads
+- **CSV Parsing** – `papaparse` for lead import
+- **Routing** – React Router v6 for SPA navigation
+- **Error Boundaries** – Graceful error handling
+
+---
+
+## 📦 Build & Deployment
+
+### Development Build
+```bash
+npm run dev
+```
+- Vite dev server on port 5173 (frontend)
+- Express server on port 3000 (backend)
+- Hot module replacement enabled
+
+### Production Build
+```bash
+npm run build
+```
+Executes:
+1. `prisma generate` – Generate Prisma client
+2. `tsc -p tsconfig.server.json` – Compile backend to `dist/server`
+3. `vite build` – Bundle frontend to `dist/client`
+
+### Vercel Deployment
+```bash
+npm run vercel-build
+```
+Executes:
+1. `prisma generate`
+2. `prisma db push --accept-data-loss` – Auto-migrate schema
+3. `tsc -p tsconfig.server.json`
+4. `vite build`
+
+**Deployment Config** (`vercel.json`):
+- Rewrites `/api/*` requests to `/api/index.ts` (serverless function)
+- Rewrites all other requests to `/index.html` (SPA routing)
+- Cron jobs configured for background tasks
+
+### Docker Deployment
+A multi-stage `.dockerfile` is included for Cloud Run:
+```dockerfile
+FROM node:18-slim AS build
+# Build backend and frontend
+
+FROM node:18-slim
+# Copy dist and node_modules, expose port 8080
+```
+
+---
+
+## 🔧 Dependencies
+
+### Frontend
+- `react` – UI framework
+- `react-router-dom` – Client-side routing
+- `@clerk/clerk-react` – Authentication UI
+- `tailwindcss` – Styling
+- `axios` – HTTP client
+- `papaparse` – CSV parsing
+- `react-dropzone` – File upload
+
+### Backend
+- `express` – Web framework
+- `prisma` & `@prisma/client` – ORM & database client
+- `@neondatabase/serverless` – Neon PostgreSQL driver
+- `@clerk/clerk-sdk-node` – Server-side auth
+- `mailgun.js` – Email API
+- `svix` – Webhook verification
+- `bcryptjs` – Password hashing
+- `jsonwebtoken` – JWT handling
+- `winston` – Logging
+- `zod` – Schema validation
+- `serverless-http` – HTTP wrapper for serverless
+
+### Build Tools
+- `vite` – Build bundler
+- `typescript` – Type safety
+- `@vitejs/plugin-react` – React plugin
+
+---
+
+## 🧪 Testing & Monitoring
+
+### Health Check
+```bash
+curl https://midas-aem.vercel.app/api/health
+# Returns: { "status": "ok", "timestamp": "2026-..." }
+```
+
+### Logging
+- **Winston Logger** – Structured JSON logs
+- **Environment-aware** – `debug` level in development, `info` in production
+- **Console Transport** – Logs to stdout (Vercel compatible)
+
+### Error Handling
+- Clerk auth failures return `401 Unauthorized`
+- Database errors return `500 Internal Server Error` with logging
+- Input validation via Zod schemas
+- Error boundary component on frontend
+
+---
+
+## 📝 Development Workflow
+
+### Local Development
+```bash
+# Terminal 1: Backend (Express + Prisma)
+npm run dev
+
+# Terminal 2: Database (if running locally)
+docker run -e POSTGRES_PASSWORD=password postgres:15
+
+# Terminal 3: Sync database schema
+npx prisma studio  # Open Prisma GUI at http://localhost:5555
+```
+
+### Database Migrations
+```bash
+# Create a new migration
+npx prisma migrate dev --name migration_name
+
+# Push schema changes (Vercel build)
+npx prisma db push
+
+# View database GUI
+npx prisma studio
+```
+
+### Git Workflow
+- **Branch:** `vercel` is the production branch
+- **Main branch:** Contains alternate implementations
+- **Commits:** Descriptive messages with feature/phase numbers (Phase 3.5, etc.)
+
+---
+
+## 🐛 Known Limitations & Future Work
+
+- **Google Cloud ADK** – Limited support due to API key acquisition challenges
+- **Reply Threading** – Basic reply-to tracking; full thread reconstruction in progress
+- **Real-time Updates** – Webhook events processed via cron; WebSocket support pending
+- **Advanced Analytics** – Campaign performance metrics available via email tracking data
+
+---
+
+## 📄 License
+
+This project includes a LICENSE file. See [LICENSE](https://github.com/Pyrex611/Midas/blob/vercel/LICENSE) for details.
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes with clear messages
+4. Push to your fork
+5. Open a pull request
+
+---
+
+## 📞 Support & Contact
+
+For issues, questions, or feature requests:
+- Open a GitHub issue: [Midas Issues](https://github.com/Pyrex611/Midas/issues)
+- Contact the author: [Pyrex611](https://github.com/Pyrex611)
+
+---
+
+**Last Updated:** February 2026 | **Phase:** 3.5+ (Reply Analysis & Automation)
+</file>
+
 <file path="server/app.ts">
 import express from 'express';
 import cors from 'cors';
+import { env } from './config/env';
 import { requireAuth } from './middleware/auth.middleware';
-import authRoutes from './routes/auth.routes';
 import cronRoutes from './routes/cron.routes';
 import leadRoutes from './routes/lead.routes';
 import campaignRoutes from './routes/campaign.routes';
@@ -1721,30 +2232,65 @@ import webhookRoutes from './routes/webhooks.routes';
 import inboxRoutes from './routes/inbox.routes';
 import aiRoutes from './routes/ai.routes';
 import diagnosticRoutes from './routes/diagnostic.routes';
+import userRoutes from './routes/user.routes';
+import userSettingsRoutes from './routes/userSettings.routes';
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// Parse and clean configured allowed origins
+const allowedOrigins = (env.CORS_ORIGIN || '')
+  .split(',')
+  .map(o => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
 
-// Public Webhook Receivers
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow non-browser requests (e.g. server-to-server, webhooks, curl, VPS crons)
+    if (!origin) return callback(null, true);
+
+    const cleanOrigin = origin.trim().replace(/\/$/, '');
+
+    // Allow configured origins, all Vercel deployments, localhost, and dev environments
+    const isAllowed =
+      allowedOrigins.includes(cleanOrigin) ||
+      cleanOrigin.endsWith('.vercel.app') ||
+      /^https?:\/\/localhost(:\d+)?$/.test(cleanOrigin) ||
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(cleanOrigin) ||
+      env.NODE_ENV === 'development';
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+}));
+
+// Body parsing with support for JSON and URL-encoded forms (required for Mailgun webhooks)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Public Webhook Receivers (Mailgun & Clerk)
 app.use('/api/webhooks', webhookRoutes);
 
-// Auth Routes (Public)
-app.use('/api/auth', authRoutes);
-
-// Cron Routes
+// Automated VPS/Vercel Cron Triggers (Guarded by Bearer CRON_SECRET)
 app.use('/api/cron', cronRoutes);
 
-// Protected API Routes
+// Protected Core Application Routes (Guarded by Clerk RS256 JWKS requireAuth)
 app.use('/api/leads', requireAuth, leadRoutes);
 app.use('/api/campaigns', requireAuth, campaignRoutes);
 app.use('/api/domains', requireAuth, domainRoutes);
 app.use('/api/inbox', requireAuth, inboxRoutes);
 app.use('/api/ai', requireAuth, aiRoutes);
+app.use('/api/user', requireAuth, userRoutes);
+app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+// Live Health Endpoint
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 export default app;
 </file>
@@ -1755,13 +2301,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Standardize and sanitize the database connection URL for Neon's HTTP SQL Gateway
+// Sanitize connection URL for Neon's HTTP SQL Gateway (stripping -pooler and TCP parameters)
 const rawDatabaseUrl = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL || '';
 
 if (rawDatabaseUrl) {
-  // 1. Strip out "-pooler" from hostname (HTTP SQL Gateway only accepts direct compute endpoints)
   let cleanUrl = rawDatabaseUrl.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
-  // 2. Strip out TCP PgBouncer parameters that interfere with HTTP queries
   cleanUrl = cleanUrl.replace(/&?channel_binding=[^&]*/g, '');
   cleanUrl = cleanUrl.replace(/&?pgbouncer=[^&]*/g, '');
   cleanUrl = cleanUrl.replace(/&?connection_limit=[^&]*/g, '');
@@ -1774,21 +2318,29 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
-  SUPABASE_URL: z.string().url().optional(),
-  SUPABASE_ANON_KEY: z.string().optional(),
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  CORS_ORIGIN: z.string().default('http://localhost:5173,https://midas-aem.vercel.app'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
-  ENCRYPTION_KEY: z.string().length(64),
-  EMAIL_SERVICE: z.enum(['ethereal', 'smtp']).default('ethereal'),
-
+  // Fallback 64-char hex key prevents startup crashes if unconfigured
+  ENCRYPTION_KEY: z.string().default('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+  EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('noreply@outreach.local'),
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.string().optional(),
-  SMTP_SECURE: z.enum(['true', 'false']).optional(),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
 
+  // Clerk Authentication Keys
+  CLERK_SECRET_KEY: z.string().optional(),
+  VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
+  CLERK_WEBHOOK_SECRET: z.string().optional(),
+
+  // Mailgun Deliverability Infrastructure
+  MAILGUN_API_KEY: z.string().optional(),
+  MAILGUN_WEBHOOK_KEY: z.string().optional(),
+
+  // Automation & Cron Infrastructure
+  CRON_SECRET: z.string().default('default_cron_secret_32_chars_min_len'),
+  BLOB_READ_WRITE_TOKEN: z.string().optional(),
+  BOUNCEBAN_API_KEY: z.string().optional(),
+
+  // AI Provider Credentials
   AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).default('mock'),
   PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).optional(),
   OPENAI_API_KEY: z.string().optional(),
@@ -1802,15 +2354,6 @@ const envSchema = z.object({
   OLLAMA_URL: z.string().default('http://localhost:11434'),
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),
-
-  IMAP_HOST: z.string().optional(),
-  IMAP_PORT: z.string().transform(Number).optional(),
-  IMAP_USER: z.string().optional(),
-  IMAP_PASS: z.string().optional(),
-  IMAP_TLS: z.enum(['true', 'false']).default('true'),
-  IMAP_MAILBOX: z.string().default('INBOX'),
-  IMAP_POLL_INTERVAL: z.string().default('300000').transform(Number),
-  IMAP_CONN_TIMEOUT: z.string().default('30000').transform(Number),
 
   AI_REQUEST_DELAY_MS: z.string().default('500').transform(Number),
 });
@@ -3354,7 +3897,7 @@ import crypto from 'crypto';
 import { env } from '../config/env';
 
 const algorithm = 'aes-256-gcm';
-const secretKey = env.ENCRYPTION_KEY; // must be 32 bytes, store in .env
+const secretKey = env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const ivLength = 16;
 const tagLength = 16;
 
@@ -3369,6 +3912,7 @@ export function encrypt(text: string): string {
 
 export function decrypt(text: string): string {
   const parts = text.split(':');
+  if (parts.length < 3) return text;
   const iv = Buffer.from(parts[0], 'hex');
   const tag = Buffer.from(parts[1], 'hex');
   const encryptedText = parts[2];
@@ -3392,7 +3936,7 @@ const prismaClientSingleton = () => {
     throw new Error('DATABASE_URL is not set in environment variables');
   }
 
-  // Ensure connection URL targets direct compute endpoint for HTTP queries
+  // Ensure connection URL targets the direct compute endpoint for HTTP queries
   connectionString = connectionString.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
   connectionString = connectionString.replace(/&?channel_binding=[^&]*/g, '');
   connectionString = connectionString.replace(/&?pgbouncer=[^&]*/g, '');
@@ -3434,13 +3978,13 @@ export interface AuthRequest extends Request {
   auth?: any;
 }
 
-// In-memory cache to map Clerk IDs to local PostgreSQL UUIDs without blocking DB queries
+// In-memory cache to map Clerk IDs to local PostgreSQL UUIDs for 0ms middleware lookups
 const userCache = new Map<string, { id: string; email: string }>();
 
 export const requireAuth = (req: any, res: Response, next: NextFunction) => {
   ClerkExpressRequireAuth()(req, res, async (err: any) => {
     if (err) {
-      logger.error({ err }, 'Clerk authentication failed');
+      logger.error({ err }, 'Clerk verification failed');
       return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
@@ -3450,13 +3994,12 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
         return res.status(401).json({ error: 'Unauthorized: Missing User Identity' });
       }
 
-      // Check in-memory cache first for fast 0ms resolution
+      // Check cache first for 0ms resolution
       if (userCache.has(clerkId)) {
         req.user = userCache.get(clerkId)!;
         return next();
       }
 
-      // Retrieve or create user record
       let user = await prisma.user.findUnique({
         where: { clerkId },
         select: { id: true, email: true },
@@ -3478,7 +4021,6 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
         });
       }
 
-      // Cache the result in-memory
       const resolvedUser = { id: user.id, email: user.email };
       userCache.set(clerkId, resolvedUser);
 
@@ -3584,7 +4126,7 @@ import {
 
 const router = Router();
 
-// Core Collaboration endpoints
+// Collaboration & Team Management
 router.get('/invites/my', getMyInvites);
 router.post('/invites/:token/accept', acceptInvite);
 
@@ -3792,19 +4334,32 @@ export default router;
 
 <file path="server/routes/lead.routes.ts">
 import { Router } from 'express';
-import { uploadLeads, getLeads, deleteLead, getUploadJobs, getBlocklist, addBlocklist, deleteBlocklist } from '../controllers/lead.controller';
+import { 
+  uploadLeads, 
+  getLeads, 
+  getLead, 
+  updateLead, 
+  deleteLead, 
+  getUploadJobs, 
+  getBlocklist, 
+  addBlocklist, 
+  deleteBlocklist 
+} from '../controllers/lead.controller';
 
 const router = Router();
 
 router.post('/upload', ...uploadLeads);
 router.get('/jobs', getUploadJobs);
 
-// Global Blocklist routes
+// Global Blocklist
 router.get('/blocklist', getBlocklist);
 router.post('/blocklist', addBlocklist);
 router.delete('/blocklist/:id', deleteBlocklist);
 
+// Core Lead Management
 router.get('/', getLeads);
+router.get('/:id', getLead);
+router.put('/:id', updateLead);
 router.delete('/:id', deleteLead);
 
 export default router;
@@ -3838,16 +4393,65 @@ export default router;
 
 <file path="server/routes/webhooks.routes.ts">
 import { Router } from 'express';
+import multer from 'multer';
 import { Webhook } from 'svix';
 import prisma from '../lib/prisma';
+import { webhooksService } from '../services/webhooks.service';
 import { logger } from '../config/logger';
 
 const router = Router();
+const upload = multer();
 
+// 1. Mailgun Deliverability Events Webhook (Delivered, Opened, Clicked, Bounced, Complained)
+router.post('/mailgun', async (req, res) => {
+  try {
+    const { signature } = req.body;
+    if (!signature) return res.status(401).send('Missing signature');
+
+    const isValid = webhooksService.verifyMailgunSignature(
+      signature.timestamp,
+      signature.token,
+      signature.signature
+    );
+
+    if (!isValid) return res.status(403).send('Invalid Signature');
+
+    webhooksService.processDeliverabilityEvent(req.body).catch(err => {
+      logger.error({ err }, 'Deliverability event background processing error');
+    });
+
+    res.status(200).send('OK');
+  } catch (error) {
+    logger.error({ error }, 'Mailgun event webhook error');
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+// 2. Mailgun Inbound Parse Webhook (Inbound Prospect Replies)
+router.post('/mailgun/inbound', upload.none(), async (req, res) => {
+  try {
+    const { timestamp, token, signature } = req.body;
+    if (!signature) return res.status(401).send('Missing signature');
+
+    const isValid = webhooksService.verifyMailgunSignature(timestamp, token, signature);
+    if (!isValid) return res.status(403).send('Invalid Signature');
+
+    webhooksService.processInboundEmail(req.body).catch(err => {
+      logger.error({ err }, 'Inbound reply processing error');
+    });
+
+    res.status(200).send('OK');
+  } catch (error) {
+    logger.error({ error }, 'Mailgun inbound webhook error');
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+// 3. Clerk User Synchronization Webhook
 router.post('/clerk', async (req, res) => {
   const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
   if (!webhookSecret) {
-    logger.error('CLERK_WEBHOOK_SECRET is not set');
+    logger.error('CLERK_WEBHOOK_SECRET is not configured');
     return res.status(500).json({ error: 'Webhook configuration error' });
   }
 
@@ -3860,9 +4464,7 @@ router.post('/clerk', async (req, res) => {
     return res.status(400).json({ error: 'Missing svix headers' });
   }
 
-  // Parse raw body payload as string for verification
   const payload = JSON.stringify(req.body);
-
   const wh = new Webhook(webhookSecret);
   let evt: any;
 
@@ -3873,7 +4475,7 @@ router.post('/clerk', async (req, res) => {
       'svix-signature': svix_signature,
     }) as any;
   } catch (err: any) {
-    logger.error({ err }, 'Webhook signature verification failed');
+    logger.error({ err }, 'Clerk webhook signature verification failed');
     return res.status(400).json({ error: 'Invalid webhook signature' });
   }
 
@@ -3883,7 +4485,7 @@ router.post('/clerk', async (req, res) => {
     if (eventType === 'user.created' || eventType === 'user.updated') {
       const { id: clerkId, email_addresses, first_name, last_name } = evt.data;
       const email = email_addresses?.[0]?.email_address;
-      const name = `${first_name || ''} ${last_name || ''}`.trim() || email.split('@')[0];
+      const name = `${first_name || ''} ${last_name || ''}`.trim() || email?.split('@')[0];
 
       if (email) {
         await prisma.user.upsert({
@@ -3895,19 +4497,19 @@ router.post('/clerk', async (req, res) => {
             name,
           },
         });
-        logger.info({ clerkId, email }, 'Clerk User synced successfully to DB');
+        logger.info({ clerkId, email }, 'Clerk user synced successfully');
       }
     } else if (eventType === 'user.deleted') {
       const { id: clerkId } = evt.data;
       await prisma.user.deleteMany({
         where: { clerkId },
       });
-      logger.info({ clerkId }, 'Clerk User deleted successfully from DB');
+      logger.info({ clerkId }, 'Clerk user deleted from database');
     }
 
     res.json({ success: true });
   } catch (dbErr: any) {
-    logger.error({ dbErr }, 'Failed to execute database sync for Clerk webhook');
+    logger.error({ dbErr }, 'Clerk webhook database sync failed');
     res.status(500).json({ error: 'Database syncing failed' });
   }
 });
@@ -4649,11 +5251,11 @@ export class DomainService {
     return `Basic ${Buffer.from(`api:${process.env.MAILGUN_API_KEY}`).toString('base64')}`;
   }
 
-  async addDomain(userId: string, domainName: string) {
+  async addDomain(userId: string, domainName: string, senderLocalPart: string = 'hello') {
     const cleanDomain = domainName.toLowerCase().trim();
     const apiKey = process.env.MAILGUN_API_KEY;
 
-    // High-Fidelity Sandbox Fallback Mock Mode if no live keys exist or are set to 'mock'
+    // Sandbox/Mock Fallback Mode if keys are not live or set to 'mock'
     if (!apiKey || apiKey === 'mock') {
       logger.info({ domainName }, 'Mailgun API key is unconfigured or mock. Simulating domain addition.');
 
@@ -4661,6 +5263,7 @@ export class DomainService {
         data: {
           userId,
           domainName: cleanDomain,
+          senderLocalPart: senderLocalPart || 'hello',
           status: 'unverified',
           dnsRecords: JSON.stringify({
             receiving: [
@@ -4673,7 +5276,7 @@ export class DomainService {
               { record_type: 'CNAME', name: `email.${cleanDomain}`, value: 'mailgun.org', valid: 'unverified' }
             ]
           }),
-          dailyLimit: 20, // Strict Warmup Day 1 Constraint
+          dailyLimit: 20,
           warmupDay: 1
         }
       });
@@ -4701,12 +5304,13 @@ export class DomainService {
         data: {
           userId,
           domainName: cleanDomain,
+          senderLocalPart: senderLocalPart || 'hello',
           status: 'unverified',
           dnsRecords: JSON.stringify({
             receiving: mgData.receiving_dns_records || [],
             sending: mgData.sending_dns_records || []
           }),
-          dailyLimit: 20, // STRICT WARMUP DAY 1 LIMIT
+          dailyLimit: 20,
           warmupDay: 1
         }
       });
@@ -4719,18 +5323,17 @@ export class DomainService {
   }
 
   async verifyDomain(userId: string, domainId: string) {
-    const domain = await prisma.domain.findUnique({ where: { id: domainId, userId } });
+    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
 
     const apiKey = process.env.MAILGUN_API_KEY;
 
-    // High-Fidelity Sandbox Mock verification simulation
     if (!apiKey || apiKey === 'mock') {
-      logger.info({ domainId }, 'Mailgun API key is unconfigured or mock. Simulating DNS verification success.');
+      logger.info({ domainId }, 'Simulating DNS verification.');
       
       const records = domain.dnsRecords ? JSON.parse(domain.dnsRecords) : { receiving: [], sending: [] };
-      const verifiedReceiving = records.receiving.map((r: any) => ({ ...r, valid: 'valid' }));
-      const verifiedSending = records.sending.map((r: any) => ({ ...r, valid: 'valid' }));
+      const verifiedReceiving = (records.receiving || []).map((r: any) => ({ ...r, valid: 'valid' }));
+      const verifiedSending = (records.sending || []).map((r: any) => ({ ...r, valid: 'valid' }));
 
       return prisma.domain.update({
         where: { id: domainId },
@@ -4763,7 +5366,7 @@ export class DomainService {
       const mxState = mgData.receiving_dns_records?.find((r: any) => r.record_type === 'MX')?.valid === 'valid';
       const trackingState = mgData.sending_dns_records?.find((r: any) => r.record_type === 'CNAME')?.valid === 'valid';
 
-      const updatedDomain = await prisma.domain.update({
+      return prisma.domain.update({
         where: { id: domainId },
         data: {
           status: isActive ? 'active' : 'unverified',
@@ -4777,8 +5380,6 @@ export class DomainService {
           })
         }
       });
-
-      return updatedDomain;
     } catch (error: any) {
       logger.error({ error: error.message, domainId }, 'Failed to verify domain');
       throw error;
@@ -4793,12 +5394,11 @@ export class DomainService {
   }
 
   async deleteDomain(userId: string, domainId: string) {
-    const domain = await prisma.domain.findUnique({ where: { id: domainId, userId } });
+    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
 
     const apiKey = process.env.MAILGUN_API_KEY;
     if (!apiKey || apiKey === 'mock') {
-      logger.info({ domainId }, 'Mailgun API key is unconfigured or mock. Simulating domain deletion.');
       await prisma.domain.delete({ where: { id: domainId } });
       return;
     }
@@ -4960,7 +5560,7 @@ export class EmailService {
   private readonly baseUrl = 'https://api.mailgun.net/v3';
 
   private get authHeader() {
-    if (!process.env.MAILGUN_API_KEY) throw new Error('MAILGUN_API_KEY is not set');
+    if (!process.env.MAILGUN_API_KEY) throw new Error('MAILGUN_API_KEY is not set in environment');
     return `Basic ${Buffer.from(`api:${process.env.MAILGUN_API_KEY}`).toString('base64')}`;
   }
 
@@ -4970,13 +5570,22 @@ export class EmailService {
     subject: string,
     html: string,
     text: string,
-    outboundEmailId: string, // Used to map webhooks back to our DB
+    outboundEmailId: string,
     senderName?: string | null,
     inReplyTo?: string | null
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
-      const fromEmail = `hello@${domain.domainName}`;
+      const localPart = domain.senderLocalPart || 'hello';
+      const fromEmail = `${localPart}@${domain.domainName}`;
       const fromHeader = senderName ? `"${senderName}" <${fromEmail}>` : fromEmail;
+
+      const apiKey = process.env.MAILGUN_API_KEY;
+
+      // Sandbox Mock Sending
+      if (!apiKey || apiKey === 'mock') {
+        logger.info({ to, from: fromHeader }, 'Mailgun Key is mock. Simulating email dispatch.');
+        return { success: true, messageId: `mock-msg-${Date.now()}@${domain.domainName}` };
+      }
 
       const formData = new URLSearchParams();
       formData.append('from', fromHeader);
@@ -4984,20 +5593,20 @@ export class EmailService {
       formData.append('subject', subject);
       formData.append('text', text);
       formData.append('html', html);
-      
-      // Crucial: Pass our DB ID to Mailgun so it returns it in Webhooks
       formData.append('v:outbound_email_id', outboundEmailId);
-      
-      // Strict Tracking via Custom Domain (requires CNAME setup in Phase 2)
       formData.append('o:tracking', 'yes');
       formData.append('o:tracking-clicks', 'yes');
       formData.append('o:tracking-opens', 'yes');
-
-      // Threading & RFC Compliance
       formData.append('h:Reply-To', fromEmail);
+
+      // RFC 8058 One-Click List-Unsubscribe Headers (Deliverability Compliance)
+      formData.append('h:List-Unsubscribe', `<mailto:unsubscribe@${domain.domainName}?subject=unsubscribe>`);
+      formData.append('h:List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
+
       if (inReplyTo) {
-        formData.append('h:In-Reply-To', inReplyTo);
-        formData.append('h:References', inReplyTo);
+        const cleanReplyId = inReplyTo.replace(/^<|>$/g, '').trim();
+        formData.append('h:In-Reply-To', `<${cleanReplyId}>`);
+        formData.append('h:References', `<${cleanReplyId}>`);
       }
 
       const res = await fetch(`${this.baseUrl}/${domain.domainName}/messages`, {
@@ -5015,8 +5624,9 @@ export class EmailService {
         throw new Error(data.message || 'Mailgun sending failed');
       }
 
-      logger.info({ messageId: data.id, to, domain: domain.domainName }, 'Email sent via Mailgun');
-      return { success: true, messageId: data.id };
+      const cleanMessageId = (data.id || '').replace(/^<|>$/g, '').trim();
+      logger.info({ messageId: cleanMessageId, to, domain: domain.domainName }, 'Email sent via Mailgun');
+      return { success: true, messageId: cleanMessageId };
     } catch (error: any) {
       logger.error({ error: error.message, to, domain: domain.domainName }, 'Mailgun API Error');
       return { success: false, error: error.message };
@@ -8731,6 +9341,8 @@ import { RenameCampaignModal } from '../components/RenameCampaignModal';
 import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
 import { EditDraftModal } from '../components/EditDraftModal';
 import { CustomDraftModal } from '../components/CustomDraftModal';
+import { EditStrategyModal } from '../components/EditStrategyModal';
+import { InviteCollaboratorModal } from '../components/InviteCollaboratorModal';
 
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -8738,7 +9350,7 @@ export const CampaignDetail: React.FC = () => {
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'leads' | 'drafts'>('leads');
+  const [activeTab, setActiveTab] = useState<'leads' | 'drafts' | 'strategy'>('leads');
   const [previewLead, setPreviewLead] = useState<{
     id: string;
     name: string;
@@ -8749,23 +9361,15 @@ export const CampaignDetail: React.FC = () => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showStrategyModal, setShowStrategyModal] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
 
   const [editingDraft, setEditingDraft] = useState<any>(null);
   const [showEditDraftModal, setShowEditDraftModal] = useState(false);
   const [showCustomDraftModal, setShowCustomDraftModal] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
-  const [followUpSteps, setFollowUpSteps] = useState<any[]>([]);
-  const [sendHourUTC, setSendHourUTC] = useState(9);
-  const [loadingSteps, setLoadingSteps] = useState(false);
-  const [showFollowUpSteps, setShowFollowUpSteps] = useState(false);
-  const [showActiveHours, setShowActiveHours] = useState(false);
-
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
-  const [updatingAutoReply, setUpdatingAutoReply] = useState(false);
-
-  const [draftFilter, setDraftFilter] = useState<'all' | 'initial' | number>('all');
-
   const [userDomains, setUserDomains] = useState<any[]>([]);
   const [campaignDomainIds, setCampaignDomainIds] = useState<Set<string>>(new Set());
   const [updatingDomain, setUpdatingDomain] = useState(false);
@@ -8778,8 +9382,6 @@ export const CampaignDetail: React.FC = () => {
       const res = await campaignAPI.get(id);
       setCampaign(res.data);
       setAutoReplyEnabled(res.data.autoReplyEnabled || false);
-      setSendHourUTC(res.data.sendHourUTC || 9);
-      setFollowUpSteps(res.data.followUpSteps || []);
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || 'Failed to load campaign');
     } finally {
@@ -8837,12 +9439,8 @@ export const CampaignDetail: React.FC = () => {
     if (!campaign?.id) return;
     setGeneratingDraft(true);
     try {
-      if (typeof draftFilter === 'number') {
-        await campaignAPI.generateStepDraft(campaign.id, draftFilter);
-      } else {
-        await campaignAPI.generateDraft(campaign.id);
-      }
-      fetchCampaign();
+      await campaignAPI.generateDraft(campaign.id);
+      await fetchCampaign();
     } catch (error) {
       alert('Could not generate draft');
     } finally {
@@ -8853,7 +9451,7 @@ export const CampaignDetail: React.FC = () => {
   const handleEditDraft = async (draftId: string, data: { subject: string; body: string }) => {
     if (!campaign?.id) return;
     await campaignAPI.updateDraft(campaign.id, draftId, data);
-    fetchCampaign();
+    await fetchCampaign();
   };
 
   const handleDeleteDraft = async (draftId: string) => {
@@ -8861,7 +9459,7 @@ export const CampaignDetail: React.FC = () => {
     if (!confirm('Are you sure you want to delete this draft?')) return;
     try {
       await campaignAPI.deleteDraft(campaign.id, draftId);
-      fetchCampaign();
+      await fetchCampaign();
     } catch (error) {
       alert('Could not delete draft');
     }
@@ -8870,7 +9468,7 @@ export const CampaignDetail: React.FC = () => {
   const handleCreateCustomDraft = async (data: { subject: string; body: string }) => {
     if (!campaign?.id) return;
     await campaignAPI.createCustomDraft(campaign.id, data);
-    fetchCampaign();
+    await fetchCampaign();
   };
 
   const toggleDomain = async (domainId: string, checked: boolean) => {
@@ -8904,22 +9502,31 @@ export const CampaignDetail: React.FC = () => {
           ← Back to Campaigns
         </Link>
 
-        <div className="relative">
-          <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 rounded-full hover:bg-gray-200">
-            <svg className="h-6 w-6 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-            </svg>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowInviteModal(true)} className="px-4 py-2 bg-purple-600 text-white rounded-md text-sm font-medium hover:bg-purple-700">
+            👥 Invite Collaborator
           </button>
-          {menuOpen && (
-            <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10 border border-gray-200">
-              <button onClick={() => { setShowRenameModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                Rename Campaign
-              </button>
-              <button onClick={() => { setShowDeleteModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
-                Delete Campaign
-              </button>
-            </div>
-          )}
+
+          <div className="relative">
+            <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 rounded-full hover:bg-gray-200">
+              <svg className="h-6 w-6 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+              </svg>
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10 border border-gray-200">
+                <button onClick={() => { setShowRenameModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                  Rename Campaign
+                </button>
+                <button onClick={() => { setShowStrategyModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                  Edit Strategy
+                </button>
+                <button onClick={() => { setShowDeleteModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                  Delete Campaign
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -8927,29 +9534,49 @@ export const CampaignDetail: React.FC = () => {
       <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDelete} campaignName={campaign.name} />
       <EditDraftModal isOpen={showEditDraftModal} onClose={() => setShowEditDraftModal(false)} draft={editingDraft} onSave={handleEditDraft} />
       <CustomDraftModal isOpen={showCustomDraftModal} onClose={() => setShowCustomDraftModal(false)} onSubmit={handleCreateCustomDraft} />
+      <EditStrategyModal isOpen={showStrategyModal} onClose={() => setShowStrategyModal(false)} campaign={campaign} onSuccess={handleUpdate} />
+      <InviteCollaboratorModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} campaignId={campaign.id} onSuccess={handleUpdate} />
 
       <div className="bg-white shadow rounded-lg p-6">
-        <h1 className="text-2xl font-bold text-gray-900">{campaign.name}</h1>
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{campaign.name}</h1>
+            <p className="text-sm text-gray-500 mt-1">{campaign.description || 'No description provided.'}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 text-xs font-bold rounded-full bg-blue-100 text-blue-800">
+              {campaign.status}
+            </span>
+            <span className="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">
+              {campaign.queuedCount || 0} Queued
+            </span>
+          </div>
+        </div>
 
+        {/* Sending Domains Assignment */}
         <div className="mt-6 p-4 bg-white border rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-900 mb-3">Sending Subdomains</h3>
-          <p className="text-sm text-gray-600 mb-4">Select which active domains send emails for this campaign (round-robin).</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Sending Subdomains (Round-Robin)</h3>
+          <p className="text-sm text-gray-600 mb-4">Select active subdomains to distribute this campaign's email sending volume.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {userDomains.map((d) => (
-              <label key={d.id} className="flex items-center space-x-3 p-2 border rounded hover:bg-gray-50">
-                <input
-                  type="checkbox"
-                  checked={campaignDomainIds.has(d.id)}
-                  onChange={(e) => toggleDomain(d.id, e.target.checked)}
-                  disabled={updatingDomain || d.status !== 'active'}
-                  className="h-4 w-4 text-blue-600"
-                />
-                <div>
-                  <p className="text-sm font-medium">{d.domainName}</p>
-                  <p className="text-xs text-gray-500">Status: {d.status.toUpperCase()}</p>
-                </div>
-              </label>
-            ))}
+            {userDomains.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">No sending domains configured. <Link to="/domains" className="text-blue-600 underline">Add a domain</Link>.</p>
+            ) : (
+              userDomains.map((d) => (
+                <label key={d.id} className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={campaignDomainIds.has(d.id)}
+                    onChange={(e) => toggleDomain(d.id, e.target.checked)}
+                    disabled={updatingDomain || d.status !== 'active'}
+                    className="h-4 w-4 text-blue-600 rounded"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{d.domainName}</p>
+                    <p className="text-xs text-gray-500">Sender: {d.senderLocalPart || 'hello'}@{d.domainName} ({d.status.toUpperCase()})</p>
+                  </div>
+                </label>
+              ))
+            )}
           </div>
         </div>
 
@@ -8971,26 +9598,79 @@ export const CampaignDetail: React.FC = () => {
           </nav>
         </div>
 
-        {activeTab === 'leads' && campaign.leads && (
-          <div className="mt-6">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">Email</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">Status</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {campaign.leads.map((lead: any) => (
-                  <tr key={lead.id} onClick={() => setPreviewLead(lead)} className="hover:bg-gray-50 cursor-pointer">
-                    <td className="px-4 py-3 text-sm text-gray-900">{lead.name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-500">{lead.email}</td>
-                    <td className="px-4 py-3 text-sm">{lead.status}</td>
+        {/* Leads Tab Content */}
+        {activeTab === 'leads' && (
+          <div className="mt-6 overflow-x-auto">
+            {(!campaign.leads || campaign.leads.length === 0) ? (
+              <div className="py-12 text-center text-gray-400">No leads attached to this campaign.</div>
+            ) : (
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Outreach Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {campaign.leads.map((lead: any) => (
+                    <tr key={lead.id} onClick={() => setPreviewLead(lead)} className="hover:bg-gray-50 cursor-pointer">
+                      <td className="px-4 py-3 text-sm font-semibold text-gray-900">{lead.name}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500">{lead.email}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500">{lead.company || '-'}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <span className="px-2 py-0.5 text-xs font-semibold rounded bg-gray-100 text-gray-800">
+                          {lead.outreachStatus || lead.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* Drafts Tab Content */}
+        {activeTab === 'drafts' && (
+          <div className="mt-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-bold text-gray-700 uppercase">Copywriting Drafts</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGenerateDraft}
+                  disabled={generatingDraft}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {generatingDraft ? 'Generating...' : '✨ Generate AI Variation'}
+                </button>
+                <button
+                  onClick={() => setShowCustomDraftModal(true)}
+                  className="px-3 py-1.5 bg-gray-800 text-white rounded text-xs font-bold hover:bg-gray-900"
+                >
+                  + Custom Draft
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(campaign.drafts || []).map((draft: any) => (
+                <div key={draft.id} className="border rounded-xl p-4 bg-gray-50 shadow-sm relative">
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 bg-blue-100 text-blue-800 rounded">
+                      Tone: {draft.tone} ({draft.useCase})
+                    </span>
+                    <div className="flex gap-2">
+                      <button onClick={() => { setEditingDraft(draft); setShowEditDraftModal(true); }} className="text-xs text-blue-600 hover:underline">Edit</button>
+                      <button onClick={() => handleDeleteDraft(draft.id)} className="text-xs text-red-600 hover:underline">Delete</button>
+                    </div>
+                  </div>
+                  <h4 className="text-sm font-bold text-gray-900 mb-1">{draft.subject}</h4>
+                  <p className="text-xs text-gray-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -9322,7 +10002,7 @@ export const Dashboard: React.FC = () => {
 
 <file path="src/pages/Domains.tsx">
 import React, { useEffect, useState } from 'react';
-import { domainAPI } from '../services/api';
+import { domainAPI, getErrorMessage } from '../services/api';
 
 interface DnsRecord {
   record_type: string;
@@ -9335,15 +10015,20 @@ export const Domains: React.FC = () => {
   const [domains, setDomains] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [newDomain, setNewDomain] = useState('');
+  const [senderLocalPart, setSenderLocalPart] = useState('hello');
   const [adding, setAdding] = useState(false);
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [activeDomainDetails, setActiveDomainDetails] = useState<any | null>(null);
 
   const fetchDomains = async () => {
     try {
+      setErrorBanner(null);
       const res = await domainAPI.getAll();
       setDomains(res.data);
-    } catch (err) {
-      console.error('Failed to load domains', err);
+    } catch (err: any) {
+      const msg = getErrorMessage(err, 'Failed to load domains');
+      console.error(msg, err);
+      setErrorBanner(msg);
     } finally {
       setLoading(false);
     }
@@ -9357,12 +10042,16 @@ export const Domains: React.FC = () => {
     e.preventDefault();
     if (!newDomain.trim()) return;
     setAdding(true);
+    setErrorBanner(null);
+
     try {
-      await domainAPI.add(newDomain.trim());
+      await domainAPI.add(newDomain.trim(), senderLocalPart.trim() || 'hello');
       setNewDomain('');
+      setSenderLocalPart('hello');
       await fetchDomains();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to add domain');
+      const msg = getErrorMessage(err, 'Failed to add sending domain');
+      setErrorBanner(msg);
     } finally {
       setAdding(false);
     }
@@ -9370,26 +10059,30 @@ export const Domains: React.FC = () => {
 
   const handleVerify = async (id: string) => {
     try {
+      setErrorBanner(null);
       const res = await domainAPI.verify(id);
       if (res.data.status === 'active') {
         alert('Domain successfully verified and ready for sending!');
       } else {
-        alert('DNS records not propagated yet. Please check your registrar and try again in 5 minutes.');
+        alert('DNS records not propagated yet. Please check your registrar and try again in a few minutes.');
       }
       await fetchDomains();
-    } catch (err) {
-      alert('Verification request failed.');
+    } catch (err: any) {
+      const msg = getErrorMessage(err, 'Verification request failed');
+      setErrorBanner(msg);
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this domain? This stops all sending via this domain.')) return;
     try {
+      setErrorBanner(null);
       await domainAPI.delete(id);
       await fetchDomains();
       setActiveDomainDetails(null);
-    } catch (err) {
-      alert('Failed to delete domain');
+    } catch (err: any) {
+      const msg = getErrorMessage(err, 'Failed to delete domain');
+      setErrorBanner(msg);
     }
   };
 
@@ -9427,21 +10120,43 @@ export const Domains: React.FC = () => {
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
       <h1 className="text-3xl font-bold text-gray-900 mb-8">Sending Domains</h1>
 
+      {errorBanner && (
+        <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-r-md text-red-700 flex justify-between items-center">
+          <span className="text-sm font-medium">{errorBanner}</span>
+          <button onClick={() => setErrorBanner(null)} className="text-red-500 hover:text-red-700 font-bold ml-4">✕</button>
+        </div>
+      )}
+
       <div className="bg-white shadow rounded-lg p-6 mb-8">
         <h2 className="text-lg font-medium text-gray-900 mb-2">Connect a New Subdomain</h2>
         <p className="text-sm text-gray-600 mb-4">We recommend using subdomains (e.g., outreach.yourdomain.com) to protect your root domain reputation.</p>
-        <form onSubmit={handleAddDomain} className="flex gap-4">
-          <input
-            type="text"
-            value={newDomain}
-            onChange={(e) => setNewDomain(e.target.value)}
-            placeholder="e.g., mail.yourcompany.com"
-            className="flex-1 px-4 py-2 border rounded-md"
-            required
-          />
-          <button type="submit" disabled={adding} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
-            {adding ? 'Adding...' : 'Add Domain'}
-          </button>
+        <form onSubmit={handleAddDomain} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="md:col-span-2">
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Domain / Subdomain</label>
+            <input
+              type="text"
+              value={newDomain}
+              onChange={(e) => setNewDomain(e.target.value)}
+              placeholder="e.g., mail.yourcompany.com"
+              className="w-full px-4 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Sender Local-Part</label>
+            <input
+              type="text"
+              value={senderLocalPart}
+              onChange={(e) => setSenderLocalPart(e.target.value)}
+              placeholder="e.g., sales, alex, hello"
+              className="w-full px-4 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
+            />
+          </div>
+          <div className="md:col-span-3 flex justify-end">
+            <button type="submit" disabled={adding} className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50">
+              {adding ? 'Connecting...' : 'Add Domain'}
+            </button>
+          </div>
         </form>
       </div>
 
@@ -9469,20 +10184,21 @@ export const Domains: React.FC = () => {
                       <span className={`px-2 py-1 rounded-full text-xs font-semibold ${domain.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
                         {domain.status.toUpperCase()}
                       </span>
+                      <span className="text-gray-500">Sender: <span className="font-mono">{domain.senderLocalPart || 'hello'}@{domain.domainName}</span></span>
                       <span className="text-gray-500">Warmup Day: {domain.warmupDay} (Limit: {domain.dailyLimit}/day)</span>
                       <span className="text-gray-500">Bounce Rate: {(domain.bounceRate * 100).toFixed(1)}%</span>
                     </div>
                   </div>
                   <div className="flex gap-3">
                     {domain.status !== 'active' && (
-                      <button onClick={() => handleVerify(domain.id)} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm">
+                      <button onClick={() => handleVerify(domain.id)} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-medium">
                         Verify DNS
                       </button>
                     )}
-                    <button onClick={() => setActiveDomainDetails(isExpanded ? null : domain)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm">
+                    <button onClick={() => setActiveDomainDetails(isExpanded ? null : domain)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 text-sm font-medium">
                       {isExpanded ? 'Hide Records' : 'View DNS Records'}
                     </button>
-                    <button onClick={() => handleDelete(domain.id)} className="px-4 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm">
+                    <button onClick={() => handleDelete(domain.id)} className="px-4 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm font-medium">
                       Delete
                     </button>
                   </div>
@@ -9491,7 +10207,7 @@ export const Domains: React.FC = () => {
                 {isExpanded && (
                   <div className="p-6 border-t bg-gray-50">
                     <p className="text-sm text-gray-600 mb-4">
-                      Add the following records to your DNS provider (e.g., Cloudflare, GoDaddy, Namecheap) to verify ownership and enable strict deliverability protocols.
+                      Add the following records to your DNS registrar to verify ownership and activate high-reputation deliverability protocols.
                     </p>
                     {renderDnsTable('Sending Records (SPF, DKIM, Tracking)', records.sending || [])}
                     {renderDnsTable('Receiving Records (MX for inbound replies)', records.receiving || [])}
@@ -10413,7 +11129,7 @@ const api = axios.create({
 
 axios.defaults.withCredentials = true;
 
-// Scope Token Injection to our Custom API instance to fix app-wide 401s
+// Token injection directly on the custom API instance
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('midas_auth_token');
   if (token) {
@@ -10422,13 +11138,24 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-export const authAPI = {
-  signUp: (email: string, password: string, name?: string) =>
-    api.post('/auth/signup', { email, password, name }),
-  signIn: (email: string, password: string) =>
-    api.post('/auth/callback/credentials', { email, password }),
-  signOut: () => api.post('/auth/signout'),
-  getSession: () => api.get('/auth/session'),
+// Robust, human-readable error extractor preventing "[object Object]" UI alerts
+export const getErrorMessage = (err: any, fallback: string = 'An unexpected error occurred'): string => {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+  
+  const data = err.response?.data;
+  if (data) {
+    if (typeof data.error === 'string') return data.error;
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data === 'string') return data;
+    if (data.error && typeof data.error === 'object') {
+      if (typeof data.error.message === 'string') return data.error.message;
+      return JSON.stringify(data.error);
+    }
+  }
+  
+  if (err.message && typeof err.message === 'string') return err.message;
+  return fallback;
 };
 
 export const userAPI = {
@@ -10470,6 +11197,9 @@ export const campaignAPI = {
     leadIds?: string[];
     autoReplyEnabled?: boolean;
     sendHourUTC?: number;
+    objective?: string;
+    targetTool?: string;
+    extendedObjective?: string;
   }) => api.post('/campaigns', data),
 
   getAll: () => api.get('/campaigns'),
@@ -10522,7 +11252,7 @@ export const campaignAPI = {
   addDomainToCampaign: (campaignId: string, domainId: string) => api.post(`/campaigns/${campaignId}/domains`, { domainId }),
   removeDomainFromCampaign: (campaignId: string, domainId: string) => api.delete(`/campaigns/${campaignId}/domains/${domainId}`),
 
-  // Core Campaign Collaboration Operations Linked to CampaignInvite/CampaignMember Schemas
+  // Collaboration Operations
   getMyInvites: () => api.get('/campaigns/invites/my'),
   acceptInvite: (token: string) => api.post(`/campaigns/invites/${token}/accept`),
   createInvite: (campaignId: string, data: { email: string; role: string }) =>
@@ -10537,7 +11267,7 @@ export const campaignAPI = {
 
 export const domainAPI = {
   getAll: () => api.get('/domains'),
-  add: (domainName: string) => api.post('/domains', { domainName }),
+  add: (domainName: string, senderLocalPart?: string) => api.post('/domains', { domainName, senderLocalPart }),
   verify: (id: string) => api.post(`/domains/${id}/verify`),
   delete: (id: string) => api.delete(`/domains/${id}`),
 };

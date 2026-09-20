@@ -8,9 +8,12 @@ interface DnsRecord {
   value: string;
 }
 
+type AddMode = 'create' | 'connect';
+
 export const Domains: React.FC = () => {
   const [domains, setDomains] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<AddMode>('create');
   const [newDomain, setNewDomain] = useState('');
   const [senderLocalPart, setSenderLocalPart] = useState('hello');
   const [adding, setAdding] = useState(false);
@@ -42,12 +45,19 @@ export const Domains: React.FC = () => {
     setErrorBanner(null);
 
     try {
-      await domainAPI.add(newDomain.trim(), senderLocalPart.trim() || 'hello');
+      if (mode === 'create') {
+        await domainAPI.add(newDomain.trim(), senderLocalPart.trim() || 'hello');
+      } else {
+        await domainAPI.connect(newDomain.trim(), senderLocalPart.trim() || 'hello');
+      }
       setNewDomain('');
       setSenderLocalPart('hello');
       await fetchDomains();
     } catch (err: any) {
-      const msg = getErrorMessage(err, 'Failed to add sending domain');
+      const msg = getErrorMessage(
+        err,
+        mode === 'create' ? 'Failed to add sending domain' : 'Failed to connect domain'
+      );
       setErrorBanner(msg);
     } finally {
       setAdding(false);
@@ -127,6 +137,34 @@ export const Domains: React.FC = () => {
       <div className="bg-white shadow rounded-lg p-6 mb-8">
         <h2 className="text-lg font-medium text-gray-900 mb-2">Connect a New Subdomain</h2>
         <p className="text-sm text-gray-600 mb-4">We recommend using subdomains (e.g., outreach.yourdomain.com) to protect your root domain reputation.</p>
+
+        <div className="mb-4 flex gap-2 border-b">
+          <button
+            type="button"
+            onClick={() => setMode('create')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${mode === 'create' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            Create automatically
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('connect')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${mode === 'connect' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            I already added this in Mailgun
+          </button>
+        </div>
+
+        {mode === 'connect' && (
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-md text-xs text-blue-800">
+            Some Mailgun plans (including free/trial accounts) don't allow adding a domain through the API.
+            If your Mailgun account is on one of those plans: add the domain yourself in the
+            {' '}<strong>Mailgun dashboard → Sending → Domains → Add New Domain</strong> first, then enter the same
+            domain name here — we'll pull in its DNS records and verification status without needing
+            domain-creation access.
+          </div>
+        )}
+
         <form onSubmit={handleAddDomain} className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="md:col-span-2">
             <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Domain / Subdomain</label>
@@ -140,18 +178,26 @@ export const Domains: React.FC = () => {
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Sender Local-Part</label>
-            <input
-              type="text"
-              value={senderLocalPart}
-              onChange={(e) => setSenderLocalPart(e.target.value)}
-              placeholder="e.g., sales, alex, hello"
-              className="w-full px-4 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
-            />
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Sender Address</label>
+            <div className="flex items-center">
+              <input
+                type="text"
+                value={senderLocalPart}
+                onChange={(e) => setSenderLocalPart(e.target.value)}
+                placeholder="hello"
+                className="w-full px-4 py-2 border rounded-l-md focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
+              />
+              <span className="px-3 py-2 border border-l-0 rounded-r-md bg-gray-50 text-sm text-gray-500 font-mono whitespace-nowrap">
+                @{newDomain || 'yourdomain.com'}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-gray-400">
+              The part before the @ in the address your leads will see, e.g. "sales" sends as sales@{newDomain || 'yourdomain.com'}.
+            </p>
           </div>
           <div className="md:col-span-3 flex justify-end">
             <button type="submit" disabled={adding} className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50">
-              {adding ? 'Connecting...' : 'Add Domain'}
+              {adding ? (mode === 'create' ? 'Creating...' : 'Connecting...') : (mode === 'create' ? 'Add Domain' : 'Connect Domain')}
             </button>
           </div>
         </form>

@@ -12,6 +12,7 @@ import aiRoutes from './routes/ai.routes';
 import diagnosticRoutes from './routes/diagnostic.routes';
 import userRoutes from './routes/user.routes';
 import userSettingsRoutes from './routes/userSettings.routes';
+import configRoutes from './routes/config.routes';
 
 const app = express();
 
@@ -28,19 +29,21 @@ app.use(cors({
 
     const cleanOrigin = origin.trim().replace(/\/$/, '');
 
-    // Allow configured origins, all Vercel deployments, localhost, and dev environments
+    // Allow: explicitly configured origins, this project's own Vercel preview
+    // deployments (scoped by prefix — NOT every *.vercel.app site, which
+    // would let any unrelated Vercel-hosted page make credentialed requests
+    // against this API), and localhost for local dev.
+    const isOwnVercelPreview =
+      /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(cleanOrigin) &&
+      cleanOrigin.includes(`${env.CORS_VERCEL_PROJECT_PREFIX}-`);
+
     const isAllowed =
       allowedOrigins.includes(cleanOrigin) ||
-      cleanOrigin.endsWith('.vercel.app') ||
+      isOwnVercelPreview ||
       /^https?:\/\/localhost(:\d+)?$/.test(cleanOrigin) ||
-      /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(cleanOrigin) ||
-      env.NODE_ENV === 'development';
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(cleanOrigin);
 
-    if (isAllowed) {
-      callback(null, true);
-    } else {
-      callback(null, false);
-    }
+    callback(null, isAllowed);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -56,6 +59,9 @@ app.use('/api/webhooks', webhookRoutes);
 
 // Automated VPS/Vercel Cron Triggers (Guarded by Bearer CRON_SECRET)
 app.use('/api/cron', cronRoutes);
+
+// Public, non-sensitive feature flags (e.g. "is real email verification available")
+app.use('/api/config', configRoutes);
 
 // Protected Core Application Routes (Guarded by Clerk RS256 JWKS requireAuth)
 app.use('/api/leads', requireAuth, leadRoutes);

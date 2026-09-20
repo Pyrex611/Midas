@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { leadAPI } from '../services/api';
+import { leadAPI, configAPI } from '../services/api';
 
 interface Job {
   id: string;
@@ -17,6 +17,9 @@ interface Job {
 export const UploadArea: React.FC<{ onJobComplete: () => void }> = ({ onJobComplete }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [verifyEmails, setVerifyEmails] = useState(false);
+  const [verificationAvailable, setVerificationAvailable] = useState(false);
+  const [verificationProvider, setVerificationProvider] = useState<string>('mock');
 
   const fetchJobs = async () => {
     try {
@@ -34,20 +37,29 @@ export const UploadArea: React.FC<{ onJobComplete: () => void }> = ({ onJobCompl
 
   useEffect(() => {
     fetchJobs();
+    // Ask the backend whether a real verification vendor is configured.
+    // No frontend redeploy is needed when one is added later — this checkbox
+    // enables itself automatically once the backend reports it's available.
+    configAPI.get()
+      .then(res => {
+        setVerificationAvailable(!!res.data?.verification?.available);
+        setVerificationProvider(res.data?.verification?.provider || 'mock');
+      })
+      .catch(() => setVerificationAvailable(false));
   }, []);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
     setUploading(true);
     try {
-      await leadAPI.upload(acceptedFiles[0]);
+      await leadAPI.upload(acceptedFiles[0], verificationAvailable && verifyEmails);
       await fetchJobs();
     } catch (error) {
       alert('Upload failed. Please check file format.');
     } finally {
       setUploading(false);
     }
-  }, []);
+  }, [verifyEmails, verificationAvailable]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -64,13 +76,38 @@ export const UploadArea: React.FC<{ onJobComplete: () => void }> = ({ onJobCompl
   return (
     <div className="bg-white shadow sm:rounded-lg p-6 mb-8">
       <h2 className="text-xl font-semibold mb-4">Import Leads</h2>
-      
+
       <div {...getRootProps()} className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}>
         <input {...getInputProps()} disabled={uploading} />
         <p className="text-sm text-gray-600">
           {uploading ? 'Uploading and processing...' : isDragActive ? 'Drop file here' : 'Drag & drop a CSV or Excel file, or click to browse'}
         </p>
       </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <input
+          id="verify-emails-checkbox"
+          type="checkbox"
+          checked={verifyEmails}
+          disabled={!verificationAvailable || uploading}
+          onChange={(e) => setVerifyEmails(e.target.checked)}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-50"
+        />
+        <label htmlFor="verify-emails-checkbox" className={`text-sm ${verificationAvailable ? 'text-gray-700' : 'text-gray-400'}`}>
+          Verify emails before import (recommended)
+        </label>
+        {!verificationAvailable && (
+          <span className="text-xs text-gray-400 italic">— coming soon, not yet configured</span>
+        )}
+        {verificationAvailable && (
+          <span className="text-xs text-gray-400">via {verificationProvider}</span>
+        )}
+      </div>
+      {!verificationAvailable && (
+        <p className="mt-1 text-xs text-gray-400">
+          Leads will be imported unverified for now. Once email verification is enabled, this checkbox will let you opt in per upload.
+        </p>
+      )}
 
       {jobs.length > 0 && (
         <div className="mt-6">

@@ -62,7 +62,14 @@ export class WebhooksService {
     const domain = await prisma.domain.findUnique({ where: { id: domainId }});
     if (!domain) return;
 
-    const totalSent = (domain.sentCountToday || 0) + (domain.warmupDay * 20) || 1;
+    // Use the domain's ACTUAL historical send count instead of the previous
+    // `sentCountToday + warmupDay*20` heuristic, which reset daily and could
+    // wildly over/under-estimate volume — making the 5%/0.3% auto-pause
+    // killswitch fire on bad math instead of real deliverability signal.
+    const totalSent = await prisma.outboundEmail.count({
+      where: { domainId, status: { in: ['SENT', 'BOUNCED'] } },
+    }) || 1;
+
     const newBounceRate = type === 'bounce' ? (domain.bounceRate * totalSent + 1) / (totalSent + 1) : domain.bounceRate;
     const newComplaintRate = type === 'complaint' ? (domain.complaintRate * totalSent + 1) / (totalSent + 1) : domain.complaintRate;
 
@@ -107,28 +114,48 @@ export class WebhooksService {
         });
       }
 
-      // Fallback: match most recently contacted lead by email address
-      if (!originalEmail && from) {
-        const senderEmailMatch = from.match(/<(.+)>/)?.[1] || from.trim().toLowerCase();
-        const matchedLead = await prisma.lead.findFirst({
-          where: { email: senderEmailMatch },
-          include: {
-            sentEmails: {
-              where: { isIncoming: false },
-              orderBy: { sentAt: 'desc' },
-              take: 1
+      // Fallback: match most recently contacted lead by email address.
+      // CROSS-TENANT SAFETY: `Lead.email` is only unique PER USER, so two
+      // different customers can legitimately have a lead with the same
+      // address. We must scope this fallback to the tenant that owns the
+      // domain the reply actually arrived at (`to`) — never search leads
+      // across all users — or a reply could get attached to the wrong
+      // customer's campaign/conversation history.
+      if (!originalEmail && from && to) {
+        const senderEmailMatch = from.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || from.trim().toLowerCase();
+        const recipientAddress = to.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || to.trim().toLowerCase();
+        const recipientDomainName = recipientAddress.split('@')[1];
+
+        const owningDomain = recipientDomainName
+          ? await prisma.domain.findFirst({
+              where: { domainName: recipientDomainName },
+              select: { userId: true },
+            })
+          : null;
+
+        if (owningDomain) {
+          const matchedLead = await prisma.lead.findFirst({
+            where: { email: senderEmailMatch, userId: owningDomain.userId },
+            include: {
+              sentEmails: {
+                where: { isIncoming: false },
+                orderBy: { sentAt: 'desc' },
+                take: 1
+              }
             }
+          });
+          if (matchedLead && matchedLead.sentEmails.length > 0) {
+            const latestSent = matchedLead.sentEmails[0];
+            originalEmail = {
+              id: latestSent.id,
+              leadId: matchedLead.id,
+              campaignId: latestSent.campaignId,
+              userId: latestSent.userId,
+              domainId: latestSent.domainId
+            };
           }
-        });
-        if (matchedLead && matchedLead.sentEmails.length > 0) {
-          const latestSent = matchedLead.sentEmails[0];
-          originalEmail = {
-            id: latestSent.id,
-            leadId: matchedLead.id,
-            campaignId: latestSent.campaignId,
-            userId: latestSent.userId,
-            domainId: latestSent.domainId
-          };
+        } else {
+          logger.warn({ recipientDomainName }, 'Inbound reply recipient domain is not registered to any user — dropping fallback match');
         }
       }
 

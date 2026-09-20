@@ -18,6 +18,7 @@ interface Campaign {
     drafts: number;
   };
   members?: { role: string }[];
+  role?: 'OWNER' | 'EDITOR' | 'VIEWER';
 }
 
 export const Campaigns: React.FC = () => {
@@ -189,9 +190,9 @@ export const Campaigns: React.FC = () => {
                         <p className="text-lg font-medium text-blue-600 truncate flex items-center gap-2">
                           {campaign.name}
                           {/* Role Badge if they are just a member */}
-                          {campaign.members && campaign.members[0]?.role !== 'OWNER' && (
+                          {campaign.role && campaign.role !== 'OWNER' && (
                             <span className="bg-purple-100 text-purple-700 text-[10px] uppercase px-2 py-0.5 rounded font-bold">
-                              {campaign.members[0].role}
+                              {campaign.role}
                             </span>
                           )}
                         </p>
