@@ -1,39 +1,24 @@
 import { logger } from '../config/logger';
+import { domainService } from './domain.service';
 
 export class EmailService {
-  // Mailgun accounts are region-locked at signup; using the wrong base URL
-  // fails every request for EU-region accounts. Set MAILGUN_REGION=eu to switch.
-  private readonly baseUrl = process.env.MAILGUN_REGION === 'eu'
-    ? 'https://api.eu.mailgun.net/v3'
-    : 'https://api.mailgun.net/v3';
-
-  private get authHeader() {
-    if (!process.env.MAILGUN_API_KEY) throw new Error('MAILGUN_API_KEY is not set in environment');
-    return `Basic ${Buffer.from(`api:${process.env.MAILGUN_API_KEY}`).toString('base64')}`;
-  }
-
   async sendEmailNow(
-    domain: any, 
+    domain: any, // a Domain row, with `senderLocalPart` set by the caller to the chosen Sender's local part
     to: string,
     subject: string,
     html: string,
     text: string,
     outboundEmailId: string,
     senderName?: string | null,
-    inReplyTo?: string | null
+    inReplyTo?: string | null,
+    unsubscribeUrl?: string | null
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const localPart = domain.senderLocalPart || 'hello';
       const fromEmail = `${localPart}@${domain.domainName}`;
       const fromHeader = senderName ? `"${senderName}" <${fromEmail}>` : fromEmail;
 
-      const apiKey = process.env.MAILGUN_API_KEY;
-
-      // Sandbox Mock Sending
-      if (!apiKey || apiKey === 'mock') {
-        logger.info({ to, from: fromHeader }, 'Mailgun Key is mock. Simulating email dispatch.');
-        return { success: true, messageId: `mock-msg-${Date.now()}@${domain.domainName}` };
-      }
+      const { authHeader, baseUrl } = domainService.getMailgunContextForDomain(domain);
 
       const formData = new URLSearchParams();
       formData.append('from', fromHeader);
@@ -47,9 +32,18 @@ export class EmailService {
       formData.append('o:tracking-opens', 'yes');
       formData.append('h:Reply-To', fromEmail);
 
-      // RFC 8058 One-Click List-Unsubscribe Headers (Deliverability Compliance)
-      formData.append('h:List-Unsubscribe', `<mailto:unsubscribe@${domain.domainName}?subject=unsubscribe>`);
-      formData.append('h:List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
+      // RFC 8058 One-Click List-Unsubscribe. Previously this pointed at a
+      // `mailto:unsubscribe@domain` address that nothing ever processed —
+      // an inbound "unsubscribe" email would just sit there unread. Now it
+      // points at a real HTTPS endpoint (server/routes/unsubscribe.routes.ts)
+      // that actually marks the lead unsubscribed, which is what the
+      // `List-Unsubscribe-Post: One-Click` header promises mail clients
+      // (Gmail/Yahoo/etc. POST to this URL with no user confirmation when
+      // the user clicks "Unsubscribe" in their own UI).
+      if (unsubscribeUrl) {
+        formData.append('h:List-Unsubscribe', `<${unsubscribeUrl}>`);
+        formData.append('h:List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
+      }
 
       if (inReplyTo) {
         const cleanReplyId = inReplyTo.replace(/^<|>$/g, '').trim();
@@ -57,17 +51,17 @@ export class EmailService {
         formData.append('h:References', `<${cleanReplyId}>`);
       }
 
-      const res = await fetch(`${this.baseUrl}/${domain.domainName}/messages`, {
+      const res = await fetch(`${baseUrl}/${domain.domainName}/messages`, {
         method: 'POST',
         headers: {
-          'Authorization': this.authHeader,
+          'Authorization': authHeader,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: formData.toString()
       });
 
       const data = await res.json();
-      
+
       if (!res.ok) {
         throw new Error(data.message || 'Mailgun sending failed');
       }

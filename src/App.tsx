@@ -11,6 +11,7 @@ import { Login } from './pages/Login';
 import { Signup } from './pages/SignUp';
 import { Domains } from './pages/Domains';
 import { Inbox } from './pages/Inbox';
+import { AdminDashboard } from './pages/AdminDashboard';
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const { user, loading } = useAuth();
@@ -34,6 +35,8 @@ function AppRoutes() {
         <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
         <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        {/* Server-side gated (requireAdmin) — a non-admin lands here and sees a clean Forbidden state, not a security boundary in itself. */}
+        <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
       </Routes>
     </>
   );

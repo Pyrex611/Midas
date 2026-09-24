@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { campaignAPI, domainAPI } from '../services/api';
+import { campaignAPI, senderAPI } from '../services/api';
 import { LeadEmailPreviewModal } from '../components/LeadEmailPreviewModal';
 import { RenameCampaignModal } from '../components/RenameCampaignModal';
 import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
@@ -39,9 +39,9 @@ export const CampaignDetail: React.FC = () => {
   const [showCustomDraftModal, setShowCustomDraftModal] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
-  const [userDomains, setUserDomains] = useState<any[]>([]);
-  const [campaignDomainIds, setCampaignDomainIds] = useState<Set<string>>(new Set());
-  const [updatingDomain, setUpdatingDomain] = useState(false);
+  const [userSenders, setUserSenders] = useState<any[]>([]);
+  const [campaignSenderIds, setCampaignSenderIds] = useState<Set<string>>(new Set());
+  const [updatingSender, setUpdatingSender] = useState(false);
 
   // --- Automation tab state ---
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
@@ -80,39 +80,39 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  const fetchUserDomains = async () => {
+  const fetchUserSenders = async () => {
     try {
-      const res = await domainAPI.getAll();
-      setUserDomains(res.data);
+      const res = await senderAPI.listAll();
+      setUserSenders(res.data);
     } catch (err) {
-      console.error('Failed to fetch user domains', err);
+      console.error('Failed to fetch senders', err);
     }
   };
 
-  const fetchCampaignDomains = async () => {
+  const fetchCampaignSenders = async () => {
     if (!id) return;
     try {
-      const res = await campaignAPI.getCampaignDomains(id);
-      setCampaignDomainIds(new Set(res.data.map((d: any) => d.id)));
+      const res = await campaignAPI.getCampaignSenders(id);
+      setCampaignSenderIds(new Set(res.data.map((s: any) => s.id)));
     } catch (err) {
-      console.error('Failed to fetch campaign domains', err);
+      console.error('Failed to fetch campaign senders', err);
     }
   };
 
   useEffect(() => {
     fetchCampaign();
-    fetchUserDomains();
+    fetchUserSenders();
   }, [id]);
 
   useEffect(() => {
     if (campaign) {
-      fetchCampaignDomains();
+      fetchCampaignSenders();
     }
   }, [campaign?.id]);
 
   const handleUpdate = () => {
     fetchCampaign();
-    fetchCampaignDomains();
+    fetchCampaignSenders();
     setMenuOpen(false);
   };
 
@@ -162,24 +162,24 @@ export const CampaignDetail: React.FC = () => {
     await fetchCampaign();
   };
 
-  const toggleDomain = async (domainId: string, checked: boolean) => {
-    setUpdatingDomain(true);
+  const toggleSender = async (senderId: string, checked: boolean) => {
+    setUpdatingSender(true);
     try {
       if (checked) {
-        await campaignAPI.addDomainToCampaign(id!, domainId);
-        setCampaignDomainIds(prev => new Set(prev).add(domainId));
+        await campaignAPI.addSenderToCampaign(id!, senderId);
+        setCampaignSenderIds(prev => new Set(prev).add(senderId));
       } else {
-        await campaignAPI.removeDomainFromCampaign(id!, domainId);
-        setCampaignDomainIds(prev => {
+        await campaignAPI.removeSenderFromCampaign(id!, senderId);
+        setCampaignSenderIds(prev => {
           const newSet = new Set(prev);
-          newSet.delete(domainId);
+          newSet.delete(senderId);
           return newSet;
         });
       }
     } catch (err) {
-      alert('Could not update domain assignment');
+      alert('Could not update sender assignment');
     } finally {
-      setUpdatingDomain(false);
+      setUpdatingSender(false);
     }
   };
 
@@ -343,26 +343,28 @@ export const CampaignDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Sending Domains Assignment */}
+        {/* Sending Senders Assignment */}
         <div className="mt-6 p-4 bg-white border rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Sending Subdomains (Round-Robin)</h3>
-          <p className="text-sm text-gray-600 mb-4">Select active subdomains to distribute this campaign's email sending volume.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Senders (Round-Robin)</h3>
+          <p className="text-sm text-gray-600 mb-4">Select the mailboxes to rotate this campaign's sends across — each has its own daily quota.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {userDomains.length === 0 ? (
-              <p className="text-xs text-gray-400 italic">No sending domains configured. <Link to="/domains" className="text-blue-600 underline">Add a domain</Link>.</p>
+            {userSenders.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">No senders yet. <Link to="/domains" className="text-blue-600 underline">Connect a domain and add a sender</Link>.</p>
             ) : (
-              userDomains.map((d) => (
-                <label key={d.id} className={`flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50 ${canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'}`}>
+              userSenders.map((s) => (
+                <label key={s.id} className={`flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50 ${canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'}`}>
                   <input
                     type="checkbox"
-                    checked={campaignDomainIds.has(d.id)}
-                    onChange={(e) => toggleDomain(d.id, e.target.checked)}
-                    disabled={!canEdit || updatingDomain || d.status !== 'active'}
+                    checked={campaignSenderIds.has(s.id)}
+                    onChange={(e) => toggleSender(s.id, e.target.checked)}
+                    disabled={!canEdit || updatingSender || s.status !== 'active' || s.domain?.status !== 'active'}
                     className="h-4 w-4 text-blue-600 rounded"
                   />
                   <div>
-                    <p className="text-sm font-semibold text-gray-800">{d.domainName}</p>
-                    <p className="text-xs text-gray-500">Sender: {d.senderLocalPart || 'hello'}@{d.domainName} ({d.status.toUpperCase()})</p>
+                    <p className="text-sm font-semibold text-gray-800">{s.localPart}@{s.domain?.domainName}</p>
+                    <p className="text-xs text-gray-500">
+                      {s.displayName ? `"${s.displayName}" · ` : ''}{s.dailyLimit}/day limit ({s.domain?.status?.toUpperCase()})
+                    </p>
                   </div>
                 </label>
               ))

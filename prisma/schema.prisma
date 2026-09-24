@@ -4,6 +4,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // Required for the standard pooled TCP connection in server/lib/prisma.ts
+  // (previously omitted because the old HTTP-adapter-only setup supplied
+  // its own connection at runtime instead of through this url).
+  url      = env("DATABASE_URL")
 }
 
 // --- Midas Core Models ---
@@ -13,6 +17,9 @@ model User {
   email         String    @unique
   password      String?   
   clerkId       String?   @unique @map("clerk_id")
+  // Cross-tenant operator visibility (Phase 3) — no signup flow grants this;
+  // set manually via `UPDATE users SET is_admin = true WHERE email = '...'`.
+  isAdmin       Boolean   @default(false) @map("is_admin")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
@@ -38,43 +45,85 @@ model Domain {
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   domainName       String   @unique @map("domain_name")
-  senderLocalPart  String   @default("hello") @map("sender_local_part")
-  status           String   @default("unverified") 
+  status           String   @default("pending_setup")
   
   dkimStatus       Boolean  @default(false)
   spfStatus        Boolean  @default(false)
   mxStatus         Boolean  @default(false)
   trackingStatus   Boolean  @default(false)
   dnsRecords       String?  @db.Text 
-  
-  warmupDay        Int      @default(1)
-  dailyLimit       Int      @default(20) 
-  sentCountToday   Int      @default(0)
+  // Per-domain Mailgun credential — REQUIRED for the "connect with your own
+  // key" flow (see domain.service.ts::connectWithKey), which is now the
+  // default onboarding path instead of asking Mailgun's API for domain
+  // state (a call several Mailgun tiers, including free/trial, restrict).
+  // Encrypted at rest via server/lib/encryption.ts; never returned in any
+  // API response (see domain.service.ts's sanitize()).
+  mailgunApiKeyEncrypted String? @db.Text @map("mailgun_api_key_encrypted")
+  // Per-domain region override — a user's own Mailgun account may live in a
+  // different region than the platform default. 'us' | 'eu'; null = use
+  // the platform-wide MAILGUN_REGION env var.
+  mailgunRegion    String?  @map("mailgun_region")
+
+  // --- Real functional connectivity test, replacing "ask Mailgun's API
+  // whether DNS looks valid" (fragile, and blocked outright on some plans).
+  // Two independent checks: can we SEND through this domain+key, and does
+  // mail sent TO this domain actually reach our inbound webhook. ---
+  sendTestPassedAt     DateTime? @map("send_test_passed_at")
+  receivingTestCode    String?   @map("receiving_test_code")
+  receivingTestAddress String?   @map("receiving_test_address")
+  receivingConfirmedAt DateTime? @map("receiving_confirmed_at")
+
   bounceCount      Int      @default(0) @map("bounce_count")
   replyCount       Int      @default(0) @map("reply_count")
   bounceRate       Float    @default(0.0)
   complaintRate    Float    @default(0.0)
-  lastSentReset    DateTime @default(now()) @map("last_sent_reset")
   
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  campaigns              CampaignDomain[]
+  senders                Sender[]
   outboundEmails         OutboundEmail[]  @relation("OutboundEmailDomain")
   pendingEmails          PendingEmail[]   @relation("PendingEmailDomain")
-  preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferred")
 
   @@index([userId])
 }
 
-model CampaignDomain {
+// A single sending mailbox identity (e.g. sales@yourdomain.com). Split out
+// from Domain because spam/reputation limits are enforced per sending
+// address, not just per domain — a domain can host several independently
+// warmed-up, independently-quota'd senders. This is what a campaign links
+// to for its sending rotation (see CampaignSender), replacing the previous
+// model where a campaign linked directly to whole Domains.
+model Sender {
+  id             String   @id @default(cuid())
+  domainId       String   @map("domain_id")
+  domain         Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  userId         String   @map("user_id") @db.Uuid
+  localPart      String   @map("local_part")
+  displayName    String?  @map("display_name")
+  status         String   @default("active") // 'active' | 'paused'
+  warmupDay      Int      @default(1) @map("warmup_day")
+  dailyLimit     Int      @default(20) @map("daily_limit")
+  sentCountToday Int      @default(0) @map("sent_count_today")
+  lastSentReset  DateTime @default(now()) @map("last_sent_reset")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  campaignLinks          CampaignSender[]
+  preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferredSender")
+
+  @@unique([domainId, localPart])
+  @@index([userId])
+}
+
+model CampaignSender {
   id         String   @id @default(cuid())
   campaignId String   @map("campaign_id")
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  domainId   String   @map("domain_id")
-  domain     Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  senderId   String   @map("sender_id")
+  sender     Sender   @relation(fields: [senderId], references: [id], onDelete: Cascade)
   addedAt    DateTime @default(now()) @map("added_at")
-  @@unique([campaignId, domainId])
+  @@unique([campaignId, senderId])
 }
 
 enum CampaignRole {
@@ -140,7 +189,7 @@ model Campaign {
   emails        OutboundEmail[]
   drafts        Draft[]
   pendingEmails PendingEmail[]
-  domainLinks   CampaignDomain[] 
+  senderLinks   CampaignSender[] 
   members       CampaignMember[]
   invites       CampaignInvite[]
 
@@ -197,6 +246,11 @@ model Lead {
   status             String   @default("NEW")
   outreachStatus     String?  @map("outreach_status")
   verificationStatus String   @default("UNVERIFIED") @map("verification_status")
+  // Real one-click unsubscribe support (replaces a List-Unsubscribe header
+  // that pointed at a mailto: address nothing ever processed). Generated
+  // lazily the first time an email is sent to a lead that doesn't have one
+  // yet — see emailQueue.service.ts's ensureUnsubscribeToken.
+  unsubscribeToken   String?  @unique @map("unsubscribe_token")
   campaignId         String?  @map("campaign_id")
   campaign           Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   createdAt          DateTime @default(now()) @map("created_at")
@@ -317,8 +371,11 @@ model PendingEmail {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
   priority           Int      @default(2)
-  preferredDomainId  String?  @map("preferred_domain_id")
-  preferredDomain    Domain?  @relation("PendingEmailPreferred", fields: [preferredDomainId], references: [id], onDelete: SetNull)
+  // Keeps a follow-up on the SAME sending mailbox as the initial email in
+  // this thread, so the reply-thread visually comes from one consistent
+  // address (also carries the domain along transitively via Sender.domain).
+  preferredSenderId  String?  @map("preferred_sender_id")
+  preferredSender    Sender?  @relation("PendingEmailPreferredSender", fields: [preferredSenderId], references: [id], onDelete: SetNull)
   @@index([status, scheduledAt])
   @@index([userId])
   @@index([campaignId])

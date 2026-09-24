@@ -1,9 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { userAPI } from '../services/api';
 
 export const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const location = useLocation();
+
+  useEffect(() => {
+    userAPI.getProfile()
+      .then(res => setIsAdmin(!!res.data?.user?.isAdmin))
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   const getLinkClass = (path: string) => 
     `block px-4 py-2 rounded-md transition-colors ${
@@ -37,6 +45,9 @@ export const Navbar = () => {
             <Link to="/leads" onClick={() => setIsOpen(false)} className={getLinkClass('/leads')}>📋 All Leads</Link>
             <Link to="/campaigns" onClick={() => setIsOpen(false)} className={getLinkClass('/campaigns')}>📊 Campaigns</Link>
             <Link to="/domains" onClick={() => setIsOpen(false)} className={getLinkClass('/domains')}>🌐 Sending Domains</Link>
+            {isAdmin && (
+              <Link to="/admin" onClick={() => setIsOpen(false)} className={getLinkClass('/admin')}>🛡️ Admin</Link>
+            )}
           </nav>
           <div className="border-t pt-4">
             <Link to="/profile" onClick={() => setIsOpen(false)} className={getLinkClass('/profile')}>👤 Profile</Link>

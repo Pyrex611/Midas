@@ -100,6 +100,32 @@ export class WebhooksService {
 
       const cleanInReplyTo = rawInReplyTo ? rawInReplyTo.replace(/^<|>$/g, '').trim() : null;
 
+      // Domain connectivity receiving-test check, BEFORE normal reply
+      // matching. When a user is confirming a newly-connected domain, they
+      // send a one-off email containing a one-time code to
+      // connectivity@theirdomain.com from their own personal inbox — this
+      // is never a real campaign reply, so it must be intercepted here and
+      // never reach the normal lead/campaign matching logic below.
+      if (to) {
+        const recipientAddress = (to.match(/<(.+)>/)?.[1] || to).trim().toLowerCase();
+        if (recipientAddress.startsWith('connectivity@')) {
+          const recipientDomainName = recipientAddress.split('@')[1];
+          const domain = await prisma.domain.findFirst({
+            where: { domainName: recipientDomainName, receivingTestCode: { not: null } },
+          });
+          if (domain && domain.receivingTestCode && body.includes(domain.receivingTestCode)) {
+            await prisma.domain.update({
+              where: { id: domain.id },
+              data: { receivingConfirmedAt: new Date() },
+            });
+            logger.info({ domainId: domain.id, domainName: recipientDomainName }, 'Domain receiving test confirmed');
+          } else {
+            logger.warn({ recipientDomainName }, 'Connectivity-test email received but code did not match or no pending test');
+          }
+          return; // Never process a connectivity-test email as a lead reply.
+        }
+      }
+
       let originalEmail = null;
       if (cleanInReplyTo) {
         originalEmail = await prisma.outboundEmail.findFirst({

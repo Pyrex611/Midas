@@ -4,18 +4,15 @@ import crypto from 'crypto';
 
 dotenv.config();
 
-// Sanitize connection URL for Neon's HTTP SQL Gateway (stripping -pooler and TCP parameters)
-const rawDatabaseUrl = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL || '';
-
-if (rawDatabaseUrl) {
-  let cleanUrl = rawDatabaseUrl.replace(/-pooler(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)/gi, '$1');
-  cleanUrl = cleanUrl.replace(/&?channel_binding=[^&]*/g, '');
-  cleanUrl = cleanUrl.replace(/&?pgbouncer=[^&]*/g, '');
-  cleanUrl = cleanUrl.replace(/&?connection_limit=[^&]*/g, '');
-  cleanUrl = cleanUrl.replace(/\?&/, '?').replace(/\?$/, '').trim();
-
-  process.env.DATABASE_URL = cleanUrl;
-}
+// NOTE: DATABASE_URL is intentionally NOT rewritten here. It previously was
+// (stripping "-pooler" and pgbouncer/connection params) to suit the old
+// PrismaNeonHttp adapter, which wanted Neon's direct, non-pooled endpoint.
+// That adapter is gone (see server/lib/prisma.ts for why — it had no
+// timeout control and was the root cause of a site-wide hang incident).
+// The standard pooled connection now in use wants the OPPOSITE transform
+// (it wants "-pooler" present, plus connect/pool timeouts), and
+// server/lib/prisma.ts is the single place that builds that connection
+// string — don't duplicate or fight that logic here.
 
 // SECURITY + AVAILABILITY NOTE on CRON_SECRET / ENCRYPTION_KEY:
 // These previously had a hardcoded fallback value baked into source (a real

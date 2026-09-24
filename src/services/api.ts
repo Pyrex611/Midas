@@ -134,9 +134,9 @@ export const campaignAPI = {
   generateStepDraft: (campaignId: string, stepNumber: number) =>
     api.post(`/campaigns/${campaignId}/steps/${stepNumber}/generate-draft`),
 
-  getCampaignDomains: (campaignId: string) => api.get(`/campaigns/${campaignId}/domains`),
-  addDomainToCampaign: (campaignId: string, domainId: string) => api.post(`/campaigns/${campaignId}/domains`, { domainId }),
-  removeDomainFromCampaign: (campaignId: string, domainId: string) => api.delete(`/campaigns/${campaignId}/domains/${domainId}`),
+  getCampaignSenders: (campaignId: string) => api.get(`/campaigns/${campaignId}/senders`),
+  addSenderToCampaign: (campaignId: string, senderId: string) => api.post(`/campaigns/${campaignId}/senders`, { senderId }),
+  removeSenderFromCampaign: (campaignId: string, senderId: string) => api.delete(`/campaigns/${campaignId}/senders/${senderId}`),
 
   // Collaboration Operations
   getMyInvites: () => api.get('/campaigns/invites/my'),
@@ -153,12 +153,34 @@ export const campaignAPI = {
 
 export const domainAPI = {
   getAll: () => api.get('/domains'),
-  add: (domainName: string, senderLocalPart?: string) => api.post('/domains', { domainName, senderLocalPart }),
-  // Adopts a domain already created directly in Mailgun's dashboard — use
-  // this when your Mailgun plan doesn't allow programmatic domain creation.
-  connect: (domainName: string, senderLocalPart?: string) => api.post('/domains/connect', { domainName, senderLocalPart }),
-  verify: (id: string) => api.post(`/domains/${id}/verify`),
+  // Default flow: paste the Mailgun API key you already send with. Runs a
+  // real test send immediately, then returns a one-time code + address to
+  // confirm receiving. testRecipientEmail defaults server-side to your
+  // account email if omitted.
+  connect: (domainName: string, mailgunApiKey: string, region?: 'us' | 'eu', testRecipientEmail?: string) =>
+    api.post('/domains', { domainName, mailgunApiKey, region, testRecipientEmail }),
+  retrySendTest: (id: string, testRecipientEmail?: string) => api.post(`/domains/${id}/send-test`, { testRecipientEmail }),
+  resetReceivingTest: (id: string) => api.post(`/domains/${id}/receiving-test/reset`),
+  checkReceivingTest: (id: string) => api.get(`/domains/${id}/receiving-test`),
   delete: (id: string) => api.delete(`/domains/${id}`),
+};
+
+export const senderAPI = {
+  listAll: () => api.get('/domains/senders/all'),
+  listForDomain: (domainId: string) => api.get(`/domains/${domainId}/senders`),
+  create: (domainId: string, localPart: string, displayName?: string, dailyLimit?: number) =>
+    api.post(`/domains/${domainId}/senders`, { localPart, displayName, dailyLimit }),
+  update: (senderId: string, data: { displayName?: string; dailyLimit?: number; status?: 'active' | 'paused' }) =>
+    api.patch(`/domains/senders/${senderId}`, data),
+  delete: (senderId: string) => api.delete(`/domains/senders/${senderId}`),
+};
+
+export const adminAPI = {
+  getStats: () => api.get('/admin/stats'),
+  listUsers: () => api.get('/admin/users'),
+  listDomains: () => api.get('/admin/domains'),
+  pauseDomain: (id: string) => api.post(`/admin/domains/${id}/pause`),
+  unpauseDomain: (id: string) => api.post(`/admin/domains/${id}/unpause`),
 };
 
 export const aiAPI = {

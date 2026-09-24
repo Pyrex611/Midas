@@ -24,9 +24,9 @@ import {
   updateSendHour,
   generateStepDraft,
   updateActiveHours,
-  getCampaignDomains,
-  addDomainToCampaign,
-  removeDomainFromCampaign,
+  getCampaignSenders,
+  addSenderToCampaign,
+  removeSenderFromCampaign,
   getMyInvites,
   acceptInvite,
   createInvite,
@@ -55,9 +55,9 @@ router.get('/:id/followup-steps', requireCampaignRole('VIEWER'), getFollowUpStep
 router.post('/:id/followup-steps', requireCampaignRole('EDITOR'), setFollowUpSteps);
 router.delete('/:id/followup-steps/:stepId', requireCampaignRole('EDITOR'), deleteFollowUpStep);
 
-router.get('/:id/domains', requireCampaignRole('VIEWER'), getCampaignDomains);
-router.post('/:id/domains', requireCampaignRole('EDITOR'), addDomainToCampaign);
-router.delete('/:id/domains/:domainId', requireCampaignRole('EDITOR'), removeDomainFromCampaign);
+router.get('/:id/senders', requireCampaignRole('VIEWER'), getCampaignSenders);
+router.post('/:id/senders', requireCampaignRole('EDITOR'), addSenderToCampaign);
+router.delete('/:id/senders/:senderId', requireCampaignRole('EDITOR'), removeSenderFromCampaign);
 
 router.put('/:id', requireCampaignRole('EDITOR'), updateCampaign);
 router.delete('/:id', requireCampaignRole('OWNER'), deleteCampaign);

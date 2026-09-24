@@ -20,7 +20,8 @@ export class PersonalisationService {
     subject: string,
     body: string,
     reference?: string | null,
-    senderName?: string | null
+    senderName?: string | null,
+    unsubscribeUrl?: string | null
   ): { subject: string; body: string } {
     let pSubject = this.resolveSpintax(subject);
     let pBody = this.resolveSpintax(body);
@@ -65,6 +66,14 @@ export class PersonalisationService {
 
     pSubject = pSubject.replace(/\{\{[^}]+\}\}/g, '').trim();
     pBody = pBody.replace(/\{\{[^}]+\}\}/g, '').trim();
+
+    // Real, working unsubscribe footer. Paired with the HTTPS
+    // List-Unsubscribe header in email.service.ts — this is the visible,
+    // in-body counterpart for recipients reading in a client that doesn't
+    // surface the header-based one-click option.
+    if (unsubscribeUrl) {
+      pBody = `${pBody}\n\n---\nDon't want these emails? Unsubscribe: ${unsubscribeUrl}`;
+    }
 
     return { subject: pSubject, body: pBody };
   }

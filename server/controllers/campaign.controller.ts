@@ -8,6 +8,7 @@ import { emailQueueService } from '../services/emailQueue.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { CampaignRequest } from '../middleware/campaignAccess.middleware';
+import { ensureUnsubscribeToken, buildUnsubscribeUrl } from '../lib/unsubscribe';
 
 export const createCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -194,8 +195,8 @@ export const getCampaignDetails = async (req: CampaignRequest, res: Response, ne
         followUpSteps: {
           orderBy: { stepNumber: 'asc' },
         },
-        domainLinks: {
-          include: { domain: true },
+        senderLinks: {
+          include: { sender: { include: { domain: true } } },
         },
       },
     });
@@ -448,30 +449,35 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
         where: { id: campaignId },
         include: {
           drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' }, take: 1 },
-          domainLinks: { include: { domain: true } },
+          senderLinks: { include: { sender: { include: { domain: true } } } },
         },
       }),
     ]);
 
     if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found' });
+    if (lead.status === 'UNSUBSCRIBED') return res.status(400).json({ error: 'This lead has unsubscribed' });
     const draft = campaign.drafts[0];
     if (!draft) return res.status(400).json({ error: 'No active draft found' });
 
-    const activeDomain = campaign.domainLinks.map(l => l.domain).find(d => d.status === 'active');
-    if (!activeDomain) return res.status(400).json({ error: 'No active domain attached to this campaign' });
+    const activeSender = campaign.senderLinks.map(l => l.sender).find(s => s.status === 'active' && s.domain.status === 'active');
+    if (!activeSender) return res.status(400).json({ error: 'No active sender attached to this campaign' });
+
+    const unsubscribeToken = await ensureUnsubscribeToken(lead.id, lead.unsubscribeToken);
+    const unsubscribeUrl = buildUnsubscribeUrl(unsubscribeToken);
 
     const { subject, body } = personalisationService.personalise(
       lead,
       draft.subject,
       draft.body,
       campaign.reference,
-      campaign.senderName
+      activeSender.displayName || campaign.senderName,
+      unsubscribeUrl
     );
 
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
-        domainId: activeDomain.id,
+        domainId: activeSender.domainId,
         leadId,
         campaignId,
         draftId: draft.id,
@@ -482,13 +488,15 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
     });
 
     const result = await emailService.sendEmailNow(
-      activeDomain,
+      { ...activeSender.domain, senderLocalPart: activeSender.localPart },
       lead.email,
       subject,
       body.replace(/\n/g, '<br>'),
       body,
       outboundRecord.id,
-      campaign.senderName
+      activeSender.displayName || campaign.senderName,
+      undefined,
+      unsubscribeUrl
     );
 
     if (!result.success) throw new Error(result.error);
@@ -589,31 +597,35 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
     const lead = await prisma.lead.findUnique({ where: { id: leadId } });
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      include: { domainLinks: { include: { domain: true } } },
+      include: { senderLinks: { include: { sender: { include: { domain: true } } } } },
     });
 
     if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found' });
-
-    const activeDomain = campaign.domainLinks.map(l => l.domain).find(d => d.status === 'active');
-    if (!activeDomain) return res.status(400).json({ error: 'No active domain found' });
 
     const latestIncoming = await prisma.outboundEmail.findFirst({
       where: { leadId, campaignId, isIncoming: true },
       orderBy: { sentAt: 'desc' },
     });
 
+    const activeSenders = campaign.senderLinks.map(l => l.sender).filter(s => s.status === 'active' && s.domain.status === 'active');
+    if (activeSenders.length === 0) return res.status(400).json({ error: 'No active sender found' });
+    // Prefer a sender on the SAME domain the original thread was sent from, for continuity.
+    const activeSender = activeSenders.find(s => s.domainId === latestIncoming?.domainId) || activeSenders[0];
+
     const { subject: pSubject, body: pBody } = personalisationService.personalise(
       lead,
       subject,
       body,
       campaign.reference,
-      campaign.senderName
+      activeSender.displayName || campaign.senderName
+      // No unsubscribe footer on manual replies — this is a reply within an
+      // already-engaged conversation, not a cold outbound send.
     );
 
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
-        domainId: activeDomain.id,
+        domainId: activeSender.domainId,
         leadId,
         campaignId,
         subject: pSubject,
@@ -625,13 +637,13 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
     });
 
     const result = await emailService.sendEmailNow(
-      activeDomain,
+      { ...activeSender.domain, senderLocalPart: activeSender.localPart },
       lead.email,
       pSubject,
       pBody.replace(/\n/g, '<br>'),
       pBody,
       outboundRecord.id,
-      campaign.senderName,
+      activeSender.displayName || campaign.senderName,
       latestIncoming?.messageId
     );
 
@@ -878,49 +890,49 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
   } catch (error) { next(error); }
 };
 
-export const getCampaignDomains = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const getCampaignSenders = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    const links = await prisma.campaignDomain.findMany({
+    const links = await prisma.campaignSender.findMany({
       where: { campaignId: id },
-      include: { domain: true },
+      include: { sender: { include: { domain: true } } },
     });
-    res.json(links.map(l => l.domain));
+    res.json(links.map(l => l.sender));
   } catch (error) { next(error); }
 };
 
-export const addDomainToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const addSenderToCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
     const userId = req.user!.id;
-    const { domainId } = req.body;
+    const { senderId } = req.body;
 
-    // The domain itself must belong to a member of this campaign — otherwise
-    // any editor could attach someone else's sending domain to their campaign.
-    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
-    if (!domain) return res.status(404).json({ error: 'Domain not found on your account' });
+    // The sender itself must belong to the caller — otherwise any editor
+    // could attach someone else's mailbox to their campaign.
+    const sender = await prisma.sender.findFirst({ where: { id: senderId, userId } });
+    if (!sender) return res.status(404).json({ error: 'Sender not found on your account' });
 
-    const link = await prisma.campaignDomain.upsert({
+    const link = await prisma.campaignSender.upsert({
       where: {
-        campaignId_domainId: {
+        campaignId_senderId: {
           campaignId: id,
-          domainId,
+          senderId,
         },
       },
       update: {},
-      create: { campaignId: id, domainId },
+      create: { campaignId: id, senderId },
     });
 
     res.status(201).json(link);
   } catch (error) { next(error); }
 };
 
-export const removeDomainFromCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const removeSenderFromCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    const domainId = req.params.domainId as string;
-    await prisma.campaignDomain.deleteMany({
-      where: { campaignId: id, domainId },
+    const senderId = req.params.senderId as string;
+    await prisma.campaignSender.deleteMany({
+      where: { campaignId: id, senderId },
     });
     res.status(204).send();
   } catch (error) { next(error); }

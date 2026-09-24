@@ -18,6 +18,7 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
         id: true,
         email: true,
         name: true,
+        isAdmin: true,
         createdAt: true,
       },
     });
