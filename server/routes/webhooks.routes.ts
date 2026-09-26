@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { Webhook } from 'svix';
+import { waitUntil } from '@vercel/functions';
 import prisma from '../lib/prisma';
 import { webhooksService } from '../services/webhooks.service';
 import { logger } from '../config/logger';
@@ -22,9 +23,18 @@ router.post('/mailgun', async (req, res) => {
 
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    webhooksService.processDeliverabilityEvent(req.body).catch(err => {
-      logger.error({ err }, 'Deliverability event background processing error');
-    });
+    // Unawaited on purpose (Mailgun expects a fast 200) — but on Vercel, an
+    // unawaited promise that outlives the response is NOT guaranteed to
+    // keep running once serverless-http resolves; the platform can freeze
+    // the invocation right after the response flushes. waitUntil() is the
+    // documented fix: it keeps this specific invocation alive until the
+    // promise settles (bounded by the function's own maxDuration), instead
+    // of this work silently, intermittently getting cut off mid-flight.
+    waitUntil(
+      webhooksService.processDeliverabilityEvent(req.body).catch(err => {
+        logger.error({ err }, 'Deliverability event background processing error');
+      })
+    );
 
     res.status(200).send('OK');
   } catch (error) {
@@ -42,9 +52,16 @@ router.post('/mailgun/inbound', upload.none(), async (req, res) => {
     const isValid = webhooksService.verifyMailgunSignature(timestamp, token, signature);
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    webhooksService.processInboundEmail(req.body).catch(err => {
-      logger.error({ err }, 'Inbound reply processing error');
-    });
+    // Same reasoning as the deliverability handler above — this is the
+    // path that confirms the receiving-test code AND runs the (AI-backed,
+    // potentially several-seconds) auto-reply engine. Losing this
+    // intermittently to an early freeze is exactly the kind of bug that's
+    // maddening to reproduce: it would "usually" work.
+    waitUntil(
+      webhooksService.processInboundEmail(req.body).catch(err => {
+        logger.error({ err }, 'Inbound reply processing error');
+      })
+    );
 
     res.status(200).send('OK');
   } catch (error) {

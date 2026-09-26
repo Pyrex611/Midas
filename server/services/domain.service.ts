@@ -44,12 +44,116 @@ export class DomainService {
         subject: 'Midas: your domain is connected',
         text: `This confirms ${domainName} can send email through your Mailgun account via Midas.\n\nNext step: confirm receiving — check the Domains page for a one-time code and test address.`,
       }).toString(),
+      // Same lesson as the Prisma/Neon incident: no external fetch runs
+      // unbounded. requestTimeoutGuard (15s, app.ts) is a backstop, not a
+      // substitute — this fails fast and specifically for a slow Mailgun
+      // response instead of tripping the generic whole-request guard.
+      signal: AbortSignal.timeout(10_000),
     });
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.message || `Mailgun rejected the test send (HTTP ${res.status})`);
     }
     return data;
+  }
+
+  /** Resolves this deployment's own public URL for building the Mailgun inbound-Route webhook target. */
+  private appUrl(): string {
+    const configured = process.env.APP_URL;
+    if (configured) return configured.replace(/\/$/, '');
+    logger.warn(
+      'APP_URL is not set — falling back to the default Vercel deployment URL for the Mailgun ' +
+      'inbound route. Set APP_URL once you have a stable production/custom domain, or inbound ' +
+      'routes created before that point will keep forwarding to the fallback URL.'
+    );
+    return 'https://midas-aem.vercel.app';
+  }
+
+  /**
+   * Mailgun Routes are ACCOUNT-global, not per-domain — a bare catchall()
+   * filter would intercept inbound mail for every domain on the same
+   * Mailgun account (including any other domain connected with the same
+   * key), not just this one. Scoping the expression to this exact domain
+   * keeps route matching isolated to the domain actually being connected.
+   */
+  private routeExpressionFor(domainName: string): string {
+    return `match_recipient('.*@${domainName.replace(/\./g, '\\.')}')`;
+  }
+
+  private async listRoutes(mailgunApiKey: string, region: string | null): Promise<{ items: any[] }> {
+    const res = await fetch(`${this.baseUrlFor(region)}/routes?limit=100`, {
+      headers: { Authorization: this.authHeaderFor(mailgunApiKey) },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`Failed to list Mailgun routes (HTTP ${res.status})`);
+    return res.json();
+  }
+
+  /**
+   * Ensures an inbound Route exists for this domain, forwarding to Midas's
+   * webhook — without this, Mailgun has nowhere to send inbound mail
+   * regardless of how correctly DNS/MX is set up, and the receiving-test
+   * code sent to connectivity@domain would never arrive. Idempotent: checks
+   * the domain's stored routeId first (verifying it still exists remotely,
+   * in case it was deleted manually in Mailgun's UI), then falls back to
+   * matching by expression, before creating a new one — so retrying
+   * connectWithKey/runSendTest never stacks duplicate routes.
+   *
+   * Best-effort by design: called from runSendTest wrapped in a try/catch
+   * that does NOT fail the send test if this throws (e.g. a Mailgun plan
+   * that restricts Routes API access) — sending and receiving are tracked
+   * independently, and the Domains page keeps its manual-setup fallback
+   * guidance for exactly this case.
+   */
+  private async ensureInboundRoute(
+    domainId: string,
+    domainName: string,
+    mailgunApiKey: string,
+    region: string | null
+  ): Promise<string> {
+    const webhookUrl = `${this.appUrl()}/api/webhooks/mailgun/inbound`;
+    const expression = this.routeExpressionFor(domainName);
+
+    const current = await prisma.domain.findUnique({ where: { id: domainId }, select: { routeId: true } });
+    if (current?.routeId) {
+      try {
+        const check = await fetch(`${this.baseUrlFor(region)}/routes/${current.routeId}`, {
+          headers: { Authorization: this.authHeaderFor(mailgunApiKey) },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (check.ok) return current.routeId;
+      } catch {
+        // Remote check failed/timed out — fall through and re-resolve below
+        // rather than trusting a stale id we can't currently verify.
+      }
+    }
+
+    const list = await this.listRoutes(mailgunApiKey, region);
+    const existing = (list.items || []).find((r: any) => r.expression === expression);
+    if (existing) return existing.id;
+
+    const form = new URLSearchParams();
+    form.set('priority', '0');
+    form.set('description', `Midas inbound — ${domainName}`);
+    form.set('expression', expression);
+    form.append('action', `forward("${webhookUrl}")`);
+    form.append('action', 'stop()');
+
+    const res = await fetch(`${this.baseUrlFor(region)}/routes`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.authHeaderFor(mailgunApiKey),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.message || `Failed to create Mailgun inbound route (HTTP ${res.status})`);
+    }
+    return data.route.id;
   }
 
   /**
@@ -97,6 +201,20 @@ export class DomainService {
     const receivingTestCode = generateCode();
     const receivingTestAddress = `connectivity@${domain.domainName}`;
 
+    // Best-effort: automatically wire up the inbound route so the
+    // receiving test above actually has somewhere to land — see
+    // ensureInboundRoute()'s docstring for why a failure here does not
+    // fail the send test itself.
+    let routeId = domain.routeId ?? undefined;
+    try {
+      routeId = await this.ensureInboundRoute(domain.id, domain.domainName, key, domain.mailgunRegion);
+    } catch (err: any) {
+      logger.error(
+        { err: err.message, domainId: domain.id },
+        'Automatic Mailgun inbound route setup failed — receiving test will need a manually-configured Route'
+      );
+    }
+
     return prisma.domain.update({
       where: { id: domainId },
       data: {
@@ -104,6 +222,7 @@ export class DomainService {
         sendTestPassedAt: new Date(),
         receivingTestCode,
         receivingTestAddress,
+        routeId,
       },
     });
   }

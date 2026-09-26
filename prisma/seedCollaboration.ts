@@ -1,5 +1,10 @@
-import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import prisma from '../server/lib/prisma';
+
+// Previously instantiated its own bare `new PrismaClient()` — under Prisma
+// 7 that throws immediately (`requires either "adapter" or "accelerateUrl"`,
+// see server/lib/prisma.ts for the full incident writeup). Reuses the same
+// adapter-backed singleton as the running app instead of a second,
+// divergent client-construction pattern.
 
 async function main() {
   const campaigns = await prisma.campaign.findMany();

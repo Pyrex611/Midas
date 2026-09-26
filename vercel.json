@@ -7,8 +7,8 @@
     { "path": "/api/cron/queue", "schedule": "0 9 * * *" },
     { "path": "/api/cron/leads", "schedule": "0 10 * * *" },
     { "path": "/api/cron/followups", "schedule": "0 11 * * *" }
-  ]
+  ],
   "functions": {
-    "api/**/*.ts": { "maxDuration": 15 }
+    "api/**/*.ts": { "maxDuration": 30 }
   }
 }

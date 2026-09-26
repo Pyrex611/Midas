@@ -9,10 +9,18 @@ dotenv.config();
 // PrismaNeonHttp adapter, which wanted Neon's direct, non-pooled endpoint.
 // That adapter is gone (see server/lib/prisma.ts for why — it had no
 // timeout control and was the root cause of a site-wide hang incident).
-// The standard pooled connection now in use wants the OPPOSITE transform
-// (it wants "-pooler" present, plus connect/pool timeouts), and
-// server/lib/prisma.ts is the single place that builds that connection
-// string — don't duplicate or fight that logic here.
+// The standard pooled connection now in use (via @prisma/adapter-pg) wants
+// the OPPOSITE transform (it wants "-pooler" present, plus connect/idle
+// timeouts as Pool options), and server/lib/prisma.ts is the single place
+// that builds that connection string — don't duplicate or fight that logic
+// here.
+//
+// Separately, prisma.config.ts (CLI-only — migrate/generate, never loaded
+// by this running app) reads its own DIRECT_URL (or falls back to
+// DATABASE_URL) directly from process.env. Set DIRECT_URL to Neon's
+// non-pooled connection string if you see `prisma migrate deploy`/`dev`
+// fail with prepared-statement or advisory-lock errors under the pooled
+// endpoint.
 
 // SECURITY + AVAILABILITY NOTE on CRON_SECRET / ENCRYPTION_KEY:
 // These previously had a hardcoded fallback value baked into source (a real
@@ -51,11 +59,22 @@ const envSchema = z.object({
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
   // No hardcoded default, and NOT hard-required here — see note above.
-  // Nothing in this codebase currently reads it; kept for forward
-  // compatibility with per-tenant credential encryption (see Phase 3 notes).
+  // Used by server/lib/encryption.ts (validated lazily there, at the point
+  // of actual use) to encrypt/decrypt each tenant's stored Mailgun API key
+  // — see domain.service.ts's "bring your own Mailgun key" flow. A 64-char
+  // hex string (32 bytes): generate with `openssl rand -hex 32`.
   ENCRYPTION_KEY: z.string().optional(),
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('noreply@outreach.local'),
+
+  // This deployment's own public URL, with no trailing slash — used to
+  // build the Mailgun inbound-Route webhook target
+  // (`${APP_URL}/api/webhooks/mailgun/inbound`) when domain.service.ts
+  // provisions a domain's Route automatically. Optional: falls back to
+  // the default Vercel deployment URL at the call site (see
+  // domain.service.ts::appUrl()) with a warning log, so this only needs
+  // to be set once you have a stable production/custom domain.
+  APP_URL: z.string().url().optional(),
 
   // Clerk Authentication Keys
   CLERK_SECRET_KEY: z.string().optional(),

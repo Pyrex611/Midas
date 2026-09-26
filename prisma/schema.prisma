@@ -1,9 +1,9 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
 datasource db {
   provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
 }
 
 // --- Midas Core Models ---
@@ -73,7 +73,16 @@ model Domain {
   replyCount       Int      @default(0) @map("reply_count")
   bounceRate       Float    @default(0.0)
   complaintRate    Float    @default(0.0)
-  
+
+  // Mailgun inbound Route id, created automatically the first time a send
+  // test passes (see domain.service.ts::ensureInboundRoute). Lets retries
+  // detect an already-provisioned route instead of stacking duplicates —
+  // Mailgun Routes are account-global, so this is deliberately scoped with
+  // a match_recipient() expression for this exact domain, never a bare
+  // catchall(), which would intercept inbound mail for every domain on
+  // the same Mailgun account.
+  routeId          String?  @map("route_id")
+
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 

@@ -65,6 +65,12 @@ class OpenAIProvider implements AIProvider {
         temperature: 0.7,
         max_tokens: 1200,
       }),
+      // No timeout here previously meant a stalled provider hung forever —
+      // attemptComplete()'s try/catch failover to the next provider only
+      // triggers on a thrown error, never on a pending promise that just
+      // never resolves. This is the same unbounded-fetch pattern as the
+      // Prisma/Neon incident, in a different subsystem.
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) {
@@ -93,6 +99,7 @@ class GeminiProvider implements AIProvider {
           contents: [{ parts: [{ text: fullPrompt }] }],
           generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
         }),
+        signal: AbortSignal.timeout(20_000),
       }
     );
 
@@ -128,6 +135,7 @@ class DeepSeekProvider implements AIProvider {
         temperature: 0.7,
         max_tokens: 1200,
       }),
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) {
@@ -164,6 +172,7 @@ class OpenRouterProvider implements AIProvider {
         temperature: 0.7,
         max_tokens: 3000,
       }),
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) {
@@ -190,7 +199,7 @@ class OllamaProvider implements AIProvider {
 
   async isAvailable() {
     try {
-      const resp = await fetch(`${this.baseUrl}/api/tags`);
+      const resp = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(3_000) });
       return resp.ok;
     } catch {
       return false;
@@ -208,6 +217,7 @@ class OllamaProvider implements AIProvider {
         stream: false,
         options: { temperature: 0.7 },
       }),
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) throw new Error('Ollama generation failed');

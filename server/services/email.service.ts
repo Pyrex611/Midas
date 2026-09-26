@@ -57,7 +57,14 @@ export class EmailService {
           'Authorization': authHeader,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: formData.toString()
+        body: formData.toString(),
+        // This is the send path every queued email and every auto-reply
+        // goes through. Without a bound here, one stalled Mailgun call
+        // doesn't just fail slowly — inside emailQueue.service.ts's batch
+        // loop it stalls the REST of that invocation's up-to-15-email
+        // batch too (eventually caught by requestTimeoutGuard/maxDuration,
+        // but only after burning the whole window on a single send).
+        signal: AbortSignal.timeout(10_000),
       });
 
       const data = await res.json();

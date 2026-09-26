@@ -258,8 +258,10 @@ export const Domains: React.FC = () => {
                       </button>
                     </div>
                     <p className="mt-2 text-xs text-blue-700">
-                      Nothing arriving? Make sure Mailgun has an inbound Route for this domain forwarding to
-                      your Midas webhook (Mailgun dashboard → Receiving → Routes).
+                      Midas sets up the inbound Route for this domain automatically once the send test
+                      passes. Nothing arriving after a few minutes? Some Mailgun plans restrict Routes API
+                      access — check Mailgun dashboard → Receiving → Routes and add one manually if it's
+                      missing, forwarding to this domain's Midas webhook.
                     </p>
                   </div>
                 )}
