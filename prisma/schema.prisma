@@ -4,10 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // Required for the standard pooled TCP connection in server/lib/prisma.ts
-  // (previously omitted because the old HTTP-adapter-only setup supplied
-  // its own connection at runtime instead of through this url).
-  url      = env("DATABASE_URL")
 }
 
 // --- Midas Core Models ---
