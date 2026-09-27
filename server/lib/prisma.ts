@@ -1,7 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
-import { attachDatabasePool } from '@vercel/functions';
 import { logger } from '../config/logger';
 
 function buildConnectionString(): string {
@@ -19,6 +18,7 @@ function buildConnectionString(): string {
   try {
     url = new URL(raw);
   } catch {
+    // If connection string contains unencoded special characters, pass raw to pg
     return raw;
   }
 
@@ -31,7 +31,7 @@ function buildConnectionString(): string {
     url.hostname = parts.join('.');
   }
 
-  // Clean obsolete query parameters not used by node-postgres
+  // Clean obsolete query parameters not recognized by node-postgres
   url.searchParams.delete('connect_timeout');
   url.searchParams.delete('pool_timeout');
   url.searchParams.delete('pgbouncer');
@@ -60,12 +60,16 @@ const prismaClientSingleton = () => {
     max: 2,
   });
 
-  // Attach pool lifecycle management for Vercel Fluid Compute
+  // Dynamic capability check for Vercel Fluid Compute database pool attachment.
+  // Using dynamic lookup prevents compile-time TS2305 errors when @vercel/functions is pinned to v1.x.
   try {
-    attachDatabasePool(pool);
-  } catch (err) {
-    // Non-fatal if running outside of Vercel runtime (e.g., local dev)
-    logger.debug('[PRISMA] attachDatabasePool skipped (non-serverless environment)');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vercelFunctions = require('@vercel/functions');
+    if (typeof vercelFunctions.attachDatabasePool === 'function') {
+      vercelFunctions.attachDatabasePool(pool);
+    }
+  } catch {
+    // Graceful fallback when running in local development or older @vercel/functions versions
   }
 
   const adapter = new PrismaPg(pool);
