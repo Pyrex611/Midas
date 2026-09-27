@@ -14,29 +14,37 @@ export interface AuthRequest extends Request {
 
 type CachedUser = { id: string; email: string; isAdmin: boolean };
 
-// In-memory cache to map Clerk IDs to local PostgreSQL UUIDs for 0ms middleware lookups.
-// TTL'd (5 min) so an admin-flag change (or any other cached field) doesn't
-// stay stale indefinitely on a long-lived warm serverless instance.
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const userCache = new Map<string, { value: CachedUser; expiresAt: number }>();
 
-export const requireAuth = (req: any, res: Response, next: NextFunction) => {
-  ClerkExpressRequireAuth()(req, res, async (err: any) => {
+// Instantiate the Clerk middleware handler once at module scope
+const clerkAuthHandler = ClerkExpressRequireAuth();
+
+export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+  // Graceful check for unconfigured Clerk environments
+  if (!process.env.CLERK_SECRET_KEY) {
+    logger.error('[AUTH] CLERK_SECRET_KEY is not configured in environment variables');
+    return res.status(500).json({ error: 'Authentication service not configured' });
+  }
+
+  clerkAuthHandler(req, res, async (err: any) => {
     if (err) {
-      logger.error({ err }, 'Clerk verification failed');
+      logger.error({ err: err.message || err }, '[AUTH] Clerk token verification failed');
       return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
     try {
-      const clerkId = req.auth?.userId;
+      const authReq = req as AuthRequest;
+      const clerkId = authReq.auth?.userId;
+
       if (!clerkId) {
         return res.status(401).json({ error: 'Unauthorized: Missing User Identity' });
       }
 
-      // Check cache first for 0ms resolution
+      // Check cache for 0ms resolution
       const cached = userCache.get(clerkId);
       if (cached && cached.expiresAt > Date.now()) {
-        req.user = cached.value;
+        authReq.user = cached.value;
         return next();
       }
 
@@ -46,8 +54,8 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
       });
 
       if (!user) {
-        const email = req.auth.sessionClaims?.email || `user-${clerkId.substring(0, 8)}@clerk.local`;
-        const name = req.auth.sessionClaims?.fullName || email.split('@')[0];
+        const email = authReq.auth.sessionClaims?.email || `user-${clerkId.substring(0, 8)}@clerk.local`;
+        const name = authReq.auth.sessionClaims?.fullName || email.split('@')[0];
 
         user = await prisma.user.upsert({
           where: { email },
@@ -64,10 +72,10 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
       const resolvedUser: CachedUser = { id: user.id, email: user.email, isAdmin: user.isAdmin };
       userCache.set(clerkId, { value: resolvedUser, expiresAt: Date.now() + CACHE_TTL_MS });
 
-      req.user = resolvedUser;
+      authReq.user = resolvedUser;
       next();
     } catch (dbErr: any) {
-      logger.error({ dbErr }, 'Database session resolution failed');
+      logger.error({ dbErr: dbErr.message || dbErr }, '[AUTH] Database user sync failed');
       res.status(500).json({ error: 'Database session validation failed' });
     }
   });

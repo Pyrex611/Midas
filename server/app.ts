@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { env } from './config/env';
+import { logger } from './config/logger';
 import { requireAuth } from './middleware/auth.middleware';
 import { requireAdmin } from './middleware/requireAdmin.middleware';
 import { requestTimeoutGuard } from './middleware/requestTimeoutGuard.middleware';
@@ -28,15 +29,10 @@ const allowedOrigins = (env.CORS_ORIGIN || '')
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow non-browser requests (e.g. server-to-server, webhooks, curl, VPS crons)
     if (!origin) return callback(null, true);
 
     const cleanOrigin = origin.trim().replace(/\/$/, '');
 
-    // Allow: explicitly configured origins, this project's own Vercel preview
-    // deployments (scoped by prefix — NOT every *.vercel.app site, which
-    // would let any unrelated Vercel-hosted page make credentialed requests
-    // against this API), and localhost for local dev.
     const isOwnVercelPreview =
       /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(cleanOrigin) &&
       cleanOrigin.includes(`${env.CORS_VERCEL_PROJECT_PREFIX}-`);
@@ -54,28 +50,41 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
 
-// Body parsing with support for JSON and URL-encoded forms (required for Mailgun webhooks)
+// Request Logger: Logs every incoming request and its completion status & latency
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`[HTTP] ${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms`);
+  });
+  next();
+});
+
+// Immediate Liveness Probe (Zero upstream dependencies, resolves before guards)
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Body parsing with support for JSON and URL-encoded forms
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Turns a hung upstream dependency (database, AI provider, Mailgun, etc.)
-// into a fast, clear 503 instead of every page silently hanging until
-// Vercel's own ~300s hard limit kills the function with no useful signal.
+// Timeout guard backstop (15s default)
 app.use(requestTimeoutGuard(15000));
 
 // Public Webhook Receivers (Mailgun & Clerk)
 app.use('/api/webhooks', webhookRoutes);
 
-// Automated VPS/Vercel Cron Triggers (Guarded by Bearer CRON_SECRET)
+// Automated Cron Triggers (Guarded by Bearer CRON_SECRET)
 app.use('/api/cron', cronRoutes);
 
-// Public, non-sensitive feature flags (e.g. "is real email verification available")
+// Public Feature Flags
 app.use('/api/config', configRoutes);
 
-// Public one-click/manual unsubscribe (recipients are never logged into Midas)
+// Public One-Click Unsubscribe
 app.use('/api/unsubscribe', unsubscribeRoutes);
 
-// Protected Core Application Routes (Guarded by Clerk RS256 JWKS requireAuth)
+// Protected Core Application Routes
 app.use('/api/leads', requireAuth, leadRoutes);
 app.use('/api/campaigns', requireAuth, campaignRoutes);
 app.use('/api/domains', requireAuth, domainRoutes);
@@ -85,8 +94,5 @@ app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
-
-// Live Health Endpoint
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 export default app;

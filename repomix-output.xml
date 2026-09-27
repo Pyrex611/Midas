@@ -53,22 +53,23 @@ package.json
 postcss.config.js
 prisma.config.ts
 prisma/dev.db
-prisma/migrateMailboxes.ts
 prisma/migrations/20260318021948_init/migration.sql
 prisma/migrations/20260319011711_add_collaboration/migration.sql
 prisma/migrations/20260319032509_add_mailbox_analytics/migration.sql
 prisma/migrations/20260319050843_phase_5a_strategy/migration.sql
 prisma/migrations/20260319060110_add_satisfied_flag/migration.sql
 prisma/migrations/20260319184125_add_mailbox_last_polled/migration.sql
+prisma/migrations/20260916_add_upload_job_verification_fields/migration.sql
 prisma/migrations/20260917_add_cron_lock_and_user_settings_fields/migration.sql
 prisma/migrations/20260920_phase3_admin_unsubscribe_byo_mailgun/migration.sql
 prisma/migrations/20260921_domain_sender_restructure/migration.sql
+prisma/migrations/20260926000000_add_domain_route_id/migration.sql
 prisma/migrations/migration_lock.toml
 prisma/rls.sql
 prisma/schema.prisma
 prisma/seedCollaboration.ts
-prisma/seedDefaultMailboxes.ts
 README.md
+scripts/baseline-migrations.js
 server/app.ts
 server/config/env.ts
 server/config/logger.ts
@@ -237,6 +238,7 @@ backend/node_modules/
 .vercel
 .env*
 .env.local
+.env.fresh
 </file>
 
 <file path="api/index.ts">
@@ -981,7 +983,7 @@ Apache License
     "dev": "vite",
     "build": "prisma generate && tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/index.js",
-    "vercel-build": "prisma generate && prisma db push --accept-data-loss && tsc -p tsconfig.server.json && vite build",
+    "vercel-build": "prisma generate && prisma migrate deploy && tsc -p tsconfig.server.json && vite build",
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
@@ -993,6 +995,7 @@ Apache License
     "@tailwindcss/vite": "^4.0.0",
     "@upstash/qstash": "^2.7.17",
     "@vercel/blob": "^0.27.1",
+    "@vercel/functions": "^1.0.0",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -1042,99 +1045,44 @@ module.exports = {
 };
 </file>
 
-<file path="prisma/migrateMailboxes.ts">
-import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
+<file path="prisma.config.ts">
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
 
-const prisma = new PrismaClient();
+// Prisma 7 CLI operations (generate, migrate deploy/dev) read their
+// connection string from here, never from schema.prisma (see P1012 fix).
+//
+// Prefer the DIRECT (non-pooled) connection for CLI/Migrate operations —
+// DDL and Prisma Migrate's own locking behavior are safer off PgBouncer's
+// transaction-mode pooling. This project's Neon-via-Vercel integration
+// injects POSTGRES_URL_NON_POOLING for exactly this; DIRECT_URL is checked
+// too in case that's ever set instead/later. Falls through to whatever
+// pooled string exists rather than hard-blocking a setup with only one
+// connection string configured — but POSTGRES_URL_NON_POOLING being unset
+// here would be worth investigating, not just silently tolerating.
+const directUrl =
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.DIRECT_URL ||
+  process.env.DATABASE_URL_POOLED ||
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL;
 
-// Simple encryption/decryption (copied from src/lib/encryption.ts)
-const algorithm = 'aes-256-gcm';
-const secretKey = process.env.ENCRYPTION_KEY!; // must be 32 bytes hex (64 chars)
-const ivLength = 16;
-const tagLength = 16;
-
-function encrypt(text: string): string {
-  const iv = crypto.randomBytes(ivLength);
-  const cipher = crypto.createCipheriv(algorithm, Buffer.from(secretKey, 'hex'), iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const tag = cipher.getAuthTag();
-  return iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted;
+if (!directUrl) {
+  throw new Error(
+    "Set POSTGRES_URL_NON_POOLING (preferred, Neon-via-Vercel's direct connection string) " +
+    "before running Prisma CLI commands."
+  );
 }
 
-async function main() {
-  console.log('Starting mailbox migration...');
-
-  // 1. Create default mailboxes for users with settings
-  const usersWithSettings = await prisma.user.findMany({
-    where: { settings: { isNot: null } },
-    include: { settings: true },
-  });
-
-  for (const user of usersWithSettings) {
-    const settings = user.settings!;
-    // Check if user already has a mailbox
-    const existing = await prisma.mailbox.findFirst({ where: { userId: user.id } });
-    if (existing) {
-      console.log(`User ${user.id} already has a mailbox, skipping.`);
-      continue;
-    }
-
-    // Extract email from emailFrom (e.g., "Name <email@example.com>")
-    let email = settings.emailFrom || '';
-    const match = settings.emailFrom?.match(/<(.+)>/);
-    if (match) email = match[1];
-
-    await prisma.mailbox.create({
-      data: {
-        userId: user.id,
-        name: 'Default',
-        email,
-        senderName: settings.smtpUser || '',
-        smtpHost: settings.smtpHost,
-        smtpPort: settings.smtpPort,
-        smtpSecure: settings.smtpSecure,
-        smtpUser: settings.smtpUser,
-        smtpPass: settings.smtpPass ? encrypt(settings.smtpPass) : null,
-        imapHost: settings.imapHost,
-        imapPort: settings.imapPort,
-        imapSecure: settings.imapSecure,
-        imapUser: settings.imapUser,
-        imapPass: settings.imapPass ? encrypt(settings.imapPass) : null,
-        sendLimit: settings.sendLimit,
-        sendPeriod: settings.sendPeriod,
-        isPrimary: true,
-      },
-    });
-    console.log(`Created default mailbox for user ${user.id}`);
-  }
-
-  // 2. Link existing OutboundEmail records to the user's primary mailbox
-  await prisma.$executeRaw`
-    UPDATE "OutboundEmail" oe
-    SET "mailbox_id" = m.id
-    FROM "Mailbox" m
-    WHERE m.user_id = oe.user_id AND m.is_primary = true
-  `;
-
-  // 3. Link existing PendingEmail records similarly
-  await prisma.$executeRaw`
-    UPDATE "PendingEmail" pe
-    SET "mailbox_id" = m.id
-    FROM "Mailbox" m
-    WHERE m.user_id = pe.user_id AND m.is_primary = true
-  `;
-
-  console.log('Mailbox IDs populated for existing emails.');
-}
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: directUrl,
+  },
+});
 </file>
 
 <file path="prisma/migrations/20260318021948_init/migration.sql">
@@ -1667,6 +1615,16 @@ CREATE INDEX "PendingEmail_scheduled_at_idx" ON "PendingEmail"("scheduled_at");
 ALTER TABLE "Mailbox" ADD COLUMN     "last_polled_at" TIMESTAMP(3);
 </file>
 
+<file path="prisma/migrations/20260916_add_upload_job_verification_fields/migration.sql">
+-- This migration's original migration.sql was lost/never copied over.
+-- The UploadJob.verificationId / verifyEmails / pendingRows columns it
+-- would have added already exist in production (applied via the old
+-- `db push`-based deploy process, like every other migration from this
+-- era) -- confirmed against current schema.prisma. This is a documented
+-- no-op baseline placeholder, not a real pending change.
+SELECT 1;
+</file>
+
 <file path="prisma/migrations/20260917_add_cron_lock_and_user_settings_fields/migration.sql">
 -- CronLock: cross-instance mutual exclusion for the three scheduled jobs.
 CREATE TABLE "CronLock" (
@@ -1800,6 +1758,15 @@ ALTER TABLE "PendingEmail" DROP COLUMN IF EXISTS "preferred_domain_id";
 DROP TABLE IF EXISTS "CampaignDomain";
 
 COMMIT;
+</file>
+
+<file path="prisma/migrations/20260926000000_add_domain_route_id/migration.sql">
+-- Adds Domain.route_id: tracks the Mailgun inbound Route (created
+-- automatically by domain.service.ts::ensureInboundRoute once a domain's
+-- send test passes) so retries can detect an already-provisioned route
+-- instead of creating duplicates.
+
+ALTER TABLE "Domain" ADD COLUMN "route_id" TEXT;
 </file>
 
 <file path="prisma/migrations/migration_lock.toml">
@@ -2023,10 +1990,6 @@ ORDER BY tablename;
 </file>
 
 <file path="prisma/schema.prisma">
-generator client {
-  provider = "prisma-client-js"
-}
-
 datasource db {
   provider = "postgresql"
 }
@@ -2102,7 +2065,16 @@ model Domain {
   replyCount       Int      @default(0) @map("reply_count")
   bounceRate       Float    @default(0.0)
   complaintRate    Float    @default(0.0)
-  
+
+  // Mailgun inbound Route id, created automatically the first time a send
+  // test passes (see domain.service.ts::ensureInboundRoute). Lets retries
+  // detect an already-provisioned route instead of stacking duplicates —
+  // Mailgun Routes are account-global, so this is deliberately scoped with
+  // a match_recipient() expression for this exact domain, never a bare
+  // catchall(), which would intercept inbound mail for every domain on
+  // the same Mailgun account.
+  routeId          String?  @map("route_id")
+
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -2433,8 +2405,13 @@ model CronLock {
 </file>
 
 <file path="prisma/seedCollaboration.ts">
-import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import prisma from '../server/lib/prisma';
+
+// Previously instantiated its own bare `new PrismaClient()` — under Prisma
+// 7 that throws immediately (`requires either "adapter" or "accelerateUrl"`,
+// see server/lib/prisma.ts for the full incident writeup). Reuses the same
+// adapter-backed singleton as the running app instead of a second,
+// divergent client-construction pattern.
 
 async function main() {
   const campaigns = await prisma.campaign.findMany();
@@ -2460,54 +2437,6 @@ async function main() {
 }
 
 main().finally(() => prisma.$disconnect());
-</file>
-
-<file path="prisma/seedDefaultMailboxes.ts">
-import { PrismaClient } from '@prisma/client';
-import { encrypt } from '../src/lib/encryption';
-
-const prisma = new PrismaClient();
-
-async function main() {
-  const usersWithSettings = await prisma.user.findMany({
-    where: { settings: { isNot: null } },
-    include: { settings: true },
-  });
-
-  for (const user of usersWithSettings) {
-    const settings = user.settings!;
-    // Check if user already has any mailbox
-    const existing = await prisma.mailbox.findFirst({ where: { userId: user.id } });
-    if (existing) continue; // skip
-
-    await prisma.mailbox.create({
-      data: {
-        userId: user.id,
-        name: 'Default',
-        email: settings.emailFrom ? settings.emailFrom.match(/<(.+)>/)?.[1] || settings.emailFrom : '',
-        senderName: settings.senderName,
-        smtpHost: settings.smtpHost,
-        smtpPort: settings.smtpPort,
-        smtpSecure: settings.smtpSecure,
-        smtpUser: settings.smtpUser,
-        smtpPass: settings.smtpPass ? encrypt(settings.smtpPass) : null,
-        imapHost: settings.imapHost,
-        imapPort: settings.imapPort,
-        imapSecure: settings.imapSecure,
-        imapUser: settings.imapUser,
-        imapPass: settings.imapPass ? encrypt(settings.imapPass) : null,
-        sendLimit: settings.sendLimit,
-        sendPeriod: settings.sendPeriod,
-        isPrimary: true,
-      },
-    });
-  }
-  console.log('Default mailboxes created for existing users.');
-}
-
-main()
-  .catch(console.error)
-  .finally(() => prisma.$disconnect());
 </file>
 
 <file path="README.md">
@@ -3013,6 +2942,124 @@ For issues, questions, or feature requests:
 **Last Updated:** February 2026 | **Phase:** 3.5+ (Reply Analysis & Automation)
 </file>
 
+<file path="scripts/baseline-migrations.js">
+// scripts/baseline-migrations.js
+//
+// Marks every existing migration folder as "already applied" in
+// _prisma_migrations, EXCEPT the newest one (route_id), which is genuinely
+// new and should actually run via `prisma migrate deploy` afterward.
+//
+// Why this is needed: prisma/schema.prisma's tables already exist in
+// production — every previous deploy ran the OLD vercel-build script,
+// which used `prisma db push --accept-data-loss`. `db push` diffs
+// schema.prisma against the live DB and applies the difference directly —
+// it never writes to `_prisma_migrations` at all. So the tables are real
+// and (assuming schema.prisma was kept in sync at each deploy, which is
+// what db push guarantees) match what these migrations would produce, but
+// Prisma Migrate has no record of any of them ever running. That mismatch
+// — real schema, empty history — is exactly what P3005 means. This is
+// standard "baselining an existing database":
+// https://pris.ly/d/migrate-baseline
+//
+// Usage (from the project root, with your .env pointing at the SAME
+// database Vercel deploys against):
+//   node scripts/baseline-migrations.js
+//
+// Then run `npx prisma migrate status` to confirm a clean baseline before
+// redeploying — it should list only the new route_id migration as pending,
+// nothing else.
+//
+// SAFE TO RE-RUN after a partial failure (e.g. flaky network killed a
+// connection mid-run): migrations that already got marked applied in an
+// earlier run are detected below by Prisma's own P1XXX error code rather
+// than by guessing its exact wording, and are skipped rather than treated
+// as fatal. Only a genuine connectivity error (P1001) stops the whole run
+// — that one really does mean "nothing past this point can succeed either,
+// stop and fix the connection first."
+
+const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+
+const MIGRATIONS_DIR = path.join(__dirname, "..", "prisma", "migrations");
+
+// This is the one migration that is genuinely new (adds Domain.routeId) and
+// has never been applied anywhere — do NOT mark this one as applied. It
+// should be left for `prisma migrate deploy` to actually run for real.
+const SKIP = "20260926000000_add_domain_route_id";
+
+// Prisma's connectivity-family error codes. P1001 is "can't reach server";
+// included P1002/P1017 too since they cover "timed out" / "server closed
+// the connection" — the same "stop, don't keep hammering it" situation.
+const CONNECTIVITY_ERROR_CODES = ["P1001", "P1002", "P1017"];
+
+const folders = fs
+  .readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort(); // migration folder names are timestamp-prefixed, so this is chronological
+
+const toBaseline = folders.filter((name) => name !== SKIP);
+
+if (!folders.includes(SKIP)) {
+  console.warn(
+    `Warning: expected to find ${SKIP} in prisma/migrations but didn't — ` +
+    `baselining ALL found migrations instead. Double-check nothing new got ` +
+    `swept up before continuing.`
+  );
+}
+
+console.log(`Found ${folders.length} migration folder(s). Baselining ${toBaseline.length}, skipping "${SKIP}":\n`);
+
+let skipped = 0;
+let applied = 0;
+
+for (const name of toBaseline) {
+  console.log(`--> prisma migrate resolve --applied ${name}`);
+  try {
+    const output = execSync(`npx prisma migrate resolve --applied ${name}`, {
+      // 'pipe' (not 'inherit') so we can inspect the output before deciding
+      // whether this was a real failure or just "already applied" — but we
+      // still print it below either way, nothing is hidden.
+      stdio: "pipe",
+      encoding: "utf8",
+    });
+    process.stdout.write(output);
+    applied++;
+  } catch (err) {
+    const combined = `${err.stdout || ""}\n${err.stderr || ""}`;
+    process.stdout.write(combined);
+
+    const isConnectivityError = CONNECTIVITY_ERROR_CODES.some((code) => combined.includes(code));
+
+    if (isConnectivityError) {
+      console.error(
+        [
+          "",
+          `Stopped on "${name}" -- this is a genuine connectivity failure ` +
+          "(the error above includes a P1XXX connection error code), so " +
+          "every migration after this one would fail the same way.",
+          "",
+          `Migrations already marked applied before this point (${applied} ` +
+          "this run) are done and don't need to be repeated. Fix the " +
+          "connection, then just re-run this script — it will skip those " +
+          "and pick up from here automatically.",
+        ].join("\n")
+      );
+      process.exit(1);
+    }
+
+    // Not a connectivity error -- almost certainly "already applied" from a
+    // previous partial run. Log it plainly and move on rather than treating
+    // it as fatal.
+    console.log(`(not a connectivity error -- treating "${name}" as already handled, continuing)\n`);
+    skipped++;
+  }
+}
+
+console.log(`\nDone. Applied ${applied}, skipped ${skipped} (already handled). Now run: npx prisma migrate status`);
+</file>
+
 <file path="server/app.ts">
 import express from 'express';
 import cors from 'cors';
@@ -3120,10 +3167,18 @@ dotenv.config();
 // PrismaNeonHttp adapter, which wanted Neon's direct, non-pooled endpoint.
 // That adapter is gone (see server/lib/prisma.ts for why — it had no
 // timeout control and was the root cause of a site-wide hang incident).
-// The standard pooled connection now in use wants the OPPOSITE transform
-// (it wants "-pooler" present, plus connect/pool timeouts), and
-// server/lib/prisma.ts is the single place that builds that connection
-// string — don't duplicate or fight that logic here.
+// The standard pooled connection now in use (via @prisma/adapter-pg) wants
+// the OPPOSITE transform (it wants "-pooler" present, plus connect/idle
+// timeouts as Pool options), and server/lib/prisma.ts is the single place
+// that builds that connection string — don't duplicate or fight that logic
+// here.
+//
+// Separately, prisma.config.ts (CLI-only — migrate/generate, never loaded
+// by this running app) reads its own DIRECT_URL (or falls back to
+// DATABASE_URL) directly from process.env. Set DIRECT_URL to Neon's
+// non-pooled connection string if you see `prisma migrate deploy`/`dev`
+// fail with prepared-statement or advisory-lock errors under the pooled
+// endpoint.
 
 // SECURITY + AVAILABILITY NOTE on CRON_SECRET / ENCRYPTION_KEY:
 // These previously had a hardcoded fallback value baked into source (a real
@@ -3162,11 +3217,22 @@ const envSchema = z.object({
   MAX_FILE_SIZE_MB: z.string().default('10'),
 
   // No hardcoded default, and NOT hard-required here — see note above.
-  // Nothing in this codebase currently reads it; kept for forward
-  // compatibility with per-tenant credential encryption (see Phase 3 notes).
+  // Used by server/lib/encryption.ts (validated lazily there, at the point
+  // of actual use) to encrypt/decrypt each tenant's stored Mailgun API key
+  // — see domain.service.ts's "bring your own Mailgun key" flow. A 64-char
+  // hex string (32 bytes): generate with `openssl rand -hex 32`.
   ENCRYPTION_KEY: z.string().optional(),
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('noreply@outreach.local'),
+
+  // This deployment's own public URL, with no trailing slash — used to
+  // build the Mailgun inbound-Route webhook target
+  // (`${APP_URL}/api/webhooks/mailgun/inbound`) when domain.service.ts
+  // provisions a domain's Route automatically. Optional: falls back to
+  // the default Vercel deployment URL at the call site (see
+  // domain.service.ts::appUrl()) with a warning log, so this only needs
+  // to be set once you have a stable production/custom domain.
+  APP_URL: z.string().url().optional(),
 
   // Clerk Authentication Keys
   CLERK_SECRET_KEY: z.string().optional(),
@@ -5144,44 +5210,54 @@ export function tryDecrypt(payload: string | null | undefined): string | null {
 
 <file path="server/lib/prisma.ts">
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { logger } from '../config/logger';
 
 /**
- * DEFINITIVE FIX for the site-wide "every page hangs for exactly 300s, zero
- * errors" incident.
+ * DEFINITIVE FIX, PART 2 — the incident this file's previous version
+ * describes (PrismaNeonHttp's unbounded fetch causing the site-wide 300s
+ * hang) was correctly diagnosed and correctly fixed for Prisma 6.x, using
+ * `new PrismaClient({ datasourceUrl: ... })` with a pooled connection
+ * string plus connect/pool timeout query params.
  *
- * Root cause: this file previously used `PrismaNeonHttp` (from
- * `@prisma/adapter-neon`), which issues a plain `fetch()` per query against
- * Neon's HTTP data-API endpoint with NO configurable timeout anywhere in
- * the chain. If that endpoint is slow to respond, unreachable, or the
- * underlying Neon compute is failing to wake from suspend, the fetch simply
- * hangs — Node has no default fetch timeout, so nothing ever errors, and
- * the request just sits until Vercel's own hard 300s ceiling kills the
- * function. That explains why it was uniform across every route (all of
- * them go through this same client) and silent (no exception is ever
- * thrown — there's simply nothing to catch).
+ * That fix silently broke when this project upgraded to Prisma 7
+ * (`@prisma/client` / `prisma` are both pinned to ^7.9.1 in package.json,
+ * and `@prisma/adapter-pg` + `pg` are already installed there too — the
+ * pieces for the real fix were already present, just not wired up here).
+ * Prisma 7.0.0 REMOVED the `datasourceUrl` and `datasources` constructor
+ * options entirely — `new PrismaClient({ datasourceUrl })` now throws
+ * `PrismaClientConstructorValidationError: Using engine type "client"
+ * requires either "adapter" or "accelerateUrl"` the instant this module
+ * loads. Every controller/service in this codebase imports the default
+ * export of this exact file, so that error takes down the entire API.
  *
- * `PrismaNeonHttp` also exists specifically for Edge runtimes (Cloudflare
- * Workers, Vercel Edge Functions) that have no raw TCP socket access at
- * all. This project's API runs as a standard Node.js serverless function
- * (`api/index.ts` via `serverless-http` + Express) — real TCP sockets are
- * available here, so the HTTP-only adapter was never actually necessary;
- * it was solving a problem this deployment doesn't have, while introducing
- * the fragility above.
+ * The fix: pass a `@prisma/adapter-pg` driver adapter instead. This is the
+ * officially-supported v7 replacement for a direct TCP Postgres
+ * connection and keeps every property of the original fix — real,
+ * well-defined TCP-level connect/idle timeouts (now set as Pool options,
+ * since node-postgres does not read Prisma's old
+ * connect_timeout/pool_timeout/pgbouncer query-string params) — while
+ * satisfying v7's adapter requirement.
  *
- * The fix: a standard pooled Postgres connection (Neon's PgBouncer-backed
- * `-pooler` endpoint, the setup Neon recommends for serverless) with
- * explicit `connect_timeout`/`pool_timeout` parameters. This uses Prisma's
- * own connection engine, which enforces real, well-defined TCP-level
- * timeouts — an unreachable database now fails in ~10 seconds with a clear
- * "can't reach database" error instead of hanging silently for 5 minutes.
- *
- * Requires `prisma/schema.prisma`'s datasource block to declare
- * `url = env("DATABASE_URL")` (the previous adapter-only setup omitted
- * this, since PrismaNeonHttp supplied the connection itself at runtime).
+ * Requires `prisma/schema.prisma`'s datasource block to declare ONLY
+ * `provider = "postgresql"` — Prisma 7 rejects a `url` property in the
+ * schema file outright (this is the P1012 "datasource property `url` is
+ * no longer supported" error); the connection string lives here and in
+ * `prisma.config.ts` (CLI-only) instead.
  */
 function buildConnectionString(): string {
-  const raw = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL || '';
+  // This project's Neon-via-Vercel integration provides all four of these;
+  // DATABASE_URL_POOLED and DATABASE_URL are both expected to already be
+  // the pooled string, POSTGRES_URL is Vercel's own alias for the same —
+  // checked in this order for robustness in case any one of them is ever
+  // repointed. POSTGRES_URL_NON_POOLING (the direct string) is deliberately
+  // NOT a candidate here — that one belongs to prisma.config.ts's CLI-only
+  // connection, never to this runtime client.
+  const raw =
+    process.env.DATABASE_URL_POOLED ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    '';
   if (!raw) {
     throw new Error('DATABASE_URL is not set in environment variables');
   }
@@ -5196,30 +5272,49 @@ function buildConnectionString(): string {
 
   // Use Neon's POOLED (PgBouncer) endpoint — the standard, serverless-
   // friendly setup for a deployment shape with many short-lived connections
-  // from separate function invocations. (The old HTTP-adapter code stripped
-  // "-pooler" deliberately, because that adapter bypassed traditional
-  // pooling entirely; a standard TCP connection wants the opposite.)
+  // from separate function invocations.
   if (/\.neon\.tech$/i.test(url.hostname) && !url.hostname.includes('-pooler.')) {
     url.hostname = url.hostname.replace(/(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)$/i, '-pooler$1');
   }
 
-  // Force fast, well-defined failures instead of indefinite hangs. These
-  // are the actual fix for the incident: a DB that's unreachable now errors
-  // in ~10s instead of hanging until Vercel's 300s hard limit.
-  if (!url.searchParams.has('connect_timeout')) url.searchParams.set('connect_timeout', '10');
-  if (!url.searchParams.has('pool_timeout')) url.searchParams.set('pool_timeout', '10');
-  // Required when connecting through PgBouncer's pooled endpoint.
-  if (!url.searchParams.has('pgbouncer')) url.searchParams.set('pgbouncer', 'true');
+  // `connect_timeout` / `pool_timeout` / `pgbouncer` were Prisma's own
+  // Rust-query-engine URL params. The `pg` driver adapter used below talks
+  // to Postgres directly via node-postgres, which does not read these from
+  // the URL at all — silently ignoring them would give a false sense that
+  // a timeout is configured when it isn't. Real timeouts are set as
+  // explicit Pool options below instead. Neon's pooler (PgBouncer 1.22+)
+  // supports protocol-level prepared statements natively, so no
+  // `pgbouncer=true` compatibility flag is needed with node-postgres either.
+  url.searchParams.delete('connect_timeout');
+  url.searchParams.delete('pool_timeout');
+  url.searchParams.delete('pgbouncer');
 
   return url.toString();
 }
 
 const prismaClientSingleton = () => {
   const connectionString = buildConnectionString();
-  logger.info('[DEBUG PRISMA] Initializing standard pooled Postgres connection (10s connect/pool timeout)...');
+  logger.info(
+    '[DEBUG PRISMA] Initializing pooled Postgres connection via @prisma/adapter-pg ' +
+    '(10s connect timeout, 30s idle timeout)...'
+  );
+
+  const adapter = new PrismaPg({
+    connectionString,
+    // The actual fix for the 300s-hang incident, carried over from the
+    // previous version of this file: an unreachable/slow database now
+    // fails in ~10s with a clear connection error instead of hanging
+    // until Vercel's hard 300s ceiling kills the function.
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 30_000,
+    // Cap pool size PER serverless instance — Neon's pooler enforces its
+    // own upstream connection ceiling across all concurrent invocations;
+    // an unbounded per-instance pool here would exhaust it under load.
+    max: 10,
+  });
 
   return new PrismaClient({
-    datasourceUrl: connectionString,
+    adapter,
     log: process.env.NODE_ENV === 'production' ? ['error', 'warn'] : ['error', 'warn', 'query'],
   });
 };
@@ -6087,6 +6182,7 @@ export default router;
 import { Router } from 'express';
 import multer from 'multer';
 import { Webhook } from 'svix';
+import { waitUntil } from '@vercel/functions';
 import prisma from '../lib/prisma';
 import { webhooksService } from '../services/webhooks.service';
 import { logger } from '../config/logger';
@@ -6108,9 +6204,18 @@ router.post('/mailgun', async (req, res) => {
 
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    webhooksService.processDeliverabilityEvent(req.body).catch(err => {
-      logger.error({ err }, 'Deliverability event background processing error');
-    });
+    // Unawaited on purpose (Mailgun expects a fast 200) — but on Vercel, an
+    // unawaited promise that outlives the response is NOT guaranteed to
+    // keep running once serverless-http resolves; the platform can freeze
+    // the invocation right after the response flushes. waitUntil() is the
+    // documented fix: it keeps this specific invocation alive until the
+    // promise settles (bounded by the function's own maxDuration), instead
+    // of this work silently, intermittently getting cut off mid-flight.
+    waitUntil(
+      webhooksService.processDeliverabilityEvent(req.body).catch(err => {
+        logger.error({ err }, 'Deliverability event background processing error');
+      })
+    );
 
     res.status(200).send('OK');
   } catch (error) {
@@ -6128,9 +6233,16 @@ router.post('/mailgun/inbound', upload.none(), async (req, res) => {
     const isValid = webhooksService.verifyMailgunSignature(timestamp, token, signature);
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    webhooksService.processInboundEmail(req.body).catch(err => {
-      logger.error({ err }, 'Inbound reply processing error');
-    });
+    // Same reasoning as the deliverability handler above — this is the
+    // path that confirms the receiving-test code AND runs the (AI-backed,
+    // potentially several-seconds) auto-reply engine. Losing this
+    // intermittently to an early freeze is exactly the kind of bug that's
+    // maddening to reproduce: it would "usually" work.
+    waitUntil(
+      webhooksService.processInboundEmail(req.body).catch(err => {
+        logger.error({ err }, 'Inbound reply processing error');
+      })
+    );
 
     res.status(200).send('OK');
   } catch (error) {
@@ -6277,6 +6389,12 @@ class OpenAIProvider implements AIProvider {
         temperature: 0.7,
         max_tokens: 1200,
       }),
+      // No timeout here previously meant a stalled provider hung forever —
+      // attemptComplete()'s try/catch failover to the next provider only
+      // triggers on a thrown error, never on a pending promise that just
+      // never resolves. This is the same unbounded-fetch pattern as the
+      // Prisma/Neon incident, in a different subsystem.
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) {
@@ -6305,6 +6423,7 @@ class GeminiProvider implements AIProvider {
           contents: [{ parts: [{ text: fullPrompt }] }],
           generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
         }),
+        signal: AbortSignal.timeout(20_000),
       }
     );
 
@@ -6340,6 +6459,7 @@ class DeepSeekProvider implements AIProvider {
         temperature: 0.7,
         max_tokens: 1200,
       }),
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) {
@@ -6376,6 +6496,7 @@ class OpenRouterProvider implements AIProvider {
         temperature: 0.7,
         max_tokens: 3000,
       }),
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) {
@@ -6402,7 +6523,7 @@ class OllamaProvider implements AIProvider {
 
   async isAvailable() {
     try {
-      const resp = await fetch(`${this.baseUrl}/api/tags`);
+      const resp = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(3_000) });
       return resp.ok;
     } catch {
       return false;
@@ -6420,6 +6541,7 @@ class OllamaProvider implements AIProvider {
         stream: false,
         options: { temperature: 0.7 },
       }),
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (!response.ok) throw new Error('Ollama generation failed');
@@ -6876,8 +6998,8 @@ export class CampaignService {
         followUpSteps: {
           orderBy: { stepNumber: 'asc' },
         },
-        domainLinks: {
-          include: { domain: true },
+        senderLinks: {
+          include: { sender: { include: { domain: true } } },
         },
       },
     });
@@ -6892,39 +7014,6 @@ export class CampaignService {
       ...campaign,
       queuedCount,
     };
-  }
-
-  async getCampaignDomains(userId: string, campaignId: string) {
-    const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, userId },
-      include: {
-        domainLinks: {
-          include: { domain: true },
-        },
-      },
-    });
-    if (!campaign) throw new Error('Campaign not found');
-    return campaign.domainLinks.map(link => link.domain);
-  }
-
-  async addDomainToCampaign(userId: string, campaignId: string, domainId: string) {
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
-    if (!campaign) throw new Error('Campaign not found');
-    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
-    if (!domain) throw new Error('Domain not found');
-
-    return prisma.campaignDomain.create({
-      data: { campaignId, domainId },
-    });
-  }
-
-  async removeDomainFromCampaign(userId: string, campaignId: string, domainId: string) {
-    const link = await prisma.campaignDomain.findFirst({
-      where: { campaignId, domainId },
-      include: { campaign: true },
-    });
-    if (!link || link.campaign.userId !== userId) throw new Error('Link not found or unauthorized');
-    await prisma.campaignDomain.delete({ where: { id: link.id } });
   }
 }
 
@@ -6978,12 +7067,116 @@ export class DomainService {
         subject: 'Midas: your domain is connected',
         text: `This confirms ${domainName} can send email through your Mailgun account via Midas.\n\nNext step: confirm receiving — check the Domains page for a one-time code and test address.`,
       }).toString(),
+      // Same lesson as the Prisma/Neon incident: no external fetch runs
+      // unbounded. requestTimeoutGuard (15s, app.ts) is a backstop, not a
+      // substitute — this fails fast and specifically for a slow Mailgun
+      // response instead of tripping the generic whole-request guard.
+      signal: AbortSignal.timeout(10_000),
     });
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.message || `Mailgun rejected the test send (HTTP ${res.status})`);
     }
     return data;
+  }
+
+  /** Resolves this deployment's own public URL for building the Mailgun inbound-Route webhook target. */
+  private appUrl(): string {
+    const configured = process.env.APP_URL;
+    if (configured) return configured.replace(/\/$/, '');
+    logger.warn(
+      'APP_URL is not set — falling back to the default Vercel deployment URL for the Mailgun ' +
+      'inbound route. Set APP_URL once you have a stable production/custom domain, or inbound ' +
+      'routes created before that point will keep forwarding to the fallback URL.'
+    );
+    return 'https://midas-aem.vercel.app';
+  }
+
+  /**
+   * Mailgun Routes are ACCOUNT-global, not per-domain — a bare catchall()
+   * filter would intercept inbound mail for every domain on the same
+   * Mailgun account (including any other domain connected with the same
+   * key), not just this one. Scoping the expression to this exact domain
+   * keeps route matching isolated to the domain actually being connected.
+   */
+  private routeExpressionFor(domainName: string): string {
+    return `match_recipient('.*@${domainName.replace(/\./g, '\\.')}')`;
+  }
+
+  private async listRoutes(mailgunApiKey: string, region: string | null): Promise<{ items: any[] }> {
+    const res = await fetch(`${this.baseUrlFor(region)}/routes?limit=100`, {
+      headers: { Authorization: this.authHeaderFor(mailgunApiKey) },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`Failed to list Mailgun routes (HTTP ${res.status})`);
+    return res.json();
+  }
+
+  /**
+   * Ensures an inbound Route exists for this domain, forwarding to Midas's
+   * webhook — without this, Mailgun has nowhere to send inbound mail
+   * regardless of how correctly DNS/MX is set up, and the receiving-test
+   * code sent to connectivity@domain would never arrive. Idempotent: checks
+   * the domain's stored routeId first (verifying it still exists remotely,
+   * in case it was deleted manually in Mailgun's UI), then falls back to
+   * matching by expression, before creating a new one — so retrying
+   * connectWithKey/runSendTest never stacks duplicate routes.
+   *
+   * Best-effort by design: called from runSendTest wrapped in a try/catch
+   * that does NOT fail the send test if this throws (e.g. a Mailgun plan
+   * that restricts Routes API access) — sending and receiving are tracked
+   * independently, and the Domains page keeps its manual-setup fallback
+   * guidance for exactly this case.
+   */
+  private async ensureInboundRoute(
+    domainId: string,
+    domainName: string,
+    mailgunApiKey: string,
+    region: string | null
+  ): Promise<string> {
+    const webhookUrl = `${this.appUrl()}/api/webhooks/mailgun/inbound`;
+    const expression = this.routeExpressionFor(domainName);
+
+    const current = await prisma.domain.findUnique({ where: { id: domainId }, select: { routeId: true } });
+    if (current?.routeId) {
+      try {
+        const check = await fetch(`${this.baseUrlFor(region)}/routes/${current.routeId}`, {
+          headers: { Authorization: this.authHeaderFor(mailgunApiKey) },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (check.ok) return current.routeId;
+      } catch {
+        // Remote check failed/timed out — fall through and re-resolve below
+        // rather than trusting a stale id we can't currently verify.
+      }
+    }
+
+    const list = await this.listRoutes(mailgunApiKey, region);
+    const existing = (list.items || []).find((r: any) => r.expression === expression);
+    if (existing) return existing.id;
+
+    const form = new URLSearchParams();
+    form.set('priority', '0');
+    form.set('description', `Midas inbound — ${domainName}`);
+    form.set('expression', expression);
+    form.append('action', `forward("${webhookUrl}")`);
+    form.append('action', 'stop()');
+
+    const res = await fetch(`${this.baseUrlFor(region)}/routes`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.authHeaderFor(mailgunApiKey),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.message || `Failed to create Mailgun inbound route (HTTP ${res.status})`);
+    }
+    return data.route.id;
   }
 
   /**
@@ -7031,6 +7224,20 @@ export class DomainService {
     const receivingTestCode = generateCode();
     const receivingTestAddress = `connectivity@${domain.domainName}`;
 
+    // Best-effort: automatically wire up the inbound route so the
+    // receiving test above actually has somewhere to land — see
+    // ensureInboundRoute()'s docstring for why a failure here does not
+    // fail the send test itself.
+    let routeId = domain.routeId ?? undefined;
+    try {
+      routeId = await this.ensureInboundRoute(domain.id, domain.domainName, key, domain.mailgunRegion);
+    } catch (err: any) {
+      logger.error(
+        { err: err.message, domainId: domain.id },
+        'Automatic Mailgun inbound route setup failed — receiving test will need a manually-configured Route'
+      );
+    }
+
     return prisma.domain.update({
       where: { id: domainId },
       data: {
@@ -7038,6 +7245,7 @@ export class DomainService {
         sendTestPassedAt: new Date(),
         receivingTestCode,
         receivingTestAddress,
+        routeId,
       },
     });
   }
@@ -7293,7 +7501,14 @@ export class EmailService {
           'Authorization': authHeader,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: formData.toString()
+        body: formData.toString(),
+        // This is the send path every queued email and every auto-reply
+        // goes through. Without a bound here, one stalled Mailgun call
+        // doesn't just fail slowly — inside emailQueue.service.ts's batch
+        // loop it stalls the REST of that invocation's up-to-15-email
+        // batch too (eventually caught by requestTimeoutGuard/maxDuration,
+        // but only after burning the whole window on a single send).
+        signal: AbortSignal.timeout(10_000),
       });
 
       const data = await res.json();
@@ -7762,7 +7977,7 @@ export class FollowUpService {
           subject,
           body,
           inReplyTo: initialEmail.messageId,
-          preferredDomainId: initialEmail.domainId,
+          domainId: initialEmail.domainId,
           status: 'PENDING',
         },
       });
@@ -13096,8 +13311,10 @@ export const Domains: React.FC = () => {
                       </button>
                     </div>
                     <p className="mt-2 text-xs text-blue-700">
-                      Nothing arriving? Make sure Mailgun has an inbound Route for this domain forwarding to
-                      your Midas webhook (Mailgun dashboard → Receiving → Routes).
+                      Midas sets up the inbound Route for this domain automatically once the send test
+                      passes. Nothing arriving after a few minutes? Some Mailgun plans restrict Routes API
+                      access — check Mailgun dashboard → Receiving → Routes and add one manually if it's
+                      missing, forwarding to this domain's Midas webhook.
                     </p>
                   </div>
                 )}
@@ -14435,9 +14652,9 @@ module.exports = {
     { "path": "/api/cron/queue", "schedule": "0 9 * * *" },
     { "path": "/api/cron/leads", "schedule": "0 10 * * *" },
     { "path": "/api/cron/followups", "schedule": "0 11 * * *" }
-  ]
+  ],
   "functions": {
-    "api/**/*.ts": { "maxDuration": 15 }
+    "api/**/*.ts": { "maxDuration": 30 }
   }
 }
 </file>

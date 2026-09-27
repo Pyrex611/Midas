@@ -160,8 +160,8 @@ export class CampaignService {
         followUpSteps: {
           orderBy: { stepNumber: 'asc' },
         },
-        domainLinks: {
-          include: { domain: true },
+        senderLinks: {
+          include: { sender: { include: { domain: true } } },
         },
       },
     });
@@ -176,39 +176,6 @@ export class CampaignService {
       ...campaign,
       queuedCount,
     };
-  }
-
-  async getCampaignDomains(userId: string, campaignId: string) {
-    const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, userId },
-      include: {
-        domainLinks: {
-          include: { domain: true },
-        },
-      },
-    });
-    if (!campaign) throw new Error('Campaign not found');
-    return campaign.domainLinks.map(link => link.domain);
-  }
-
-  async addDomainToCampaign(userId: string, campaignId: string, domainId: string) {
-    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, userId } });
-    if (!campaign) throw new Error('Campaign not found');
-    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
-    if (!domain) throw new Error('Domain not found');
-
-    return prisma.campaignDomain.create({
-      data: { campaignId, domainId },
-    });
-  }
-
-  async removeDomainFromCampaign(userId: string, campaignId: string, domainId: string) {
-    const link = await prisma.campaignDomain.findFirst({
-      where: { campaignId, domainId },
-      include: { campaign: true },
-    });
-    if (!link || link.campaign.userId !== userId) throw new Error('Link not found or unauthorized');
-    await prisma.campaignDomain.delete({ where: { id: link.id } });
   }
 }
 

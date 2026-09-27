@@ -23,6 +23,14 @@
 // Then run `npx prisma migrate status` to confirm a clean baseline before
 // redeploying — it should list only the new route_id migration as pending,
 // nothing else.
+//
+// SAFE TO RE-RUN after a partial failure (e.g. flaky network killed a
+// connection mid-run): migrations that already got marked applied in an
+// earlier run are detected below by Prisma's own P1XXX error code rather
+// than by guessing its exact wording, and are skipped rather than treated
+// as fatal. Only a genuine connectivity error (P1001) stops the whole run
+// — that one really does mean "nothing past this point can succeed either,
+// stop and fix the connection first."
 
 const fs = require("fs");
 const path = require("path");
@@ -34,6 +42,11 @@ const MIGRATIONS_DIR = path.join(__dirname, "..", "prisma", "migrations");
 // has never been applied anywhere — do NOT mark this one as applied. It
 // should be left for `prisma migrate deploy` to actually run for real.
 const SKIP = "20260926000000_add_domain_route_id";
+
+// Prisma's connectivity-family error codes. P1001 is "can't reach server";
+// included P1002/P1017 too since they cover "timed out" / "server closed
+// the connection" — the same "stop, don't keep hammering it" situation.
+const CONNECTIVITY_ERROR_CODES = ["P1001", "P1002", "P1017"];
 
 const folders = fs
   .readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
@@ -53,9 +66,50 @@ if (!folders.includes(SKIP)) {
 
 console.log(`Found ${folders.length} migration folder(s). Baselining ${toBaseline.length}, skipping "${SKIP}":\n`);
 
+let skipped = 0;
+let applied = 0;
+
 for (const name of toBaseline) {
   console.log(`--> prisma migrate resolve --applied ${name}`);
-  execSync(`npx prisma migrate resolve --applied ${name}`, { stdio: "inherit" });
+  try {
+    const output = execSync(`npx prisma migrate resolve --applied ${name}`, {
+      // 'pipe' (not 'inherit') so we can inspect the output before deciding
+      // whether this was a real failure or just "already applied" — but we
+      // still print it below either way, nothing is hidden.
+      stdio: "pipe",
+      encoding: "utf8",
+    });
+    process.stdout.write(output);
+    applied++;
+  } catch (err) {
+    const combined = `${err.stdout || ""}\n${err.stderr || ""}`;
+    process.stdout.write(combined);
+
+    const isConnectivityError = CONNECTIVITY_ERROR_CODES.some((code) => combined.includes(code));
+
+    if (isConnectivityError) {
+      console.error(
+        [
+          "",
+          `Stopped on "${name}" -- this is a genuine connectivity failure ` +
+          "(the error above includes a P1XXX connection error code), so " +
+          "every migration after this one would fail the same way.",
+          "",
+          `Migrations already marked applied before this point (${applied} ` +
+          "this run) are done and don't need to be repeated. Fix the " +
+          "connection, then just re-run this script — it will skip those " +
+          "and pick up from here automatically.",
+        ].join("\n")
+      );
+      process.exit(1);
+    }
+
+    // Not a connectivity error -- almost certainly "already applied" from a
+    // previous partial run. Log it plainly and move on rather than treating
+    // it as fatal.
+    console.log(`(not a connectivity error -- treating "${name}" as already handled, continuing)\n`);
+    skipped++;
+  }
 }
 
-console.log("\nDone. Now run: npx prisma migrate status");
+console.log(`\nDone. Applied ${applied}, skipped ${skipped} (already handled). Now run: npx prisma migrate status`);

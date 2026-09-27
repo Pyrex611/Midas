@@ -149,7 +149,7 @@ export class FollowUpService {
           subject,
           body,
           inReplyTo: initialEmail.messageId,
-          preferredDomainId: initialEmail.domainId,
+          domainId: initialEmail.domainId,
           status: 'PENDING',
         },
       });
