@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Request, Response, NextFunction } from 'express';
 import { ClerkExpressRequireAuth, clerkClient } from '@clerk/clerk-sdk-node';
 import prisma from '../lib/prisma';
@@ -17,35 +18,39 @@ type CachedUser = { id: string; email: string; isAdmin: boolean };
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const userCache = new Map<string, { value: CachedUser; expiresAt: number }>();
 
-// Robust Key Resolution: Accepts standard Clerk keys or Vite-prefixed keys
 const cleanKey = (key?: string) => (key ? key.trim().replace(/^["']|["']$/g, '') : '');
 
-const publishableKey = cleanKey(
+// 1. Resolve publishable key from any configured environment variable name
+const resolvedPublishableKey = cleanKey(
   process.env.CLERK_PUBLISHABLE_KEY ||
   process.env.VITE_CLERK_PUBLISHABLE_KEY ||
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 );
 
-const secretKey = cleanKey(process.env.CLERK_SECRET_KEY);
-
-// Synchronize environment variable so internal SDK methods locate it
-if (publishableKey && !process.env.CLERK_PUBLISHABLE_KEY) {
-  process.env.CLERK_PUBLISHABLE_KEY = publishableKey;
+// 2. Synchronize to process.env.CLERK_PUBLISHABLE_KEY where @clerk/clerk-sdk-node expects it.
+// ClerkMiddlewareOptions does NOT accept publishableKey in its options object.
+if (resolvedPublishableKey) {
+  process.env.CLERK_PUBLISHABLE_KEY = resolvedPublishableKey;
 }
 
-// Pass resolved keys explicitly to prevent "Publishable key is missing" error
-const clerkAuthHandler = ClerkExpressRequireAuth({
-  publishableKey,
-  secretKey,
-});
+// 3. Resolve and sanitize secret key
+const resolvedSecretKey = cleanKey(process.env.CLERK_SECRET_KEY);
+if (resolvedSecretKey) {
+  process.env.CLERK_SECRET_KEY = resolvedSecretKey;
+}
+
+// 4. Instantiate ClerkExpressRequireAuth with valid ClerkMiddlewareOptions (only accepts secretKey, jwtKey, etc.)
+const clerkAuthHandler = ClerkExpressRequireAuth(
+  resolvedSecretKey ? { secretKey: resolvedSecretKey } : {}
+);
 
 export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  if (!secretKey) {
+  if (!process.env.CLERK_SECRET_KEY && !resolvedSecretKey) {
     logger.error('[AUTH] CLERK_SECRET_KEY is missing from environment variables');
     return res.status(500).json({ error: 'Authentication service not configured (missing secret key)' });
   }
 
-  if (!publishableKey) {
+  if (!process.env.CLERK_PUBLISHABLE_KEY && !resolvedPublishableKey) {
     logger.error('[AUTH] CLERK_PUBLISHABLE_KEY / VITE_CLERK_PUBLISHABLE_KEY is missing from environment variables');
     return res.status(500).json({ error: 'Authentication service not configured (missing publishable key)' });
   }

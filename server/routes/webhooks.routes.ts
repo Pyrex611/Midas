@@ -1,7 +1,6 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { Webhook } from 'svix';
-import { waitUntil } from '@vercel/functions';
 import prisma from '../lib/prisma';
 import { webhooksService } from '../services/webhooks.service';
 import { logger } from '../config/logger';
@@ -9,8 +8,32 @@ import { logger } from '../config/logger';
 const router = Router();
 const upload = multer();
 
+/**
+ * Universal safe wrapper for Vercel's waitUntil.
+ * Dynamically resolves @vercel/functions at runtime if present.
+ * If running locally or without @vercel/functions installed, it executes
+ * the promise in the background gracefully without breaking TypeScript compilation.
+ */
+function safeWaitUntil(promise: Promise<any>): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vercel = require('@vercel/functions');
+    if (typeof vercel.waitUntil === 'function') {
+      vercel.waitUntil(promise);
+      return;
+    }
+  } catch {
+    // Not running on Vercel runtime or package not installed
+  }
+
+  // Fallback: run unawaited in background
+  promise.catch((err) => {
+    logger.error({ err: err?.message || err }, '[BACKGROUND TASK ERROR]');
+  });
+}
+
 // 1. Mailgun Deliverability Events Webhook (Delivered, Opened, Clicked, Bounced, Complained)
-router.post('/mailgun', async (req, res) => {
+router.post('/mailgun', async (req: Request, res: Response) => {
   try {
     const { signature } = req.body;
     if (!signature) return res.status(401).send('Missing signature');
@@ -23,15 +46,9 @@ router.post('/mailgun', async (req, res) => {
 
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    // Unawaited on purpose (Mailgun expects a fast 200) — but on Vercel, an
-    // unawaited promise that outlives the response is NOT guaranteed to
-    // keep running once serverless-http resolves; the platform can freeze
-    // the invocation right after the response flushes. waitUntil() is the
-    // documented fix: it keeps this specific invocation alive until the
-    // promise settles (bounded by the function's own maxDuration), instead
-    // of this work silently, intermittently getting cut off mid-flight.
-    waitUntil(
-      webhooksService.processDeliverabilityEvent(req.body).catch(err => {
+    // Mailgun requires an immediate 200 OK. We process deliverability in the background.
+    safeWaitUntil(
+      webhooksService.processDeliverabilityEvent(req.body).catch((err) => {
         logger.error({ err }, 'Deliverability event background processing error');
       })
     );
@@ -44,7 +61,7 @@ router.post('/mailgun', async (req, res) => {
 });
 
 // 2. Mailgun Inbound Parse Webhook (Inbound Prospect Replies)
-router.post('/mailgun/inbound', upload.none(), async (req, res) => {
+router.post('/mailgun/inbound', upload.none(), async (req: Request, res: Response) => {
   try {
     const { timestamp, token, signature } = req.body;
     if (!signature) return res.status(401).send('Missing signature');
@@ -52,13 +69,9 @@ router.post('/mailgun/inbound', upload.none(), async (req, res) => {
     const isValid = webhooksService.verifyMailgunSignature(timestamp, token, signature);
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    // Same reasoning as the deliverability handler above — this is the
-    // path that confirms the receiving-test code AND runs the (AI-backed,
-    // potentially several-seconds) auto-reply engine. Losing this
-    // intermittently to an early freeze is exactly the kind of bug that's
-    // maddening to reproduce: it would "usually" work.
-    waitUntil(
-      webhooksService.processInboundEmail(req.body).catch(err => {
+    // Asynchronously processes AI sentiment analysis and auto-replies
+    safeWaitUntil(
+      webhooksService.processInboundEmail(req.body).catch((err) => {
         logger.error({ err }, 'Inbound reply processing error');
       })
     );
@@ -71,7 +84,7 @@ router.post('/mailgun/inbound', upload.none(), async (req, res) => {
 });
 
 // 3. Clerk User Synchronization Webhook
-router.post('/clerk', async (req, res) => {
+router.post('/clerk', async (req: Request, res: Response) => {
   const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
   if (!webhookSecret) {
     logger.error('CLERK_WEBHOOK_SECRET is not configured');

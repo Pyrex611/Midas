@@ -13,3 +13,5 @@ backend/node_modules/
 .env*
 .env.local
 .env.fresh
+
+repomix-output.xml
