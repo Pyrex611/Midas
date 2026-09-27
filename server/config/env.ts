@@ -4,40 +4,6 @@ import crypto from 'crypto';
 
 dotenv.config();
 
-// NOTE: DATABASE_URL is intentionally NOT rewritten here. It previously was
-// (stripping "-pooler" and pgbouncer/connection params) to suit the old
-// PrismaNeonHttp adapter, which wanted Neon's direct, non-pooled endpoint.
-// That adapter is gone (see server/lib/prisma.ts for why — it had no
-// timeout control and was the root cause of a site-wide hang incident).
-// The standard pooled connection now in use (via @prisma/adapter-pg) wants
-// the OPPOSITE transform (it wants "-pooler" present, plus connect/idle
-// timeouts as Pool options), and server/lib/prisma.ts is the single place
-// that builds that connection string — don't duplicate or fight that logic
-// here.
-//
-// Separately, prisma.config.ts (CLI-only — migrate/generate, never loaded
-// by this running app) reads its own DIRECT_URL (or falls back to
-// DATABASE_URL) directly from process.env. Set DIRECT_URL to Neon's
-// non-pooled connection string if you see `prisma migrate deploy`/`dev`
-// fail with prepared-statement or advisory-lock errors under the pooled
-// endpoint.
-
-// SECURITY + AVAILABILITY NOTE on CRON_SECRET / ENCRYPTION_KEY:
-// These previously had a hardcoded fallback value baked into source (a real
-// vulnerability — a static secret anyone reading the repo could use). The
-// fix for that must NOT be "require it globally or crash the whole app" —
-// that trades one outage-class bug for another: a single missing/short env
-// var would then take down every unrelated API route, not just the feature
-// that actually needs it (this happened in practice — see cronAuth
-// middleware's comment for the concrete incident). So: no hardcoded
-// default, ever, but no global fatal requirement either. Each var is
-// validated ONLY at its actual point of use:
-//   - CRON_SECRET: checked in server/middleware/cronAuth.middleware.ts —
-//     if unset, cron endpoints alone return 500, nothing else is affected.
-//   - ENCRYPTION_KEY: currently unused anywhere in the codebase; validate
-//     it at whichever call site first actually starts using it, not here.
-// In development only, a random ephemeral CRON_SECRET is generated at boot
-// (logged clearly) purely so `npm run dev` works without any setup.
 if (process.env.NODE_ENV !== 'production' && !process.env.CRON_SECRET) {
   process.env.CRON_SECRET = crypto.randomBytes(32).toString('hex');
   console.warn(
@@ -51,21 +17,11 @@ const envSchema = z.object({
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
   CORS_ORIGIN: z.string().default('http://localhost:5173,https://midas-aem.vercel.app'),
-  // Only vercel.app preview URLs starting with this prefix are trusted for
-  // credentialed CORS requests (e.g. "midas-aem" matches
-  // "midas-aem-git-feature-yourteam.vercel.app"). Prevents any unrelated
-  // *.vercel.app deployment from making authenticated cross-origin calls.
   CORS_VERCEL_PROJECT_PREFIX: z.string().default('midas-aem'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
-
-  // No hardcoded default, and NOT hard-required here — see note above.
-  // Used by server/lib/encryption.ts (validated lazily there, at the point
-  // of actual use) to encrypt/decrypt each tenant's stored Mailgun API key
-  // — see domain.service.ts's "bring your own Mailgun key" flow. A 64-char
-  // hex string (32 bytes): generate with `openssl rand -hex 32`.
   ENCRYPTION_KEY: z.string().optional(),
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
-  EMAIL_FROM: z.string().default('noreply@outreach.local'),
+  EMAIL_FROM: z.string().default('midas-aem.vercel.app'),
 
   // This deployment's own public URL, with no trailing slash — used to
   // build the Mailgun inbound-Route webhook target
@@ -78,6 +34,7 @@ const envSchema = z.object({
 
   // Clerk Authentication Keys
   CLERK_SECRET_KEY: z.string().optional(),
+  CLERK_PUBLISHABLE_KEY: z.string().optional(),
   VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
   CLERK_WEBHOOK_SECRET: z.string().optional(),
 

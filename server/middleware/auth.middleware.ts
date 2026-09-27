@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { ClerkExpressRequireAuth } from '@clerk/clerk-sdk-node';
+import { ClerkExpressRequireAuth, clerkClient } from '@clerk/clerk-sdk-node';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
@@ -17,19 +17,42 @@ type CachedUser = { id: string; email: string; isAdmin: boolean };
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const userCache = new Map<string, { value: CachedUser; expiresAt: number }>();
 
-// Instantiate the Clerk middleware handler once at module scope
-const clerkAuthHandler = ClerkExpressRequireAuth();
+// Robust Key Resolution: Accepts standard Clerk keys or Vite-prefixed keys
+const cleanKey = (key?: string) => (key ? key.trim().replace(/^["']|["']$/g, '') : '');
+
+const publishableKey = cleanKey(
+  process.env.CLERK_PUBLISHABLE_KEY ||
+  process.env.VITE_CLERK_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+);
+
+const secretKey = cleanKey(process.env.CLERK_SECRET_KEY);
+
+// Synchronize environment variable so internal SDK methods locate it
+if (publishableKey && !process.env.CLERK_PUBLISHABLE_KEY) {
+  process.env.CLERK_PUBLISHABLE_KEY = publishableKey;
+}
+
+// Pass resolved keys explicitly to prevent "Publishable key is missing" error
+const clerkAuthHandler = ClerkExpressRequireAuth({
+  publishableKey,
+  secretKey,
+});
 
 export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  // Graceful check for unconfigured Clerk environments
-  if (!process.env.CLERK_SECRET_KEY) {
-    logger.error('[AUTH] CLERK_SECRET_KEY is not configured in environment variables');
-    return res.status(500).json({ error: 'Authentication service not configured' });
+  if (!secretKey) {
+    logger.error('[AUTH] CLERK_SECRET_KEY is missing from environment variables');
+    return res.status(500).json({ error: 'Authentication service not configured (missing secret key)' });
+  }
+
+  if (!publishableKey) {
+    logger.error('[AUTH] CLERK_PUBLISHABLE_KEY / VITE_CLERK_PUBLISHABLE_KEY is missing from environment variables');
+    return res.status(500).json({ error: 'Authentication service not configured (missing publishable key)' });
   }
 
   clerkAuthHandler(req, res, async (err: any) => {
     if (err) {
-      logger.error({ err: err.message || err }, '[AUTH] Clerk token verification failed');
+      logger.error({ err: err?.message || err }, '[AUTH] Clerk token verification failed');
       return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
@@ -54,8 +77,28 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
       });
 
       if (!user) {
-        const email = authReq.auth.sessionClaims?.email || `user-${clerkId.substring(0, 8)}@clerk.local`;
-        const name = authReq.auth.sessionClaims?.fullName || email.split('@')[0];
+        let email = authReq.auth.sessionClaims?.email;
+        let name = authReq.auth.sessionClaims?.fullName;
+
+        // Fallback: If session JWT doesn't contain email claims, fetch directly from Clerk Backend API
+        if (!email) {
+          try {
+            const clerkUser = await clerkClient.users.getUser(clerkId);
+            email =
+              clerkUser.emailAddresses?.find((e: any) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ||
+              clerkUser.emailAddresses?.[0]?.emailAddress;
+            name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username;
+          } catch (fetchErr) {
+            logger.warn({ fetchErr }, '[AUTH] Could not fetch user profile from Clerk API, using fallback email');
+          }
+        }
+
+        if (!email) {
+          email = `user-${clerkId.substring(0, 8)}@clerk.local`;
+        }
+        if (!name) {
+          name = email.split('@')[0];
+        }
 
         user = await prisma.user.upsert({
           where: { email },
@@ -75,7 +118,7 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
       authReq.user = resolvedUser;
       next();
     } catch (dbErr: any) {
-      logger.error({ dbErr: dbErr.message || dbErr }, '[AUTH] Database user sync failed');
+      logger.error({ dbErr: dbErr?.message || dbErr }, '[AUTH] Database session validation failed');
       res.status(500).json({ error: 'Database session validation failed' });
     }
   });
