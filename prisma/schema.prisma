@@ -1,0 +1,412 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// --- Midas Core Models ---
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String?
+  email         String    @unique
+  password      String?   
+  clerkId       String?   @unique @map("clerk_id")
+  // Cross-tenant operator visibility (Phase 3) — no signup flow grants this;
+  // set manually via `UPDATE users SET is_admin = true WHERE email = '...'`.
+  isAdmin       Boolean   @default(false) @map("is_admin")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  leads          Lead[]
+  campaigns      Campaign[]
+  drafts         Draft[]
+  settings       UserSettings?
+  domains        Domain[]
+  outboundEmails OutboundEmail[]
+  pendingEmails  PendingEmail[]
+  uploadJobs     UploadJob[]
+  blocklist      Blocklist[]
+  memberships    CampaignMember[]
+  invitesSent    CampaignInvite[]
+
+  @@map("users")
+}
+
+// --- Domain & Deliverability Engine ---
+model Domain {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id") @db.Uuid
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  domainName       String   @unique @map("domain_name")
+  status           String   @default("pending_setup")
+  
+  dkimStatus       Boolean  @default(false)
+  spfStatus        Boolean  @default(false)
+  mxStatus         Boolean  @default(false)
+  trackingStatus   Boolean  @default(false)
+  dnsRecords       String?  @db.Text 
+  // Per-domain Mailgun credential — REQUIRED for the "connect with your own
+  // key" flow (see domain.service.ts::connectWithKey), which is now the
+  // default onboarding path instead of asking Mailgun's API for domain
+  // state (a call several Mailgun tiers, including free/trial, restrict).
+  // Encrypted at rest via server/lib/encryption.ts; never returned in any
+  // API response (see domain.service.ts's sanitize()).
+  mailgunApiKeyEncrypted String? @db.Text @map("mailgun_api_key_encrypted")
+  // Per-domain region override — a user's own Mailgun account may live in a
+  // different region than the platform default. 'us' | 'eu'; null = use
+  // the platform-wide MAILGUN_REGION env var.
+  mailgunRegion    String?  @map("mailgun_region")
+
+  // --- Real functional connectivity test, replacing "ask Mailgun's API
+  // whether DNS looks valid" (fragile, and blocked outright on some plans).
+  // Two independent checks: can we SEND through this domain+key, and does
+  // mail sent TO this domain actually reach our inbound webhook. ---
+  sendTestPassedAt     DateTime? @map("send_test_passed_at")
+  receivingTestCode    String?   @map("receiving_test_code")
+  receivingTestAddress String?   @map("receiving_test_address")
+  receivingConfirmedAt DateTime? @map("receiving_confirmed_at")
+
+  bounceCount      Int      @default(0) @map("bounce_count")
+  replyCount       Int      @default(0) @map("reply_count")
+  bounceRate       Float    @default(0.0)
+  complaintRate    Float    @default(0.0)
+
+  // Mailgun inbound Route id, created automatically the first time a send
+  // test passes (see domain.service.ts::ensureInboundRoute). Lets retries
+  // detect an already-provisioned route instead of stacking duplicates —
+  // Mailgun Routes are account-global, so this is deliberately scoped with
+  // a match_recipient() expression for this exact domain, never a bare
+  // catchall(), which would intercept inbound mail for every domain on
+  // the same Mailgun account.
+  routeId          String?  @map("route_id")
+
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  senders                Sender[]
+  outboundEmails         OutboundEmail[]  @relation("OutboundEmailDomain")
+  pendingEmails          PendingEmail[]   @relation("PendingEmailDomain")
+
+  @@index([userId])
+}
+
+// A single sending mailbox identity (e.g. sales@yourdomain.com). Split out
+// from Domain because spam/reputation limits are enforced per sending
+// address, not just per domain — a domain can host several independently
+// warmed-up, independently-quota'd senders. This is what a campaign links
+// to for its sending rotation (see CampaignSender), replacing the previous
+// model where a campaign linked directly to whole Domains.
+model Sender {
+  id             String   @id @default(cuid())
+  domainId       String   @map("domain_id")
+  domain         Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  userId         String   @map("user_id") @db.Uuid
+  localPart      String   @map("local_part")
+  displayName    String?  @map("display_name")
+  status         String   @default("active") // 'active' | 'paused'
+  warmupDay      Int      @default(1) @map("warmup_day")
+  dailyLimit     Int      @default(20) @map("daily_limit")
+  sentCountToday Int      @default(0) @map("sent_count_today")
+  lastSentReset  DateTime @default(now()) @map("last_sent_reset")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  campaignLinks          CampaignSender[]
+  preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferredSender")
+
+  @@unique([domainId, localPart])
+  @@index([userId])
+}
+
+model CampaignSender {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  senderId   String   @map("sender_id")
+  sender     Sender   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now()) @map("added_at")
+  @@unique([campaignId, senderId])
+}
+
+enum CampaignRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model CampaignMember {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String       @map("user_id") @db.Uuid
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       CampaignRole @default(EDITOR)
+  joinedAt   DateTime     @default(now()) @map("joined_at")
+
+  @@unique([campaignId, userId])
+  @@index([userId])
+}
+
+model CampaignInvite {
+  id         String       @id @default(cuid())
+  campaignId String       @map("campaign_id")
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  senderId   String       @map("sender_id") @db.Uuid
+  sender     User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  email      String
+  role       CampaignRole @default(EDITOR)
+  token      String       @unique
+  accepted   Boolean      @default(false)
+  expiresAt  DateTime     @map("expires_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@index([email])
+}
+
+model Campaign {
+  id                String   @id @default(cuid())
+  userId            String   @map("user_id") @db.Uuid
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  context           String?
+  reference         String?
+  senderName        String?  @map("sender_name")
+  status            String   @default("DRAFT")
+  createdAt         DateTime @default(now()) @map("created_at")
+  startedAt         DateTime? @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+  lastDomainIndex   Int      @default(0) @map("last_domain_index")
+  autoReplyEnabled  Boolean  @default(false) @map("auto_reply_enabled")
+  sendHourUTC       Int      @default(9) @map("send_hour_utc")
+  activeStartHour   Int?     @map("active_start_hour")
+  activeEndHour     Int?     @map("active_end_hour")
+  timezone          String?
+  objective         String?
+  targetTool        String?  @map("target_tool")
+  extendedObjective String?  @map("extended_objective")
+
+  followUpSteps FollowUpStep[]
+  leads         Lead[]
+  emails        OutboundEmail[]
+  drafts        Draft[]
+  pendingEmails PendingEmail[]
+  senderLinks   CampaignSender[] 
+  members       CampaignMember[]
+  invites       CampaignInvite[]
+
+  @@index([userId])
+}
+
+model Blocklist {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pattern   String   
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([userId, pattern])
+}
+
+model UploadJob {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id") @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  filename       String
+  blobUrl        String   @db.Text
+  status         String   @default("PENDING") 
+  error          String?  @db.Text
+  totalRows      Int      @default(0)
+  validLeads     Int      @default(0)
+  catchAllLeads  Int      @default(0)
+  invalidLeads   Int      @default(0)
+  blockedLeads   Int      @default(0)
+  duplicates     Int      @default(0)
+  verificationId String?  
+  // Opt-in flag set by the uploader. Defaults to false because no real
+  // verification provider is configured yet (see server/services/verification).
+  // Once a provider's API key is set, this becomes selectable in the UI.
+  verifyEmails   Boolean  @default(false) @map("verify_emails")
+  // Holds the parsed-but-not-yet-inserted rows while a job sits in
+  // VERIFYING, waiting on a vendor's async job to complete. Kept as its
+  // own column (not overloaded into `error`) so a real error message
+  // during VERIFYING can never corrupt this state.
+  pendingRows    String?  @db.Text
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  @@index([userId])
+  @@index([status])
+}
+
+model Lead {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id") @db.Uuid
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  email              String
+  company            String?
+  position           String?
+  status             String   @default("NEW")
+  outreachStatus     String?  @map("outreach_status")
+  verificationStatus String   @default("UNVERIFIED") @map("verification_status")
+  // Real one-click unsubscribe support (replaces a List-Unsubscribe header
+  // that pointed at a mailto: address nothing ever processed). Generated
+  // lazily the first time an email is sent to a lead that doesn't have one
+  // yet — see emailQueue.service.ts's ensureUnsubscribeToken.
+  unsubscribeToken   String?  @unique @map("unsubscribe_token")
+  campaignId         String?  @map("campaign_id")
+  campaign           Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  
+  sentEmails     OutboundEmail[]
+  replyDrafts    Draft[]         @relation("LeadDrafts")
+  pendingEmails  PendingEmail[]
+  @@unique([userId, email])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([status])
+}
+
+model Draft {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id") @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject      String
+  body         String
+  tone         String
+  useCase      String   @map("use_case")
+  version      Int      @default(1)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  campaignId   String?  @map("campaign_id")
+  campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  leadId       String?  @map("lead_id")
+  lead         Lead?    @relation("LeadDrafts", fields: [leadId], references: [id], onDelete: SetNull)
+  isReplyDraft Boolean  @default(false) @map("is_reply_draft")
+  stepNumber   Int?     @map("step_number") 
+  sentCount    Int      @default(0) @map("sent_count")
+  replyCount   Int      @default(0) @map("reply_count")
+
+  emails        OutboundEmail[]
+  followUpSteps FollowUpStep[]
+  pendingEmails PendingEmail[]
+}
+
+model FollowUpStep {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepNumber Int
+  delayDays  Int
+  draftId    String?  @map("draft_id")
+  draft      Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  @@unique([campaignId, stepNumber])
+}
+
+model OutboundEmail {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id") @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domainId    String?  @map("domain_id")
+  domain      Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
+  leadId      String   @map("lead_id")
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId  String?  @map("campaign_id")
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  draftId     String?  @map("draft_id")
+  draft       Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  
+  subject     String
+  body        String
+  sentAt      DateTime @default(now()) @map("sent_at")
+  status      String   @default("SENT")
+  error       String?
+
+  openedAt      DateTime? @map("opened_at")
+  clickedAt     DateTime? @map("clicked_at") 
+  bouncedAt     DateTime? @map("bounced_at") 
+  spamComplaint Boolean   @default(false) @map("spam_complaint") 
+  repliedAt     DateTime? @map("replied_at")
+  replyText     String?   @map("reply_text")
+
+  replyToId     String?         @map("reply_to_id")
+  replyTo       OutboundEmail?  @relation("Replies", fields: [replyToId], references: [id])
+  replies       OutboundEmail[] @relation("Replies")
+  isIncoming    Boolean         @default(false) @map("is_incoming")
+  messageId     String?         @map("message_id")
+  references    String?
+  inReplyTo     String?         @map("in_reply_to")
+  fromAddress   String?         @map("from_address")
+  toAddress     String?         @map("to_address")
+  sentiment     String?
+  intent        String?
+  analysis      String?
+
+  @@index([userId])
+  @@index([campaignId])
+  @@index([leadId])
+  @@index([messageId])
+}
+
+model PendingEmail {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id") @db.Uuid
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domainId           String?  @map("domain_id")
+  domain             Domain?  @relation("PendingEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
+  campaignId         String   @map("campaign_id")
+  campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leadId             String   @map("lead_id")
+  lead               Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  draftId            String?  @map("draft_id")
+  draft              Draft?   @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  subject            String
+  body               String
+  inReplyTo          String?  @map("in_reply_to")
+  scheduledAt        DateTime? @map("scheduled_at")
+  status             String   @default("PENDING") 
+  error              String?
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  priority           Int      @default(2)
+  // Keeps a follow-up on the SAME sending mailbox as the initial email in
+  // this thread, so the reply-thread visually comes from one consistent
+  // address (also carries the domain along transitively via Sender.domain).
+  preferredSenderId  String?  @map("preferred_sender_id")
+  preferredSender    Sender?  @relation("PendingEmailPreferredSender", fields: [preferredSenderId], references: [id], onDelete: SetNull)
+  @@index([status, scheduledAt])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([leadId])
+}
+
+model UserSettings {
+  userId        String   @id @map("user_id") @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Previously this model had no actual settings columns — the frontend's
+  // "Save Settings" call silently persisted nothing. Now real.
+  sendLimit     Int?     @map("send_limit")
+  sendPeriod    String?  @map("send_period") // 'hour' | 'day'
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+}
+
+// Cross-instance mutual exclusion for the three scheduled jobs (queue, leads,
+// followups). An in-memory boolean flag (what followUp.service.ts used to
+// use) only guards against concurrent calls within the SAME warm serverless
+// instance — it does nothing when Vercel Cron, a GitHub Actions poller, and
+// an Upstash QStash schedule can all invoke separate instances at once. This
+// table makes "only one of these runs at a time" true regardless of how many
+// schedulers are configured. See server/lib/cronLock.ts.
+model CronLock {
+  name      String    @id
+  lockedAt  DateTime? @map("locked_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+}

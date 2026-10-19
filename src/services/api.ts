@@ -1,0 +1,200 @@
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: '/api',
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 60000,
+});
+
+axios.defaults.withCredentials = true;
+
+// Token injection directly on the custom API instance
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('midas_auth_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Robust, human-readable error extractor preventing "[object Object]" UI alerts
+export const getErrorMessage = (err: any, fallback: string = 'An unexpected error occurred'): string => {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+  
+  const data = err.response?.data;
+  if (data) {
+    if (typeof data.error === 'string') return data.error;
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data === 'string') return data;
+    if (data.error && typeof data.error === 'object') {
+      if (typeof data.error.message === 'string') return data.error.message;
+      return JSON.stringify(data.error);
+    }
+  }
+  
+  if (err.message && typeof err.message === 'string') return err.message;
+  return fallback;
+};
+
+export const userAPI = {
+  getProfile: () => api.get('/user/profile'),
+  updateProfile: (data: { name: string }) => api.put('/user/profile', data),
+};
+
+export const userSettingsAPI = {
+  get: () => api.get('/user/settings'),
+  update: (data: any) => api.put('/user/settings', data),
+};
+
+export const configAPI = {
+  // Public feature flags — currently just whether a real email-verification
+  // vendor is configured, which drives the "Verify emails" checkbox on upload.
+  get: () => api.get('/config'),
+};
+
+export const leadAPI = {
+  upload: (file: File, verifyEmails: boolean = false) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('verifyEmails', String(verifyEmails));
+    return api.post('/leads/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  getJobs: () => api.get('/leads/jobs'),
+  getBlocklist: () => api.get('/leads/blocklist'),
+  addBlocklist: (pattern: string) => api.post('/leads/blocklist', { pattern }),
+  deleteBlocklist: (id: string) => api.delete(`/leads/blocklist/${id}`),
+  getAll: (page = 1, pageSize = 20, status?: string, campaignId?: string) =>
+    api.get('/leads', { params: { page, pageSize, status, campaignId } }),
+  get: (id: string) => api.get(`/leads/${id}`),
+  update: (id: string, data: any) => api.put(`/leads/${id}`, data),
+  delete: (id: string) => api.delete(`/leads/${id}`),
+};
+
+export const campaignAPI = {
+  create: (data: {
+    name: string;
+    description?: string;
+    context?: string;
+    reference?: string;
+    senderName?: string;
+    leadIds?: string[];
+    autoReplyEnabled?: boolean;
+    sendHourUTC?: number;
+    objective?: string;
+    targetTool?: string;
+    extendedObjective?: string;
+  }) => api.post('/campaigns', data),
+
+  getAll: () => api.get('/campaigns'),
+  get: (id: string) => api.get(`/campaigns/${id}`),
+
+  addLeads: (campaignId: string, leadIds: string[]) =>
+    api.post(`/campaigns/${campaignId}/leads`, { leadIds }),
+
+  updateAutoReply: (id: string, data: { autoReplyEnabled: boolean }) =>
+    api.put(`/campaigns/${id}/auto-reply`, data),
+
+  getFollowUpSteps: (id: string) => api.get(`/campaigns/${id}/followup-steps`),
+  setFollowUpSteps: (id: string, steps: any[]) => api.post(`/campaigns/${id}/followup-steps`, { steps }),
+  deleteFollowUpStep: (id: string, stepId: string) => api.delete(`/campaigns/${id}/followup-steps/${stepId}`),
+  updateSendHour: (id: string, sendHourUTC: number) => api.put(`/campaigns/${id}/send-hour`, { sendHourUTC }),
+
+  getLeadThread: (campaignId: string, leadId: string) =>
+    api.get(`/campaigns/${campaignId}/leads/${leadId}/thread`),
+
+  previewLeadWithDraft: (campaignId: string, leadId: string, draftId: string) =>
+    api.get(`/campaigns/${campaignId}/leads/${leadId}/preview/${draftId}`),
+
+  sendLeadEmail: (campaignId: string, leadId: string) =>
+    api.post(`/campaigns/${campaignId}/leads/${leadId}/send`),
+
+  getReplyDraft: (campaignId: string, leadId: string) =>
+    api.get(`/campaigns/${campaignId}/leads/${leadId}/reply-draft`),
+
+  generateReplyDraft: (campaignId: string, leadId: string) =>
+    api.post(`/campaigns/${campaignId}/leads/${leadId}/generate-reply-draft`),
+
+  sendReplyDraft: (campaignId: string, leadId: string, data: { subject: string; body: string }) =>
+    api.post(`/campaigns/${campaignId}/leads/${leadId}/send-reply-draft`, data),
+
+  getDrafts: (campaignId: string) => api.get(`/campaigns/${campaignId}/drafts`),
+  updateDraft: (campaignId: string, draftId: string, data: { subject?: string; body?: string; tone?: string }) =>
+    api.put(`/campaigns/${campaignId}/drafts/${draftId}`, data),
+  deleteDraft: (campaignId: string, draftId: string) =>
+    api.delete(`/campaigns/${campaignId}/drafts/${draftId}`),
+  createCustomDraft: (campaignId: string, data: { subject: string; body: string }) =>
+    api.post(`/campaigns/${campaignId}/drafts/custom`, data),
+  generateDraft: (campaignId: string) =>
+    api.post(`/campaigns/${campaignId}/drafts/generate`),
+  updateActiveHours: (id: string, data: { activeStartHour?: number | null; activeEndHour?: number | null; timezone?: string }) =>
+    api.put(`/campaigns/${id}/active-hours`, data),
+  generateStepDraft: (campaignId: string, stepNumber: number) =>
+    api.post(`/campaigns/${campaignId}/steps/${stepNumber}/generate-draft`),
+
+  getCampaignSenders: (campaignId: string) => api.get(`/campaigns/${campaignId}/senders`),
+  addSenderToCampaign: (campaignId: string, senderId: string) => api.post(`/campaigns/${campaignId}/senders`, { senderId }),
+  removeSenderFromCampaign: (campaignId: string, senderId: string) => api.delete(`/campaigns/${campaignId}/senders/${senderId}`),
+
+  // Collaboration Operations
+  getMyInvites: () => api.get('/campaigns/invites/my'),
+  acceptInvite: (token: string) => api.post(`/campaigns/invites/${token}/accept`),
+  createInvite: (campaignId: string, data: { email: string; role: string }) =>
+    api.post(`/campaigns/${campaignId}/invites`, data),
+
+  updateStrategy: (campaignId: string, data: { objective?: string; targetTool?: string; extendedObjective?: string }) =>
+    api.put(`/campaigns/${campaignId}/strategy`, data),
+
+  update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
+  delete: (id: string) => api.delete(`/campaigns/${id}`),
+};
+
+export const domainAPI = {
+  getAll: () => api.get('/domains'),
+  // Default flow: paste the Mailgun API key you already send with. Runs a
+  // real test send immediately, then returns a one-time code + address to
+  // confirm receiving. testRecipientEmail defaults server-side to your
+  // account email if omitted.
+  connect: (domainName: string, mailgunApiKey: string, region?: 'us' | 'eu', testRecipientEmail?: string) =>
+    api.post('/domains', { domainName, mailgunApiKey, region, testRecipientEmail }),
+  retrySendTest: (id: string, testRecipientEmail?: string) => api.post(`/domains/${id}/send-test`, { testRecipientEmail }),
+  resetReceivingTest: (id: string) => api.post(`/domains/${id}/receiving-test/reset`),
+  checkReceivingTest: (id: string) => api.get(`/domains/${id}/receiving-test`),
+  delete: (id: string) => api.delete(`/domains/${id}`),
+};
+
+export const senderAPI = {
+  listAll: () => api.get('/domains/senders/all'),
+  listForDomain: (domainId: string) => api.get(`/domains/${domainId}/senders`),
+  create: (domainId: string, localPart: string, displayName?: string, dailyLimit?: number) =>
+    api.post(`/domains/${domainId}/senders`, { localPart, displayName, dailyLimit }),
+  update: (senderId: string, data: { displayName?: string; dailyLimit?: number; status?: 'active' | 'paused' }) =>
+    api.patch(`/domains/senders/${senderId}`, data),
+  delete: (senderId: string) => api.delete(`/domains/senders/${senderId}`),
+};
+
+export const adminAPI = {
+  getStats: () => api.get('/admin/stats'),
+  listUsers: () => api.get('/admin/users'),
+  listDomains: () => api.get('/admin/domains'),
+  pauseDomain: (id: string) => api.post(`/admin/domains/${id}/pause`),
+  unpauseDomain: (id: string) => api.post(`/admin/domains/${id}/unpause`),
+};
+
+export const aiAPI = {
+  optimizeContext: (context: string) => api.post('/ai/optimize-context', { context }),
+};
+
+export const diagnosticsAPI = {
+  health: () => api.get('/diagnostics/health/db'),
+  testLead: () => api.post('/diagnostics/test/lead'),
+};
+
+export const inboxAPI = {
+  getThreads: () => api.get('/inbox'),
+  sendReply: (leadId: string, body: string) => api.post(`/inbox/${leadId}/reply`, { body }),
+};
+
+export default api;
