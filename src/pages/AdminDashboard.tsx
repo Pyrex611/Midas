@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { adminAPI, getErrorMessage } from '../services/api';
+import { useToast } from '../context/ToastContext';
 
 export const AdminDashboard: React.FC = () => {
+  const { toast } = useToast();
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [domains, setDomains] = useState<any[]>([]);
@@ -18,10 +20,12 @@ export const AdminDashboard: React.FC = () => {
         adminAPI.listDomains(),
       ]);
       setStats(statsRes.data);
-      setUsers(usersRes.data);
-      setDomains(domainsRes.data);
+      setUsers(usersRes.data || []);
+      setDomains(domainsRes.data || []);
     } catch (err: any) {
-      setError(getErrorMessage(err, 'Failed to load admin data'));
+      const msg = getErrorMessage(err, 'Failed to load operator metrics');
+      setError(msg);
+      toast.error(msg, 'Access Error');
     } finally {
       setLoading(false);
     }
@@ -32,80 +36,107 @@ export const AdminDashboard: React.FC = () => {
   const handlePause = async (id: string) => {
     try {
       await adminAPI.pauseDomain(id);
+      toast.warning('Domain paused due to deliverability risk', 'Circuit Breaker Armed');
       await fetchAll();
     } catch (err: any) {
-      alert(getErrorMessage(err, 'Could not pause domain'));
+      toast.error(getErrorMessage(err, 'Could not pause domain'), 'Action Failed');
     }
   };
 
   const handleUnpause = async (id: string) => {
     try {
       await adminAPI.unpauseDomain(id);
+      toast.success('Domain reactivated and reset to healthy state', 'Circuit Cleared');
       await fetchAll();
     } catch (err: any) {
-      alert(getErrorMessage(err, 'Could not unpause domain'));
+      toast.error(getErrorMessage(err, 'Could not unpause domain'), 'Action Failed');
     }
   };
 
-  if (loading) return <div className="text-center py-20 pt-28">Loading admin view...</div>;
-  if (error) return <div className="text-center py-20 text-red-600 pt-28">{error}</div>;
+  if (loading) return <div className="py-24 text-center text-xs text-zinc-400">Loading operator dashboard...</div>;
+  if (error) return <div className="py-24 text-center text-xs text-rose-500">{error}</div>;
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-      <h1 className="text-3xl font-bold text-gray-900 mb-2">Platform Overview</h1>
-      <p className="text-sm text-gray-500 mb-8">Cross-tenant visibility — every domain's send reputation is shared platform-wide, so one bad account here is everyone's problem.</p>
+    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">Platform Deliverability Command</h1>
+        <p className="text-xs text-zinc-500 mt-1">Cross-tenant operator visibility. Monitor shared IP pool reputation and trigger emergency pause switches.</p>
+      </div>
 
+      {/* Aggregate Metric Tiles */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
-            ['Users', stats.userCount],
-            ['Campaigns', stats.campaignCount],
-            ['Leads', stats.leadCount],
-            ['Domains', stats.domainCount],
+            ['Registered Users', stats.userCount],
+            ['Active Sequences', stats.campaignCount],
+            ['Staged Leads', stats.leadCount],
+            ['Sending Domains', stats.domainCount],
             ['Sent Today', stats.sentToday],
-            ['Queued', stats.pendingCount],
+            ['In Queue', stats.pendingCount],
           ].map(([label, value]) => (
-            <div key={label as string} className="bg-white shadow rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-gray-900">{value as number}</p>
-              <p className="text-xs text-gray-500 mt-1">{label}</p>
+            <div key={label as string} className="p-4 bg-white border border-zinc-200 rounded-2xl shadow-xs text-center">
+              <p className="text-2xl font-black text-zinc-900">{value as number}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mt-1">{label}</p>
             </div>
           ))}
         </div>
       )}
 
-      <div className="bg-white shadow rounded-lg p-6 mb-8">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">All Domains</h2>
+      {/* Cross-Tenant Domains Table */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
+        <div>
+          <h2 className="text-base font-black text-zinc-900 tracking-tight">Cross-Tenant Domain Health</h2>
+          <p className="text-xs text-zinc-500 mt-0.5">Automated circuit breakers trigger auto-pause at &gt;5% bounce rate or &gt;0.3% complaint rate.</p>
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-zinc-100 text-left text-xs">
+            <thead className="bg-zinc-50/75 text-zinc-500 font-bold uppercase tracking-wider">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Domain</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Owner</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Status</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Bounce</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Complaint</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Senders</th>
-                <th className="px-3 py-2 text-right font-medium text-gray-500">Action</th>
+                <th className="py-3 px-4">Domain</th>
+                <th className="py-3 px-4">Owner</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4">Bounce</th>
+                <th className="py-3 px-4">Complaint</th>
+                <th className="py-3 px-4">Mailboxes</th>
+                <th className="py-3 px-4 text-right">Emergency Circuit</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
-              {domains.map(d => (
-                <tr key={d.id}>
-                  <td className="px-3 py-2 font-mono">{d.domainName}</td>
-                  <td className="px-3 py-2 text-gray-500">{d.user?.email}</td>
-                  <td className="px-3 py-2">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${d.status === 'active' ? 'bg-green-100 text-green-800' : d.status === 'paused_health_risk' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
+            <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+              {domains.map((d) => (
+                <tr key={d.id} className="hover:bg-zinc-50/80">
+                  <td className="py-3 px-4 font-mono font-bold text-zinc-900">{d.domainName}</td>
+                  <td className="py-3 px-4 text-zinc-500">{d.user?.email}</td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                      d.status === 'active'
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : d.status === 'paused_health_risk'
+                        ? 'bg-rose-50 text-rose-700'
+                        : 'bg-amber-50 text-amber-700'
+                    }`}>
                       {d.status}
                     </span>
                   </td>
-                  <td className="px-3 py-2">{(d.bounceRate * 100).toFixed(1)}%</td>
-                  <td className="px-3 py-2">{(d.complaintRate * 100).toFixed(2)}%</td>
-                  <td className="px-3 py-2">{d.senders?.length || 0}</td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="py-3 px-4 font-mono">{((d.bounceRate || 0) * 100).toFixed(1)}%</td>
+                  <td className="py-3 px-4 font-mono">{((d.complaintRate || 0) * 100).toFixed(2)}%</td>
+                  <td className="py-3 px-4 font-bold">{d.senders?.length || 0} Senders</td>
+                  <td className="py-3 px-4 text-right">
                     {d.status === 'paused_health_risk' ? (
-                      <button onClick={() => handleUnpause(d.id)} className="text-xs text-green-600 hover:underline">Unpause</button>
+                      <button
+                        onClick={() => handleUnpause(d.id)}
+                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
+                      >
+                        Reset & Clear
+                      </button>
                     ) : (
-                      <button onClick={() => handlePause(d.id)} className="text-xs text-red-600 hover:underline">Pause</button>
+                      <button
+                        onClick={() => handlePause(d.id)}
+                        className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
+                      >
+                        Trip Breaker (Pause)
+                      </button>
                     )}
                   </td>
                 </tr>
@@ -115,27 +146,40 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">All Users</h2>
+      {/* Users Overview Table */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
+        <div>
+          <h2 className="text-base font-black text-zinc-900 tracking-tight">Active User Workspaces</h2>
+          <p className="text-xs text-zinc-500 mt-0.5">Tenant resource allocations and role permissions.</p>
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-zinc-100 text-left text-xs">
+            <thead className="bg-zinc-50/75 text-zinc-500 font-bold uppercase tracking-wider">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Email</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Campaigns</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Leads</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Domains</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Joined</th>
+                <th className="py-3 px-4">User</th>
+                <th className="py-3 px-4">Role</th>
+                <th className="py-3 px-4">Sequences</th>
+                <th className="py-3 px-4">Leads</th>
+                <th className="py-3 px-4">Domains</th>
+                <th className="py-3 px-4">Created</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
-              {users.map(u => (
-                <tr key={u.id}>
-                  <td className="px-3 py-2">{u.email}{u.isAdmin && <span className="ml-2 text-xs text-purple-600 font-semibold">ADMIN</span>}</td>
-                  <td className="px-3 py-2">{u._count.campaigns}</td>
-                  <td className="px-3 py-2">{u._count.leads}</td>
-                  <td className="px-3 py-2">{u._count.domains}</td>
-                  <td className="px-3 py-2 text-gray-500">{new Date(u.createdAt).toLocaleDateString()}</td>
+            <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+              {users.map((u) => (
+                <tr key={u.id} className="hover:bg-zinc-50/80">
+                  <td className="py-3 px-4 font-bold text-zinc-900">{u.email}</td>
+                  <td className="py-3 px-4">
+                    {u.isAdmin ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700">OPERATOR ADMIN</span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-100 text-zinc-600">MEMBER</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4">{u._count?.campaigns || 0}</td>
+                  <td className="py-3 px-4">{u._count?.leads || 0}</td>
+                  <td className="py-3 px-4">{u._count?.domains || 0}</td>
+                  <td className="py-3 px-4 text-zinc-400">{new Date(u.createdAt).toLocaleDateString()}</td>
                 </tr>
               ))}
             </tbody>
