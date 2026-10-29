@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import ErrorBoundary from './components/ErrorBoundary';
-import { Navbar } from './components/Navbar';
+import { AppShell } from './components/layout/AppShell';
 import { Home } from './pages/Home';
 import { Leads } from './pages/Leads';
 import { Campaigns } from './pages/Campaigns';
@@ -15,30 +16,25 @@ import { AdminDashboard } from './pages/AdminDashboard';
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const { user, loading } = useAuth();
-  if (loading) return <div className="text-center py-12">Loading...</div>;
+  if (loading) return <div className="text-center py-20 text-zinc-400 font-medium">Authenticating session...</div>;
   if (!user) return <Navigate to="/login" replace />;
-  return children;
+  return <AppShell>{children}</AppShell>;
 };
 
 function AppRoutes() {
-  const { user } = useAuth();
   return (
-    <>
-      {user && <Navbar />}
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
-        <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-        <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
-        <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
-        <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
-        <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
-        <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
-        <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-        {/* Server-side gated (requireAdmin) — a non-admin lands here and sees a clean Forbidden state, not a security boundary in itself. */}
-        <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
-      </Routes>
-    </>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
+      <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+      <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
+      <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
+      <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
+      <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
+      <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+      <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
+    </Routes>
   );
 }
 
@@ -46,11 +42,11 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <ErrorBoundary>
-          <div className="min-h-screen bg-gray-100">
+        <ToastProvider>
+          <ErrorBoundary>
             <AppRoutes />
-          </div>
-        </ErrorBoundary>
+          </ErrorBoundary>
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   );
