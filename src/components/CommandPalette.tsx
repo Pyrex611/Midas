@@ -4,9 +4,10 @@ import { useNavigate } from 'react-router-dom';
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
+  isAdmin?: boolean;
 }
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose }) => {
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, isAdmin = false }) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
 
@@ -33,7 +34,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     { label: '📋 View All Leads', path: '/leads', category: 'Navigation' },
     { label: '🌐 Manage Sending Domains', path: '/domains', category: 'Infrastructure' },
     { label: '👤 User Profile & Settings', path: '/profile', category: 'Account' },
-    { label: '🛡️ Platform Admin Dashboard', path: '/admin', category: 'Administration' },
+    ...(isAdmin ? [{ label: '🛡️ Platform Admin Dashboard', path: '/admin', category: 'Administration' }] : []),
   ];
 
   const filtered = actions.filter((a) => a.label.toLowerCase().includes(query.toLowerCase()));
@@ -48,7 +49,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
       <div className="relative mx-auto max-w-xl bg-white rounded-2xl shadow-2xl border border-zinc-200 overflow-hidden transform transition-all animate-in zoom-in-95 duration-150">
-        {/* Search Input Bar */}
         <div className="flex items-center px-4 border-b border-zinc-100">
           <svg className="w-5 h-5 text-zinc-400 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -57,7 +57,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search commands, campaigns, or routes (e.g. Inbox)..."
+            placeholder="Search commands, campaigns, or routes..."
             className="w-full py-4 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none"
             autoFocus
           />
@@ -66,7 +66,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
           </kbd>
         </div>
 
-        {/* Command Action Items */}
         <div className="max-h-80 overflow-y-auto p-2 space-y-1">
           {filtered.length === 0 ? (
             <p className="p-4 text-xs text-center text-zinc-400">No matching commands found.</p>

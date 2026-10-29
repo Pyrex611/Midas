@@ -7,7 +7,6 @@ interface AppShellProps {
   children: React.ReactNode;
 }
 
-// Line Art SVG Icons
 const Icons = {
   Home: () => (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
@@ -44,12 +43,24 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.964 0a9 9 0 10-11.963 0m11.964 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
     </svg>
   ),
+  Menu: () => (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+    </svg>
+  ),
+  Close: () => (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  ),
 };
 
 export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const location = useLocation();
   const [isAdmin, setIsAdmin] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [hasOperatorClearance, setHasOperatorClearance] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('midas_sidebar_collapsed') === 'true');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [activeDomainsCount, setActiveDomainsCount] = useState(0);
 
@@ -59,6 +70,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       .then((res) => setIsAdmin(!!res.data?.user?.isAdmin))
       .catch(() => setIsAdmin(false));
 
+    // Check operator token clearance in sessionStorage
+    const token = sessionStorage.getItem('midas_operator_token');
+    const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
+    setHasOperatorClearance(Boolean(token && expiresAt > Date.now()));
+
     domainAPI
       .getAll()
       .then((res) => {
@@ -66,7 +82,33 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         setActiveDomainsCount(active);
       })
       .catch(() => {});
-  }, []);
+  }, [location.pathname]);
+
+  // Persist sidebar collapsed state
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('midas_sidebar_collapsed', String(next));
+      return next;
+    });
+  };
+
+  // Close mobile drawer on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Lock body scroll when mobile menu is active
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [mobileMenuOpen]);
 
   // Global keydown for Cmd+K
   useEffect(() => {
@@ -86,22 +128,38 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     { label: 'Unified Inbox', path: '/inbox', icon: <Icons.Inbox /> },
     { label: 'All Leads', path: '/leads', icon: <Icons.Leads /> },
     { label: 'Sending Domains', path: '/domains', icon: <Icons.Domains /> },
-    ...(isAdmin ? [{ label: 'Admin Command', path: '/admin', icon: <Icons.Admin /> }] : []),
+    // Visible if DB admin OR verified operator session
+    ...(isAdmin || hasOperatorClearance
+      ? [{ label: 'Admin Command', path: '/admin', icon: <Icons.Admin /> }]
+      : []),
   ];
 
+  // Dynamic Breadcrumb Label derivation
+  const getBreadcrumbs = () => {
+    const p = location.pathname;
+    if (p === '/') return 'Overview';
+    if (p.startsWith('/campaigns/')) return 'Campaigns / Flow Studio';
+    if (p === '/campaigns') return 'Campaigns';
+    if (p === '/inbox') return 'Unified Inbox';
+    if (p === '/leads') return 'Leads Hub';
+    if (p === '/domains') return 'Sending Domains';
+    if (p === '/profile') return 'Account & Settings';
+    if (p === '/admin') return 'Operator Command';
+    return 'Workspace';
+  };
+
   return (
-    <div className="min-h-screen bg-zinc-50 flex">
+    <div className="min-h-screen bg-zinc-50 flex flex-col md:flex-row">
       {/* 
-        DESKTOP PERSISTENT SIDEBAR:
-        - `h-screen sticky top-0`: Strictly anchored to viewport height, never pushes off-screen.
-        - `flex-col justify-between`: Header & Nav at top, Deliverability & Profile locked at bottom.
+        1. DESKTOP STICKY PERSISTENT SIDEBAR (md:flex)
+        - Anchored strictly to viewport height (`h-screen sticky top-0`)
+        - Settings & Profile permanently locked at the bottom
       */}
       <aside
         className={`hidden md:flex flex-col h-screen sticky top-0 border-r border-zinc-200 bg-white transition-all duration-200 z-30 select-none ${
           collapsed ? 'w-20' : 'w-64'
         }`}
       >
-        {/* Brand Header */}
         <div className="h-16 flex-shrink-0 px-6 border-b border-zinc-100 flex items-center justify-between">
           {!collapsed ? (
             <div className="flex items-center gap-2">
@@ -116,17 +174,22 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             <span className="text-xl font-black text-amber-600 mx-auto">M</span>
           )}
           <button
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={toggleCollapsed}
             className="text-zinc-400 hover:text-zinc-600 p-1.5 rounded-lg hover:bg-zinc-50 transition-colors"
             title={collapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
           >
-            <svg className={`w-4 h-4 transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg
+              className={`w-4 h-4 transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
             </svg>
           </button>
         </div>
 
-        {/* Scrollable Navigation List (only nav scrolls if viewport is short) */}
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           {navItems.map((item) => {
             const isActive = location.pathname === item.path;
@@ -148,12 +211,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           })}
         </nav>
 
-        {/* 
-          LOCKED FOOTER (Never goes below screen fold):
-          Contains Deliverability Pulse + Settings & Profile
-        */}
+        {/* Locked Bottom Container */}
         <div className="flex-shrink-0 p-3 border-t border-zinc-100 bg-white space-y-2">
-          {/* Deliverability Radar Widget */}
           {!collapsed && (
             <div className="p-3 bg-zinc-900 text-white rounded-xl shadow-xs border border-zinc-800">
               <div className="flex items-center justify-between mb-1">
@@ -163,13 +222,12 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               </div>
               <p className="text-xs font-bold text-zinc-200">
-                {activeDomainsCount} Domains Active
+                {activeDomainsCount} Domains Operating
               </p>
               <p className="text-[10px] text-zinc-400">Circuit breakers armed</p>
             </div>
           )}
 
-          {/* Profile & Settings (Permanently Visible) */}
           <Link
             to="/profile"
             className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-zinc-100 text-zinc-700 transition-colors"
@@ -181,17 +239,101 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
       </aside>
 
-      {/* Main Viewport Container */}
+      {/* 
+        2. MOBILE RESPONSIVE SLIDE-OUT DRAWER (< md)
+        Fully restores mobile access with an animated overlay.
+      */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+
+          {/* Slide-out Menu Panel */}
+          <div className="relative w-72 max-w-[80vw] h-[100dvh] bg-white shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-left duration-200">
+            <div>
+              <div className="h-16 px-6 border-b border-zinc-100 flex items-center justify-between">
+                <span className="text-xl font-black bg-gradient-to-r from-amber-500 to-amber-700 bg-clip-text text-transparent tracking-wider">
+                  MIDAS
+                </span>
+                <button
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded-lg"
+                >
+                  <Icons.Close />
+                </button>
+              </div>
+
+              <nav className="p-3 space-y-1">
+                {navItems.map((item) => {
+                  const isActive = location.pathname === item.path;
+                  return (
+                    <Link
+                      key={item.path}
+                      to={item.path}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={`flex items-center gap-3 px-3.5 py-3 rounded-xl font-medium text-sm transition-all ${
+                        isActive
+                          ? 'bg-blue-50 text-blue-700 font-bold'
+                          : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
+                      }`}
+                    >
+                      <span className={isActive ? 'text-blue-600' : 'text-zinc-400'}>{item.icon}</span>
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
+
+            <div className="p-4 border-t border-zinc-100 space-y-3">
+              <div className="p-3 bg-zinc-900 text-white rounded-xl shadow-xs">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Deliverability Pulse</p>
+                <p className="text-xs font-bold text-zinc-200 mt-0.5">{activeDomainsCount} Domains Active</p>
+              </div>
+
+              <Link
+                to="/profile"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-3 p-2 rounded-xl text-zinc-800 font-bold text-xs hover:bg-zinc-100"
+              >
+                <span className="text-zinc-400"><Icons.Profile /></span>
+                <span>Settings & Profile</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 
+        3. MAIN VIEWPORT & TOP HEADER BAR
+      */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Header Bar */}
-        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-zinc-200/80 px-6 flex items-center justify-between sticky top-0 z-20">
-          <div className="flex items-center gap-4">
+        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-zinc-200/80 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20">
+          <div className="flex items-center gap-3">
+            {/* Mobile Hamburger Button */}
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="p-2 -ml-2 text-zinc-500 hover:text-zinc-800 rounded-lg md:hidden"
+              title="Open Navigation Menu"
+            >
+              <Icons.Menu />
+            </button>
+
+            {/* Dynamic Breadcrumb Header */}
+            <span className="text-xs font-black uppercase tracking-wider text-zinc-400 hidden sm:inline-block">
+              {getBreadcrumbs()}
+            </span>
+
+            {/* Quick Actions / Cmd+K Button */}
             <button
               onClick={() => setCmdOpen(true)}
-              className="flex items-center gap-3 px-3.5 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200/80 border border-zinc-200 text-xs text-zinc-500 transition-colors"
+              className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200/80 border border-zinc-200 text-xs text-zinc-500 transition-colors ml-1"
             >
               <span className="font-medium">Quick Actions</span>
-              <kbd className="font-mono bg-white px-1.5 py-0.5 rounded text-[10px] font-bold text-zinc-600 border border-zinc-200">
+              <kbd className="font-mono bg-white px-1.5 py-0.5 rounded text-[10px] font-bold text-zinc-600 border border-zinc-200 shadow-2xs">
                 ⌘K
               </kbd>
             </button>
@@ -201,16 +343,19 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             <span className="text-xs font-semibold text-zinc-500 hidden sm:inline-block">
               Autonomous Outbound Infrastructure
             </span>
-            <div className="w-2 h-2 rounded-full bg-emerald-500" title="System Operational" />
+            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-xs" title="Deliverability Operational" />
           </div>
         </header>
 
-        {/* Page Content */}
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
 
       {/* Command Palette Modal */}
-      <CommandPalette isOpen={cmdOpen} onClose={() => setCmdOpen(false)} />
+      <CommandPalette
+        isOpen={cmdOpen}
+        onClose={() => setCmdOpen(false)}
+        isAdmin={isAdmin || hasOperatorClearance}
+      />
     </div>
   );
 };

@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { getUnifiedInbox, sendManualReply } from '../controllers/inbox.controller';
-import { requireAuth } from '../middleware/auth.middleware';
+import { getUnifiedInbox, sendManualReply, startConversation } from '../controllers/inbox.controller';
 
 const router = Router();
 
-router.get('/', requireAuth, getUnifiedInbox);
-router.post('/:leadId/reply', requireAuth, sendManualReply);
+router.get('/', getUnifiedInbox);
+router.post('/start', startConversation);
+router.post('/:leadId/reply', sendManualReply);
 
 export default router;

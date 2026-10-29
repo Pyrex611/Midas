@@ -1,14 +1,42 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { adminAPI, getErrorMessage } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
 export const AdminDashboard: React.FC = () => {
   const { toast } = useToast();
+
+  // Operator Clearance State
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [passphraseInput, setPassphraseInput] = useState('');
+  const [verifyingPassphrase, setVerifyingPassphrase] = useState(false);
+  const [sessionRemainingMinutes, setSessionRemainingMinutes] = useState(60);
+
+  // Action Protection Modal State
+  const [actionTargetDomain, setActionTargetDomain] = useState<{ id: string; name: string; type: 'pause' | 'unpause' } | null>(null);
+  const [actionConfirmPassphrase, setActionConfirmPassphrase] = useState('');
+  const [submittingAction, setSubmittingAction] = useState(false);
+
+  // Admin Data State
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [domains, setDomains] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const lastActivityRef = useRef<number>(Date.now());
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Inactivity auto-lock listener (60-minute sliding window)
+  const lockSession = useCallback(() => {
+    sessionStorage.removeItem('midas_operator_token');
+    sessionStorage.removeItem('midas_operator_expires_at');
+    setIsUnlocked(false);
+    toast.warning('Operator session locked due to 60 minutes of inactivity', 'Session Expired');
+  }, [toast]);
+
+  const recordActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+  }, []);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -25,53 +53,177 @@ export const AdminDashboard: React.FC = () => {
     } catch (err: any) {
       const msg = getErrorMessage(err, 'Failed to load operator metrics');
       setError(msg);
-      toast.error(msg, 'Access Error');
+      if (err.response?.status === 403) {
+        lockSession();
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => {
+    // Check existing valid session
+    const token = sessionStorage.getItem('midas_operator_token');
+    const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
 
-  const handlePause = async (id: string) => {
+    if (token && expiresAt > Date.now()) {
+      setIsUnlocked(true);
+      fetchAll();
+    }
+
+    // Activity event listeners
+    window.addEventListener('mousemove', recordActivity);
+    window.addEventListener('keydown', recordActivity);
+    window.addEventListener('scroll', recordActivity);
+    window.addEventListener('click', recordActivity);
+
+    // Inactivity interval check every 30 seconds
+    inactivityTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - lastActivityRef.current;
+      const remaining = Math.max(0, 60 - Math.floor(elapsed / (60 * 1000)));
+      setSessionRemainingMinutes(remaining);
+
+      if (elapsed > 60 * 60 * 1000) {
+        lockSession();
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('mousemove', recordActivity);
+      window.removeEventListener('keydown', recordActivity);
+      window.removeEventListener('scroll', recordActivity);
+      window.removeEventListener('click', recordActivity);
+      if (inactivityTimerRef.current) clearInterval(inactivityTimerRef.current);
+    };
+  }, [lockSession, recordActivity]);
+
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passphraseInput.trim()) return;
+
+    setVerifyingPassphrase(true);
     try {
-      await adminAPI.pauseDomain(id);
-      toast.warning('Domain paused due to deliverability risk', 'Circuit Breaker Armed');
+      const res = await adminAPI.unlock(passphraseInput.trim());
+      sessionStorage.setItem('midas_operator_token', res.data.token);
+      sessionStorage.setItem('midas_operator_expires_at', String(res.data.expiresAt));
+      lastActivityRef.current = Date.now();
+      setIsUnlocked(true);
+      setPassphraseInput('');
+      toast.success('Operator clearance authorized for 60 minutes', 'Session Active');
       await fetchAll();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Could not pause domain'), 'Action Failed');
+      toast.error(getErrorMessage(err, 'Passphrase rejected'), 'Access Denied');
+    } finally {
+      setVerifyingPassphrase(false);
     }
   };
 
-  const handleUnpause = async (id: string) => {
+  // Action Protection Confirmation Execution
+  const handleExecuteProtectedAction = async () => {
+    if (!actionTargetDomain || !actionConfirmPassphrase.trim()) return;
+
+    setSubmittingAction(true);
     try {
-      await adminAPI.unpauseDomain(id);
-      toast.success('Domain reactivated and reset to healthy state', 'Circuit Cleared');
+      if (actionTargetDomain.type === 'pause') {
+        await adminAPI.pauseDomain(actionTargetDomain.id, actionConfirmPassphrase.trim());
+        toast.warning(`Circuit breaker armed: ${actionTargetDomain.name} is paused`, 'Action Executed');
+      } else {
+        await adminAPI.unpauseDomain(actionTargetDomain.id, actionConfirmPassphrase.trim());
+        toast.success(`Domain ${actionTargetDomain.name} reactivated`, 'Circuit Cleared');
+      }
+      setActionTargetDomain(null);
+      setActionConfirmPassphrase('');
       await fetchAll();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Could not unpause domain'), 'Action Failed');
+      toast.error(getErrorMessage(err, 'Action protection passphrase rejected'), 'Unauthorized');
+    } finally {
+      setSubmittingAction(false);
     }
   };
 
-  if (loading) return <div className="py-24 text-center text-xs text-zinc-400">Loading operator dashboard...</div>;
-  if (error) return <div className="py-24 text-center text-xs text-rose-500">{error}</div>;
+  // 1. LOCKED GATEWAY SCREEN
+  if (!isUnlocked) {
+    return (
+      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-zinc-50">
+        <div className="w-full max-w-md bg-white border border-zinc-200 rounded-3xl p-8 shadow-xl space-y-6 animate-in zoom-in-95 duration-150">
+          <div className="w-12 h-12 rounded-2xl bg-zinc-900 text-white flex items-center justify-center mx-auto shadow-md">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+            </svg>
+          </div>
 
+          <div className="text-center space-y-1">
+            <h2 className="text-xl font-black text-zinc-900 tracking-tight">Operator Clearance Required</h2>
+            <p className="text-xs text-zinc-500">
+              Enter your platform master passphrase to unlock cross-tenant deliverability controls.
+            </p>
+          </div>
+
+          <form onSubmit={handleUnlock} className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                Master Passphrase
+              </label>
+              <input
+                type="password"
+                value={passphraseInput}
+                onChange={(e) => setPassphraseInput(e.target.value)}
+                placeholder="••••••••••••••••"
+                required
+                className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-mono focus:outline-none focus:border-blue-500"
+                autoFocus
+              />
+              <p className="text-[10px] text-zinc-400 mt-1">Configured in OPERATOR_PASSPHRASE env var.</p>
+            </div>
+
+            <button
+              type="submit"
+              disabled={verifyingPassphrase}
+              className="w-full py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold rounded-xl transition-colors shadow-xs disabled:opacity-50"
+            >
+              {verifyingPassphrase ? 'Verifying Clearance...' : 'Authenticate Operator'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. UNLOCKED DASHBOARD SCREEN
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">Platform Deliverability Command</h1>
-        <p className="text-xs text-zinc-500 mt-1">Cross-tenant operator visibility. Monitor shared IP pool reputation and trigger emergency pause switches.</p>
+      {/* Top Banner with Inactivity Timer and Manual Lock */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">Platform Deliverability Command</h1>
+          <p className="text-xs text-zinc-500 mt-1">Cross-tenant operator visibility with step-up action protection.</p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200/60 px-3 py-1.5 rounded-xl flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Active Session ({sessionRemainingMinutes}m idle lock)</span>
+          </div>
+          <button
+            onClick={lockSession}
+            className="px-3 py-1.5 border border-zinc-200 text-zinc-600 hover:bg-zinc-100 text-xs font-bold rounded-xl transition-colors"
+          >
+            Lock Dashboard
+          </button>
+        </div>
       </div>
 
-      {/* Aggregate Metric Tiles */}
+      {loading && <div className="py-20 text-center text-xs text-zinc-400">Loading operator metrics...</div>}
+      {error && <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">{error}</div>}
+
+      {/* Metric Tiles */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
-            ['Registered Users', stats.userCount],
-            ['Active Sequences', stats.campaignCount],
-            ['Staged Leads', stats.leadCount],
-            ['Sending Domains', stats.domainCount],
+            ['Users', stats.userCount],
+            ['Sequences', stats.campaignCount],
+            ['Total Leads', stats.leadCount],
+            ['Domains', stats.domainCount],
             ['Sent Today', stats.sentToday],
             ['In Queue', stats.pendingCount],
           ].map(([label, value]) => (
@@ -83,10 +235,10 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Cross-Tenant Domains Table */}
+      {/* Cross-Tenant Domains Table with Action Protection */}
       <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
         <div>
-          <h2 className="text-base font-black text-zinc-900 tracking-tight">Cross-Tenant Domain Health</h2>
+          <h2 className="text-base font-black text-zinc-900 tracking-tight">Cross-Tenant Sending Domains</h2>
           <p className="text-xs text-zinc-500 mt-0.5">Automated circuit breakers trigger auto-pause at &gt;5% bounce rate or &gt;0.3% complaint rate.</p>
         </div>
 
@@ -100,7 +252,7 @@ export const AdminDashboard: React.FC = () => {
                 <th className="py-3 px-4">Bounce</th>
                 <th className="py-3 px-4">Complaint</th>
                 <th className="py-3 px-4">Mailboxes</th>
-                <th className="py-3 px-4 text-right">Emergency Circuit</th>
+                <th className="py-3 px-4 text-right">Protected Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
@@ -125,14 +277,14 @@ export const AdminDashboard: React.FC = () => {
                   <td className="py-3 px-4 text-right">
                     {d.status === 'paused_health_risk' ? (
                       <button
-                        onClick={() => handleUnpause(d.id)}
+                        onClick={() => setActionTargetDomain({ id: d.id, name: d.domainName, type: 'unpause' })}
                         className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
                       >
                         Reset & Clear
                       </button>
                     ) : (
                       <button
-                        onClick={() => handlePause(d.id)}
+                        onClick={() => setActionTargetDomain({ id: d.id, name: d.domainName, type: 'pause' })}
                         className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
                       >
                         Trip Breaker (Pause)
@@ -149,8 +301,8 @@ export const AdminDashboard: React.FC = () => {
       {/* Users Overview Table */}
       <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
         <div>
-          <h2 className="text-base font-black text-zinc-900 tracking-tight">Active User Workspaces</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">Tenant resource allocations and role permissions.</p>
+          <h2 className="text-base font-black text-zinc-900 tracking-tight">Active Workspaces</h2>
+          <p className="text-xs text-zinc-500 mt-0.5">Tenant resource allocations and permissions.</p>
         </div>
 
         <div className="overflow-x-auto">
@@ -162,7 +314,7 @@ export const AdminDashboard: React.FC = () => {
                 <th className="py-3 px-4">Sequences</th>
                 <th className="py-3 px-4">Leads</th>
                 <th className="py-3 px-4">Domains</th>
-                <th className="py-3 px-4">Created</th>
+                <th className="py-3 px-4">Joined</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
@@ -186,6 +338,65 @@ export const AdminDashboard: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* 
+        3. ACTION PROTECTION STEP-UP CONFIRMATION MODAL
+        Requires re-entering operator passphrase before executing domain pause/unpause.
+      */}
+      {actionTargetDomain && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm" onClick={() => setActionTargetDomain(null)} />
+          <div className="relative w-full max-w-md bg-white border border-zinc-200 rounded-3xl p-6 shadow-2xl space-y-4 z-10 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-zinc-900">Confirm High-Impact Action</h3>
+                <p className="text-xs text-zinc-500">Action Protection is armed for cross-tenant modifications.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-600 bg-zinc-50 p-3 rounded-xl border border-zinc-100">
+              You are about to <strong className="text-zinc-900 uppercase font-black">{actionTargetDomain.type}</strong> all sending from domain <span className="font-mono font-bold text-blue-600">{actionTargetDomain.name}</span>.
+            </p>
+
+            <div>
+              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                Re-enter Operator Passphrase
+              </label>
+              <input
+                type="password"
+                value={actionConfirmPassphrase}
+                onChange={(e) => setActionConfirmPassphrase(e.target.value)}
+                placeholder="••••••••••••••••"
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+              <button
+                type="button"
+                onClick={() => setActionTargetDomain(null)}
+                className="px-3.5 py-1.5 text-xs text-zinc-600 font-bold hover:text-zinc-900"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteProtectedAction}
+                disabled={submittingAction || !actionConfirmPassphrase.trim()}
+                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors disabled:opacity-50 shadow-xs"
+              >
+                {submittingAction ? 'Verifying...' : 'Authorize Action'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

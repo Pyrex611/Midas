@@ -1,8 +1,19 @@
 import { Router } from 'express';
-import { listUsers, listAllDomains, pauseDomain, unpauseDomain, getPlatformStats } from '../controllers/admin.controller';
+import {
+  listUsers,
+  listAllDomains,
+  pauseDomain,
+  unpauseDomain,
+  getPlatformStats,
+  unlockAdminAccess,
+} from '../controllers/admin.controller';
 
 const router = Router();
 
+// Publicly reachable unlock gateway (requires master passphrase)
+router.post('/unlock', unlockAdminAccess);
+
+// Operator-protected routes
 router.get('/stats', getPlatformStats);
 router.get('/users', listUsers);
 router.get('/domains', listAllDomains);

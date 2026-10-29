@@ -18,10 +18,10 @@ import userSettingsRoutes from './routes/userSettings.routes';
 import configRoutes from './routes/config.routes';
 import unsubscribeRoutes from './routes/unsubscribe.routes';
 import adminRoutes from './routes/admin.routes';
+import trackRoutes from './routes/track.routes';
 
 const app = express();
 
-// Parse and clean configured allowed origins
 const allowedOrigins = (env.CORS_ORIGIN || '')
   .split(',')
   .map(o => o.trim().replace(/\/$/, ''))
@@ -50,7 +50,6 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
 
-// Request Logger: Logs every incoming request and its completion status & latency
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -60,29 +59,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// Immediate Liveness Probe (Zero upstream dependencies, resolves before guards)
 app.get('/api/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Body parsing with support for JSON and URL-encoded forms
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Timeout guard backstop (15s default)
 app.use(requestTimeoutGuard(15000));
 
-// Public Webhook Receivers (Mailgun & Clerk)
+// Public Webhooks & Tracking Endpoints
 app.use('/api/webhooks', webhookRoutes);
-
-// Automated Cron Triggers (Guarded by Bearer CRON_SECRET)
 app.use('/api/cron', cronRoutes);
-
-// Public Feature Flags
 app.use('/api/config', configRoutes);
-
-// Public One-Click Unsubscribe
 app.use('/api/unsubscribe', unsubscribeRoutes);
+app.use('/api/track', trackRoutes);
 
 // Protected Core Application Routes
 app.use('/api/leads', requireAuth, leadRoutes);

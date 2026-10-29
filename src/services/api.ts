@@ -8,16 +8,22 @@ const api = axios.create({
 
 axios.defaults.withCredentials = true;
 
-// Token injection directly on the custom API instance
+// Token injection interceptor: attaches both Clerk user token and Operator session token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('midas_auth_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // Operator clearance token for Platform Admin operations
+  const operatorToken = sessionStorage.getItem('midas_operator_token');
+  if (operatorToken) {
+    config.headers['x-operator-token'] = operatorToken;
+  }
+
   return config;
 });
 
-// Robust, human-readable error extractor preventing "[object Object]" UI alerts
 export const getErrorMessage = (err: any, fallback: string = 'An unexpected error occurred'): string => {
   if (!err) return fallback;
   if (typeof err === 'string') return err;
@@ -48,8 +54,6 @@ export const userSettingsAPI = {
 };
 
 export const configAPI = {
-  // Public feature flags — currently just whether a real email-verification
-  // vendor is configured, which drives the "Verify emails" checkbox on upload.
   get: () => api.get('/config'),
 };
 
@@ -138,7 +142,6 @@ export const campaignAPI = {
   addSenderToCampaign: (campaignId: string, senderId: string) => api.post(`/campaigns/${campaignId}/senders`, { senderId }),
   removeSenderFromCampaign: (campaignId: string, senderId: string) => api.delete(`/campaigns/${campaignId}/senders/${senderId}`),
 
-  // Collaboration Operations
   getMyInvites: () => api.get('/campaigns/invites/my'),
   acceptInvite: (token: string) => api.post(`/campaigns/invites/${token}/accept`),
   createInvite: (campaignId: string, data: { email: string; role: string }) =>
@@ -153,10 +156,6 @@ export const campaignAPI = {
 
 export const domainAPI = {
   getAll: () => api.get('/domains'),
-  // Default flow: paste the Mailgun API key you already send with. Runs a
-  // real test send immediately, then returns a one-time code + address to
-  // confirm receiving. testRecipientEmail defaults server-side to your
-  // account email if omitted.
   connect: (domainName: string, mailgunApiKey: string, region?: 'us' | 'eu', testRecipientEmail?: string) =>
     api.post('/domains', { domainName, mailgunApiKey, region, testRecipientEmail }),
   retrySendTest: (id: string, testRecipientEmail?: string) => api.post(`/domains/${id}/send-test`, { testRecipientEmail }),
@@ -176,11 +175,18 @@ export const senderAPI = {
 };
 
 export const adminAPI = {
+  unlock: (passphrase: string) => api.post('/admin/unlock', { passphrase }),
   getStats: () => api.get('/admin/stats'),
   listUsers: () => api.get('/admin/users'),
   listDomains: () => api.get('/admin/domains'),
-  pauseDomain: (id: string) => api.post(`/admin/domains/${id}/pause`),
-  unpauseDomain: (id: string) => api.post(`/admin/domains/${id}/unpause`),
+  pauseDomain: (id: string, actionPassphrase?: string) =>
+    api.post(`/admin/domains/${id}/pause`, { actionPassphrase }, {
+      headers: actionPassphrase ? { 'x-action-passphrase': actionPassphrase } : undefined,
+    }),
+  unpauseDomain: (id: string, actionPassphrase?: string) =>
+    api.post(`/admin/domains/${id}/unpause`, { actionPassphrase }, {
+      headers: actionPassphrase ? { 'x-action-passphrase': actionPassphrase } : undefined,
+    }),
 };
 
 export const aiAPI = {
@@ -194,6 +200,17 @@ export const diagnosticsAPI = {
 
 export const inboxAPI = {
   getThreads: () => api.get('/inbox'),
+  startConversation: (data: {
+    leadId?: string;
+    name?: string;
+    email?: string;
+    company?: string;
+    position?: string;
+    saveAsLead?: boolean;
+    senderId: string;
+    subject: string;
+    body: string;
+  }) => api.post('/inbox/start', data),
   sendReply: (leadId: string, body: string) => api.post(`/inbox/${leadId}/reply`, { body }),
 };
 
