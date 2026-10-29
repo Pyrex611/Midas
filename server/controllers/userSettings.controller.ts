@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import prisma from '../lib/prisma';
+import { encrypt } from '../lib/encryption';
 
 export const getSettings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -10,29 +11,40 @@ export const getSettings = async (req: AuthRequest, res: Response, next: NextFun
     });
 
     if (!settings) {
-      return res.json({});
+      return res.json({ hasAiApiKey: false });
     }
 
-    res.json(settings);
+    // Never return raw or encrypted API keys
+    const { aiApiKeyEncrypted, ...safeSettings } = settings;
+    res.json({
+      ...safeSettings,
+      hasAiApiKey: Boolean(aiApiKeyEncrypted),
+    });
   } catch (error) {
     next(error);
   }
 };
 
 const VALID_PERIODS = ['hour', 'day'] as const;
+const VALID_PROVIDERS = ['gemini', 'openrouter', 'aigateway', 'openai', 'deepseek', 'ollama', 'mock'] as const;
 
 export const updateSettings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { sendLimit, sendPeriod, companyName, physicalAddress, customOptOutText } = req.body;
+    const {
+      sendLimit,
+      sendPeriod,
+      companyName,
+      physicalAddress,
+      customOptOutText,
+      aiProvider,
+      aiModel,
+      aiApiKey,
+      clearAiApiKey,
+      aiGatewayUrl,
+    } = req.body;
 
-    const data: {
-      sendLimit?: number | null;
-      sendPeriod?: string | null;
-      companyName?: string | null;
-      physicalAddress?: string | null;
-      customOptOutText?: string | null;
-    } = {};
+    const data: Record<string, any> = {};
 
     if (sendLimit !== undefined) {
       const n = Number(sendLimit);
@@ -61,13 +73,40 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       data.customOptOutText = typeof customOptOutText === 'string' ? customOptOutText.trim() : null;
     }
 
+    // AI Provider & Model Configuration
+    if (aiProvider !== undefined) {
+      if (aiProvider !== null && !VALID_PROVIDERS.includes(aiProvider)) {
+        return res.status(400).json({ error: `aiProvider must be one of: ${VALID_PROVIDERS.join(', ')}` });
+      }
+      data.aiProvider = aiProvider;
+    }
+
+    if (aiModel !== undefined) {
+      data.aiModel = typeof aiModel === 'string' && aiModel.trim() ? aiModel.trim() : null;
+    }
+
+    if (aiGatewayUrl !== undefined) {
+      data.aiGatewayUrl = typeof aiGatewayUrl === 'string' && aiGatewayUrl.trim() ? aiGatewayUrl.trim() : null;
+    }
+
+    // Encrypt custom API key if provided
+    if (aiApiKey && typeof aiApiKey === 'string' && aiApiKey.trim()) {
+      data.aiApiKeyEncrypted = encrypt(aiApiKey.trim());
+    } else if (clearAiApiKey === true) {
+      data.aiApiKeyEncrypted = null;
+    }
+
     const settings = await prisma.userSettings.upsert({
       where: { userId },
       update: data,
       create: { userId, ...data },
     });
 
-    res.json(settings);
+    const { aiApiKeyEncrypted, ...safeSettings } = settings;
+    res.json({
+      ...safeSettings,
+      hasAiApiKey: Boolean(aiApiKeyEncrypted),
+    });
   } catch (error) {
     next(error);
   }

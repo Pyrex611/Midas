@@ -363,15 +363,22 @@ model PendingEmail {
 }
 
 model UserSettings {
-  userId           String   @id @map("user_id") @db.Uuid
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sendLimit        Int?     @map("send_limit")
-  sendPeriod       String?  @map("send_period")
-  companyName      String?  @map("company_name")
-  physicalAddress  String?  @map("physical_address")
-  customOptOutText String?  @map("custom_opt_out_text")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  userId            String   @id @map("user_id") @db.Uuid
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sendLimit         Int?     @map("send_limit")
+  sendPeriod        String?  @map("send_period")
+  companyName       String?  @map("company_name")
+  physicalAddress   String?  @map("physical_address")
+  customOptOutText  String?  @map("custom_opt_out_text")
+  
+  // UI-Configurable AI Provider & Model Settings
+  aiProvider        String?  @map("ai_provider")
+  aiModel           String?  @map("ai_model")
+  aiApiKeyEncrypted String?  @db.Text @map("ai_api_key_encrypted")
+  aiGatewayUrl      String?  @map("ai_gateway_url")
+
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 }
 
 model CronLock {

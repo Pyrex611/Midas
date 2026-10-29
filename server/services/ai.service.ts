@@ -1,300 +1,136 @@
+import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { promptManager, PromptParams } from './promptManager.service';
+import { tryDecrypt } from '../lib/encryption';
+import {
+  AIProvider,
+  ReplyAnalysis,
+  InboundClassification,
+  InboundIntentCategory,
+} from './ai/types';
+import { MockProvider } from './ai/providers/mock.provider';
+import { OpenAIProvider } from './ai/providers/openai.provider';
+import { GeminiProvider } from './ai/providers/gemini.provider';
+import { DeepSeekProvider } from './ai/providers/deepseek.provider';
+import { OpenRouterProvider } from './ai/providers/openrouter.provider';
+import { AIGatewayProvider } from './ai/providers/aigateway.provider';
 
-export interface ReplyAnalysis {
-  sentiment: 'very positive' | 'positive' | 'neutral' | 'negative' | 'very negative';
-  intent: string;
-  painPoints?: string[];
-  objections?: string[];
-  interestLevel?: number;
-  buyingSignals?: string[];
-  suggestedApproach?: string;
-  keyPoints?: string[];
-}
+export type { ReplyAnalysis, InboundClassification, InboundIntentCategory } from './ai/types';
 
-interface AIProvider {
-  name: string;
-  complete(prompt: string, system?: string): Promise<string>;
-  isAvailable(): Promise<boolean>;
-}
-
-class MockProvider implements AIProvider {
-  readonly name = 'mock';
-  async isAvailable() { return true; }
-
-  async complete(prompt: string, system?: string): Promise<string> {
-    logger.debug('[AI-ENGINE] MockProvider generating sample fallback response');
-    if (prompt.includes('sentiment') || prompt.includes('Reply text')) {
-      return JSON.stringify({
-        sentiment: 'neutral',
-        intent: 'asking for info',
-        painPoints: ['CRM integration friction'],
-        objections: [],
-        interestLevel: 6,
-        buyingSignals: ['requested details'],
-        suggestedApproach: 'Provide a brief one-pager and offer an asynchronous demo.',
-        keyPoints: []
-      });
-    } else {
-      return JSON.stringify({
-        subject: '{Quick question|Quick idea} regarding {{company}}',
-        body: '{Hi|Hey|Hello} {{name}},\n\n{I noticed|Looks like} {{company}} is active in your market. We help teams automate pipeline conversion without adding overhead.\n\nWorth exploring?\n\nBest,\n{{senderName}}'
-      });
-    }
-  }
-}
-
-class OpenAIProvider implements AIProvider {
-  readonly name = 'openai';
-  constructor(private apiKey: string, private model = 'gpt-4o-mini') {}
-
-  async isAvailable() { return !!this.apiKey; }
-
-  async complete(prompt: string, system?: string): Promise<string> {
-    if (!this.apiKey) throw new Error('OPENAI_API_KEY is not configured');
-
-    const messages = [];
-    if (system) messages.push({ role: 'system', content: system });
-    messages.push({ role: 'user', content: prompt });
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey.trim()}`,
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 1200,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    const rawText = await response.text();
-    if (!response.ok) {
-      throw new Error(`OpenAI API error (${response.status}): ${rawText}`);
-    }
-
-    const data = JSON.parse(rawText);
-    return data.choices[0].message.content;
-  }
-}
-
-class GeminiProvider implements AIProvider {
-  readonly name = 'gemini';
-  constructor(private apiKey: string, private model = 'gemini-1.5-flash') {}
-
-  async isAvailable() { return !!this.apiKey; }
-
-  async complete(prompt: string, system?: string): Promise<string> {
-    if (!this.apiKey) throw new Error('GEMINI_API_KEY is not configured');
-
-    const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey.trim()}`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: fullPrompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    const rawText = await response.text();
-    if (!response.ok) {
-      throw new Error(`Gemini API error (${response.status}): ${rawText}`);
-    }
-
-    const data = JSON.parse(rawText);
-    if (!data.candidates || !data.candidates[0]?.content?.parts?.[0]?.text) {
-      throw new Error(`Gemini returned unexpected response structure: ${rawText}`);
-    }
-
-    return data.candidates[0].content.parts[0].text;
-  }
-}
-
-class DeepSeekProvider implements AIProvider {
-  readonly name = 'deepseek';
-  constructor(private apiKey: string, private model = 'deepseek-chat') {}
-
-  async isAvailable() { return !!this.apiKey; }
-
-  async complete(prompt: string, system?: string): Promise<string> {
-    if (!this.apiKey) throw new Error('DEEPSEEK_API_KEY is not configured');
-
-    const messages = [];
-    if (system) messages.push({ role: 'system', content: system });
-    messages.push({ role: 'user', content: prompt });
-
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey.trim()}`,
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 1200,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    const rawText = await response.text();
-    if (!response.ok) {
-      throw new Error(`DeepSeek API error (${response.status}): ${rawText}`);
-    }
-
-    const data = JSON.parse(rawText);
-    return data.choices[0].message.content;
-  }
-}
-
-class OpenRouterProvider implements AIProvider {
-  readonly name = 'openrouter';
-  constructor(private apiKey: string, private model: string) {}
-
-  async isAvailable() { return !!this.apiKey; }
-
-  async complete(prompt: string, system?: string): Promise<string> {
-    if (!this.apiKey) throw new Error('OPENROUTER_API_KEY is not configured');
-
-    const messages = [];
-    if (system) messages.push({ role: 'system', content: system });
-    messages.push({ role: 'user', content: prompt });
-
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey.trim()}`,
-        'HTTP-Referer': 'https://midas.outreach',
-        'X-Title': 'Midas Engine',
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 3000,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    const rawText = await response.text();
-    if (!response.ok) {
-      throw new Error(`OpenRouter API error (${response.status}): ${rawText}`);
-    }
-
-    const data = JSON.parse(rawText);
-    const choice = data.choices?.[0];
-    let rawContent = choice?.message?.content || choice?.message?.reasoning || '';
-    if (!rawContent) {
-      throw new Error(`OpenRouter API returned empty content: ${rawText}`);
-    }
-    return rawContent;
-  }
-}
-
-class OllamaProvider implements AIProvider {
-  readonly name = 'ollama';
-  constructor(private baseUrl = 'http://localhost:11434', private model = 'llama3.1:8b') {}
-
-  async isAvailable() {
-    try {
-      const resp = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(3_000) });
-      return resp.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  async complete(prompt: string, system?: string): Promise<string> {
-    const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
-    const response = await fetch(`${this.baseUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: this.model,
-        prompt: fullPrompt,
-        stream: false,
-        options: { temperature: 0.7 },
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    if (!response.ok) throw new Error('Ollama generation failed');
-    const data: any = await response.json();
-    return data.response;
-  }
+export interface UserAIConfig {
+  provider: string;
+  model?: string;
+  apiKey?: string;
+  gatewayUrl?: string;
 }
 
 export class AIService {
-  private primaryProvider: AIProvider;
-  private fallbackProvider: AIProvider | null = null;
+  private defaultPrimaryProvider: AIProvider;
+  private defaultFallbackProvider: AIProvider | null = null;
   private mockProvider = new MockProvider();
 
   constructor() {
     const primaryType = (process.env.AI_PROVIDER || 'mock').toLowerCase();
     const fallbackType = process.env.PRIMARY_FALLBACK_PROVIDER?.toLowerCase();
 
-    logger.info({ primary: primaryType, fallback: fallbackType }, '[AI-ENGINE] Initializing Dynamic AI Failover Engine');
+    logger.info({ primary: primaryType, fallback: fallbackType }, '[AI-ENGINE] Initializing Modular AI Engine');
 
-    this.primaryProvider = this.createProvider(primaryType);
+    this.defaultPrimaryProvider = this.createProviderInstance(primaryType);
 
     if (fallbackType && fallbackType !== primaryType) {
       try {
-        this.fallbackProvider = this.createProvider(fallbackType);
+        this.defaultFallbackProvider = this.createProviderInstance(fallbackType);
       } catch (err: any) {
         logger.error({ err: err?.message, fallbackType }, '[AI-ENGINE] Failed to initialize fallback AI provider');
       }
     }
   }
 
-  private createProvider(type: string): AIProvider {
-    switch (type) {
-      case 'openai':
-        return new OpenAIProvider(process.env.OPENAI_API_KEY || '', process.env.OPENAI_MODEL || 'gpt-4o-mini');
+  public createProviderInstance(type: string, overrides?: { model?: string; apiKey?: string; gatewayUrl?: string }): AIProvider {
+    switch (type.toLowerCase()) {
       case 'gemini':
-        return new GeminiProvider(process.env.GEMINI_API_KEY || '', process.env.GEMINI_MODEL || 'gemini-1.5-flash');
-      case 'deepseek':
-        return new DeepSeekProvider(process.env.DEEPSEEK_API_KEY || '', process.env.DEEPSEEK_MODEL || 'deepseek-chat');
+        return new GeminiProvider(
+          overrides?.apiKey || process.env.GEMINI_API_KEY || '',
+          overrides?.model || process.env.GEMINI_MODEL || 'gemini-1.5-flash'
+        );
       case 'openrouter':
-        return new OpenRouterProvider(process.env.OPENROUTER_API_KEY || '', process.env.OPENROUTER_MODEL || 'deepseek/deepseek-r1:free');
-      case 'ollama':
-        return new OllamaProvider(process.env.OLLAMA_URL || 'http://localhost:11434', process.env.OLLAMA_POWERFUL_MODEL || 'llama3.1:8b');
+        return new OpenRouterProvider(
+          overrides?.apiKey || process.env.OPENROUTER_API_KEY || '',
+          overrides?.model || process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat'
+        );
+      case 'aigateway':
+        return new AIGatewayProvider(
+          overrides?.gatewayUrl || process.env.AI_GATEWAY_URL || 'https://api.vercel.ai/v1',
+          overrides?.apiKey || process.env.AI_GATEWAY_KEY || '',
+          overrides?.model || process.env.AI_GATEWAY_MODEL || 'openai/gpt-4o-mini'
+        );
+      case 'openai':
+        return new OpenAIProvider(
+          overrides?.apiKey || process.env.OPENAI_API_KEY || '',
+          overrides?.model || process.env.OPENAI_MODEL || 'gpt-4o-mini'
+        );
+      case 'deepseek':
+        return new DeepSeekProvider(
+          overrides?.apiKey || process.env.DEEPSEEK_API_KEY || '',
+          overrides?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat'
+        );
       case 'mock':
       default:
         return new MockProvider();
     }
   }
 
-  private async attemptComplete(prompt: string, system?: string): Promise<string> {
+  /**
+   * Resolves active AI configuration for a specific user.
+   * Checks database UserSettings first; falls back to server env vars.
+   */
+  public async resolveUserProvider(userId?: string): Promise<AIProvider> {
+    if (!userId) return this.defaultPrimaryProvider;
+
     try {
-      return await this.primaryProvider.complete(prompt, system);
+      const settings = await prisma.userSettings.findUnique({
+        where: { userId },
+      });
+
+      if (!settings || !settings.aiProvider) {
+        return this.defaultPrimaryProvider;
+      }
+
+      const decryptedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
+
+      return this.createProviderInstance(settings.aiProvider, {
+        model: settings.aiModel || undefined,
+        apiKey: decryptedKey,
+        gatewayUrl: settings.aiGatewayUrl || undefined,
+      });
+    } catch {
+      return this.defaultPrimaryProvider;
+    }
+  }
+
+  private async attemptComplete(prompt: string, system?: string, activeProvider?: AIProvider): Promise<string> {
+    const provider = activeProvider || this.defaultPrimaryProvider;
+
+    try {
+      return await provider.complete(prompt, system);
     } catch (primaryError: any) {
       logger.error(
         {
-          provider: this.primaryProvider.name,
+          provider: provider.name,
           error: primaryError?.message || String(primaryError),
           stack: primaryError?.stack,
         },
-        '[AI-ENGINE] Primary AI provider call failed'
+        '[AI-ENGINE] Configured AI provider call failed'
       );
 
-      if (this.fallbackProvider) {
+      if (this.defaultFallbackProvider) {
         try {
-          logger.info({ fallback: this.fallbackProvider.name }, '[AI-ENGINE] Switching to fallback AI provider');
-          return await this.fallbackProvider.complete(prompt, system);
+          logger.info({ fallback: this.defaultFallbackProvider.name }, '[AI-ENGINE] Switching to fallback AI provider');
+          return await this.defaultFallbackProvider.complete(prompt, system);
         } catch (fallbackError: any) {
           logger.error(
             {
-              fallback: this.fallbackProvider.name,
+              fallback: this.defaultFallbackProvider.name,
               error: fallbackError?.message || String(fallbackError),
             },
             '[AI-ENGINE] Fallback AI provider also failed'
@@ -317,7 +153,7 @@ export class AIService {
 
     try {
       return JSON.parse(match[0]);
-    } catch (err) {
+    } catch {
       let depth = 0;
       let start = -1;
       for (let i = 0; i < cleanedRaw.length; i++) {
@@ -331,7 +167,7 @@ export class AIService {
             const candidate = cleanedRaw.substring(start, i + 1);
             try {
               return JSON.parse(candidate);
-            } catch (e) {
+            } catch {
               // continue scanning
             }
           }
@@ -341,8 +177,9 @@ export class AIService {
     }
   }
 
-  async complete(prompt: string, system?: string): Promise<string> {
-    return this.attemptComplete(prompt, system);
+  async complete(prompt: string, system?: string, userId?: string): Promise<string> {
+    const provider = await this.resolveUserProvider(userId);
+    return this.attemptComplete(prompt, system, provider);
   }
 
   async generateDraft(
@@ -353,8 +190,10 @@ export class AIService {
     companyContext?: string | null,
     originalEmail?: string,
     sentiment?: string,
-    stepNumber?: number
+    stepNumber?: number,
+    userId?: string
   ): Promise<{ subject: string; body: string }> {
+    const provider = await this.resolveUserProvider(userId);
     const variationSeed = Math.floor(Math.random() * 1000000);
     const params: PromptParams = {
       useCase,
@@ -370,7 +209,7 @@ export class AIService {
     const prompt = promptManager.buildPrompt(params);
     const system = 'You are an elite B2B sales copywriter. Output only valid JSON with "subject" and "body".';
 
-    const raw = await this.attemptComplete(prompt, system);
+    const raw = await this.attemptComplete(prompt, system, provider);
     const parsed = this.extractJSON(raw);
     if (!parsed.subject || !parsed.body) {
       throw new Error(`Parsed JSON missing subject or body: ${JSON.stringify(parsed)}`);
@@ -378,7 +217,72 @@ export class AIService {
     return { subject: parsed.subject, body: parsed.body };
   }
 
-  async analyzeReply(replyText: string): Promise<ReplyAnalysis> {
+  async classifyIntent(replyText: string, userId?: string): Promise<InboundClassification> {
+    const provider = await this.resolveUserProvider(userId);
+    const prompt = `Analyze this inbound B2B email response from a prospect.
+Classify the response into exact JSON with:
+- "intent": exactly one of ["INTERESTED_DEMO", "INTERESTED_INFO", "OBJECTION_PRICING", "OBJECTION_TIMING", "OBJECTION_COMPETITOR", "NOT_DECISION_MAKER", "OUT_OF_OFFICE", "UNSUBSCRIBE_REQUEST", "NEUTRAL_QUESTION"]
+- "sentiment": exactly one of ["very positive", "positive", "neutral", "negative", "very negative"]
+- "confidence": number 0.0 to 1.0
+- "extractedReturnDate": ISO date string if OOO specifies a return date (e.g. "2026-11-20"), otherwise null
+- "summary": one sentence summary of what the prospect said
+- "recommendedAction": one of ["CONVERT_CALL", "SEND_COLLATERAL", "HANDLE_OBJECTION", "FREEZE_OOO", "UNSUBSCRIBE", "MANUAL_REVIEW"]
+
+Prospect Reply Text:
+"""
+${replyText}
+"""`;
+
+    const system = 'You are an expert sales analyst. Return only valid JSON.';
+    const raw = await this.attemptComplete(prompt, system, provider);
+    const parsed = this.extractJSON(raw);
+
+    return {
+      intent: parsed.intent || 'NEUTRAL_QUESTION',
+      sentiment: parsed.sentiment || 'neutral',
+      confidence: parsed.confidence || 0.8,
+      extractedReturnDate: parsed.extractedReturnDate || null,
+      summary: parsed.summary || 'Prospect replied.',
+      recommendedAction: parsed.recommendedAction || 'MANUAL_REVIEW',
+    };
+  }
+
+  async generateObjectionResponse(
+    campaign: { context?: string | null; reference?: string | null; targetTool?: string | null; extendedObjective?: string | null },
+    lead: { name: string; company?: string | null },
+    inboundText: string,
+    intent: InboundIntentCategory,
+    userId?: string
+  ): Promise<{ subject: string; body: string }> {
+    const provider = await this.resolveUserProvider(userId);
+    const prompt = `You are a world-class sales development representative.
+A prospect has raised an objection of type "${intent}".
+Your goal is to politely resolve the objection, remove friction, and steer towards the target tool: "${campaign.targetTool || 'a short 15-minute call'}".
+
+Campaign Strategy Context: "${campaign.context || 'B2B Solutions'}"
+Extended SDR Guidelines: "${campaign.extendedObjective || 'Be concise, low-pressure, and helpful.'}"
+Prospect Name: "${lead.name}"
+Prospect Company: "${lead.company || 'their team'}"
+Prospect's Message:
+"""
+${inboundText}
+"""
+
+Rules:
+1. Under 75 words total.
+2. Directly address their specific friction point.
+3. Soft CTA aligned with "${campaign.targetTool || 'the next step'}".
+4. Use Spintax for greetings: {Hi|Hey} {{name}},
+
+Output JSON: {"subject": "Re: ...", "body": "..."}`;
+
+    const system = 'You are an elite B2B objection handling copywriter. Return valid JSON only.';
+    const raw = await this.attemptComplete(prompt, system, provider);
+    return this.extractJSON(raw);
+  }
+
+  async analyzeReply(replyText: string, userId?: string): Promise<ReplyAnalysis> {
+    const provider = await this.resolveUserProvider(userId);
     const prompt = `Analyze the following B2B email reply from a lead. Provide a JSON response with:
 - sentiment: one of "very positive", "positive", "neutral", "negative", "very negative"
 - intent: short phrase describing primary intent
@@ -392,40 +296,74 @@ export class AIService {
 Reply text: """${replyText}"""`;
 
     const system = 'You are an expert sales analyst. Output only valid JSON.';
-    const raw = await this.attemptComplete(prompt, system);
-    const parsed = this.extractJSON(raw);
-    if (!parsed.sentiment || !parsed.intent) {
-      throw new Error(`Parsed analysis missing sentiment or intent: ${JSON.stringify(parsed)}`);
-    }
-    return parsed as ReplyAnalysis;
+    const raw = await this.attemptComplete(prompt, system, provider);
+    return this.extractJSON(raw) as ReplyAnalysis;
   }
 
-  /**
-   * Diagnostic test method: directly calls primary provider and returns status or exact error.
-   */
-  async testActiveProvider(): Promise<{
+  async testActiveProvider(userId?: string): Promise<{
     configuredProvider: string;
     status: 'HEALTHY' | 'ERROR';
     latencyMs?: number;
     responsePreview?: string;
     errorDetail?: string;
   }> {
+    const provider = await this.resolveUserProvider(userId);
     const start = Date.now();
     try {
-      const result = await this.primaryProvider.complete(
+      const result = await provider.complete(
         'Return JSON: {"status": "ok", "message": "ping"}',
         'Output valid JSON only.'
       );
       const latencyMs = Date.now() - start;
       return {
-        configuredProvider: this.primaryProvider.name,
+        configuredProvider: provider.name,
         status: 'HEALTHY',
         latencyMs,
         responsePreview: result.substring(0, 100),
       };
     } catch (err: any) {
       return {
-        configuredProvider: this.primaryProvider.name,
+        configuredProvider: provider.name,
+        status: 'ERROR',
+        errorDetail: err?.message || String(err),
+      };
+    }
+  }
+
+  /**
+   * Directly test any user-specified combination of provider, model, key, and gateway URL.
+   */
+  async testCustomConfiguration(config: {
+    provider: string;
+    model?: string;
+    apiKey?: string;
+    gatewayUrl?: string;
+  }): Promise<{
+    status: 'HEALTHY' | 'ERROR';
+    latencyMs?: number;
+    responsePreview?: string;
+    errorDetail?: string;
+  }> {
+    const testProvider = this.createProviderInstance(config.provider, {
+      model: config.model,
+      apiKey: config.apiKey,
+      gatewayUrl: config.gatewayUrl,
+    });
+
+    const start = Date.now();
+    try {
+      const result = await testProvider.complete(
+        'Return JSON: {"status": "ok", "message": "ping"}',
+        'Output valid JSON only.'
+      );
+      const latencyMs = Date.now() - start;
+      return {
+        status: 'HEALTHY',
+        latencyMs,
+        responsePreview: result.substring(0, 100),
+      };
+    } catch (err: any) {
+      return {
         status: 'ERROR',
         errorDetail: err?.message || String(err),
       };

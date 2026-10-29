@@ -206,6 +206,8 @@ export const adminAPI = {
 export const aiAPI = {
   optimizeContext: (context: string) => api.post('/ai/optimize-context', { context }),
   diagnostics: () => api.get('/ai/diagnostics'),
+  testConfig: (data: { provider: string; model?: string; apiKey?: string; gatewayUrl?: string }) =>
+    api.post('/ai/test', data),
 };
 
 export const diagnosticsAPI = {

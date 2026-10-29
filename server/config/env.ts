@@ -47,17 +47,28 @@ const envSchema = z.object({
   NEVERBOUNCE_API_KEY: z.string().optional(),
   ZEROBOUNCE_API_KEY: z.string().optional(),
 
-  // AI Provider Credentials (Repaired production defaults)
-  AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).default('mock'),
-  PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).optional(),
+  // Modular AI Provider Credentials
+  AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter', 'aigateway']).default('mock'),
+  PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter', 'aigateway']).optional(),
+  
+  // Model & Key Configurations
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
+  
   GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default('gemini-1.5-flash'), // Repaired from non-existent gemini-2.5-flash-lite
+  GEMINI_MODEL: z.string().default('gemini-1.5-flash'),
+  
   DEEPSEEK_API_KEY: z.string().optional(),
   DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
+  
   OPENROUTER_API_KEY: z.string().optional(),
-  OPENROUTER_MODEL: z.string().default('deepseek/deepseek-r1:free'),
+  OPENROUTER_MODEL: z.string().default('deepseek/deepseek-chat'),
+
+  // Vercel / Unified AI Gateway
+  AI_GATEWAY_URL: z.string().default('https://api.vercel.ai/v1'),
+  AI_GATEWAY_KEY: z.string().optional(),
+  AI_GATEWAY_MODEL: z.string().default('openai/gpt-4o-mini'),
+  
   OLLAMA_URL: z.string().default('http://localhost:11434'),
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),

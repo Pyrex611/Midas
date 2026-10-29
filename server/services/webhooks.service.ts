@@ -1,8 +1,7 @@
 import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
-import { aiService } from './ai.service';
-import { autoReplyService } from './autoReply.service';
+import { sequenceAgentService } from './sequenceAgent.service';
 
 export class WebhooksService {
 
@@ -44,15 +43,14 @@ export class WebhooksService {
       }
       else if (eventType === 'bounced' || eventType === 'failed') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { bouncedAt: now, status: 'BOUNCED' } });
-        await prisma.lead.update({ where: { id: email.leadId }, data: { outreachStatus: 'BOUNCED' } });
+        await prisma.lead.update({ where: { id: email.leadId }, data: { outreachStatus: 'BOUNCED', status: 'BOUNCED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'bounce');
       }
       else if (eventType === 'complained') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { spamComplaint: true } });
-        await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED' } });
+        await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED', outreachStatus: 'UNSUBSCRIBED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'complaint');
       }
-
     } catch (error) {
       logger.error({ error }, 'Deliverability webhook processing error');
     }
@@ -62,10 +60,6 @@ export class WebhooksService {
     const domain = await prisma.domain.findUnique({ where: { id: domainId }});
     if (!domain) return;
 
-    // Use the domain's ACTUAL historical send count instead of the previous
-    // `sentCountToday + warmupDay*20` heuristic, which reset daily and could
-    // wildly over/under-estimate volume — making the 5%/0.3% auto-pause
-    // killswitch fire on bad math instead of real deliverability signal.
     const totalSent = await prisma.outboundEmail.count({
       where: { domainId, status: { in: ['SENT', 'BOUNCED'] } },
     }) || 1;
@@ -84,7 +78,7 @@ export class WebhooksService {
       data: {
         bounceRate: newBounceRate,
         complaintRate: newComplaintRate,
-        status
+        status,
       }
     });
   }
@@ -100,12 +94,7 @@ export class WebhooksService {
 
       const cleanInReplyTo = rawInReplyTo ? rawInReplyTo.replace(/^<|>$/g, '').trim() : null;
 
-      // Domain connectivity receiving-test check, BEFORE normal reply
-      // matching. When a user is confirming a newly-connected domain, they
-      // send a one-off email containing a one-time code to
-      // connectivity@theirdomain.com from their own personal inbox — this
-      // is never a real campaign reply, so it must be intercepted here and
-      // never reach the normal lead/campaign matching logic below.
+      // Intercept domain connectivity receiving tests
       if (to) {
         const recipientAddress = (to.match(/<(.+)>/)?.[1] || to).trim().toLowerCase();
         if (recipientAddress.startsWith('connectivity@')) {
@@ -119,10 +108,8 @@ export class WebhooksService {
               data: { receivingConfirmedAt: new Date() },
             });
             logger.info({ domainId: domain.id, domainName: recipientDomainName }, 'Domain receiving test confirmed');
-          } else {
-            logger.warn({ recipientDomainName }, 'Connectivity-test email received but code did not match or no pending test');
           }
-          return; // Never process a connectivity-test email as a lead reply.
+          return;
         }
       }
 
@@ -140,13 +127,7 @@ export class WebhooksService {
         });
       }
 
-      // Fallback: match most recently contacted lead by email address.
-      // CROSS-TENANT SAFETY: `Lead.email` is only unique PER USER, so two
-      // different customers can legitimately have a lead with the same
-      // address. We must scope this fallback to the tenant that owns the
-      // domain the reply actually arrived at (`to`) — never search leads
-      // across all users — or a reply could get attached to the wrong
-      // customer's campaign/conversation history.
+      // Scoped tenant fallback
       if (!originalEmail && from && to) {
         const senderEmailMatch = from.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || from.trim().toLowerCase();
         const recipientAddress = to.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || to.trim().toLowerCase();
@@ -180,22 +161,12 @@ export class WebhooksService {
               domainId: latestSent.domainId
             };
           }
-        } else {
-          logger.warn({ recipientDomainName }, 'Inbound reply recipient domain is not registered to any user — dropping fallback match');
         }
       }
 
       if (!originalEmail) {
         logger.debug({ rawInReplyTo, from }, 'Could not map inbound email to outbound campaign');
         return;
-      }
-
-      let analysisPayload = null;
-      try {
-        const analysis = await aiService.analyzeReply(body);
-        analysisPayload = JSON.stringify(analysis);
-      } catch (err) {
-        logger.error({ err }, 'AI Analysis failed for inbound email');
       }
 
       const inboundEmail = await prisma.outboundEmail.create({
@@ -214,7 +185,6 @@ export class WebhooksService {
           replyToId: originalEmail.id,
           sentAt: new Date(payload.timestamp ? parseInt(payload.timestamp) * 1000 : Date.now()),
           status: 'DELIVERED',
-          analysis: analysisPayload
         }
       });
 
@@ -231,20 +201,16 @@ export class WebhooksService {
         }
       });
 
-      // Cancel any remaining queued follow-up steps for this lead
-      await prisma.pendingEmail.deleteMany({
-        where: { leadId: originalEmail.leadId }
-      });
-
-      logger.info({ leadId: originalEmail.leadId }, 'Inbound reply processed, follow-ups cancelled.');
-
+      // Route through Behavioral State-Graph Engine
       if (originalEmail.campaignId) {
-        const campaign = await prisma.campaign.findUnique({ where: { id: originalEmail.campaignId } });
-        if (campaign?.autoReplyEnabled) {
-          autoReplyService.processReply(inboundEmail.id).catch(err => {
-            logger.error({ err }, 'Auto-reply engine failed');
-          });
-        }
+        sequenceAgentService.processInboundTransition(
+          originalEmail.leadId,
+          originalEmail.campaignId,
+          inboundEmail.id,
+          body
+        ).catch(err => {
+          logger.error({ err: err?.message }, '[STATE-GRAPH] Transition execution failure');
+        });
       }
 
     } catch (error) {
