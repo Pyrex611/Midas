@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { inboxAPI } from '../services/api';
+import { useToast } from '../context/ToastContext';
 
 export const Inbox: React.FC = () => {
+  const { toast } = useToast();
   const [threads, setThreads] = useState<any[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [filterSentiment, setFilterSentiment] = useState<'ALL' | 'POSITIVE' | 'OBJECTION' | 'OOO'>('ALL');
   const [replyBody, setReplyBody] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -11,12 +14,13 @@ export const Inbox: React.FC = () => {
   const fetchInbox = async () => {
     try {
       const res = await inboxAPI.getThreads();
-      setThreads(res.data);
-      if (res.data.length > 0 && !activeThreadId) {
-        setActiveThreadId(res.data[0].id);
+      const list = res.data || [];
+      setThreads(list);
+      if (list.length > 0 && !activeThreadId) {
+        setActiveThreadId(list[0].id);
       }
-    } catch (error) {
-      console.error('Failed to load inbox', error);
+    } catch {
+      toast.error('Failed to load incoming replies', 'Network Error');
     } finally {
       setLoading(false);
     }
@@ -24,16 +28,17 @@ export const Inbox: React.FC = () => {
 
   useEffect(() => {
     fetchInbox();
-    const interval = setInterval(fetchInbox, 30000);
+    const interval = setInterval(fetchInbox, 20000);
     return () => clearInterval(interval);
   }, []);
+
+  const activeThread = threads.find((t) => t.id === activeThreadId);
 
   const handleSendReply = async () => {
     if (!replyBody.trim() || !activeThreadId) return;
     setSending(true);
-    
-    // Optimistically update thread view for immediate feedback
-    const activeLead = threads.find(t => t.id === activeThreadId);
+
+    const activeLead = activeThread;
     const optimisticMessage = {
       id: `temp-${Date.now()}`,
       subject: activeLead?.sentEmails?.[activeLead.sentEmails.length - 1]?.subject || 'Re: Outreach',
@@ -42,11 +47,9 @@ export const Inbox: React.FC = () => {
       isIncoming: false,
     };
 
-    setThreads(prev =>
-      prev.map(t =>
-        t.id === activeThreadId
-          ? { ...t, sentEmails: [...(t.sentEmails || []), optimisticMessage] }
-          : t
+    setThreads((prev) =>
+      prev.map((t) =>
+        t.id === activeThreadId ? { ...t, sentEmails: [...(t.sentEmails || []), optimisticMessage] } : t
       )
     );
 
@@ -55,152 +58,159 @@ export const Inbox: React.FC = () => {
 
     try {
       await inboxAPI.sendReply(activeThreadId, bodyToSend);
+      toast.success('Reply dispatched to prospect', 'Sent');
       await fetchInbox();
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to send reply');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to dispatch reply', 'Error');
       await fetchInbox();
     } finally {
       setSending(false);
     }
   };
 
-  const activeThread = threads.find(t => t.id === activeThreadId);
-
-  const getSentimentBadge = (analysisStr: string) => {
+  const getSentimentPill = (analysisStr: string) => {
     if (!analysisStr) return null;
     try {
       const analysis = typeof analysisStr === 'string' ? JSON.parse(analysisStr) : analysisStr;
-      const s = analysis.sentiment;
-      const colors: any = {
-        'very positive': 'bg-green-600 text-white',
-        'positive': 'bg-green-400 text-white',
-        'neutral': 'bg-yellow-400 text-white',
-        'negative': 'bg-red-400 text-white',
-        'very negative': 'bg-red-600 text-white',
-      };
-      return <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded-full ${colors[s] || 'bg-gray-200 text-gray-800'}`}>{s}</span>;
-    } catch (e) { return null; }
+      const s = (analysis.sentiment || '').toLowerCase();
+      if (s.includes('positive')) {
+        return <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700">POSITIVE</span>;
+      }
+      if (s.includes('negative')) {
+        return <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-700">OBJECTION</span>;
+      }
+      return <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-zinc-100 text-zinc-600">NEUTRAL</span>;
+    } catch {
+      return null;
+    }
   };
 
-  if (loading) return <div className="pt-24 text-center">Loading Inbox...</div>;
-
   return (
-    <div className="h-screen pt-16 flex flex-col bg-gray-50">
-      <div className="max-w-7xl w-full mx-auto flex-1 flex overflow-hidden py-6 px-4">
-        
-        {/* Left Pane: Thread List */}
-        <div className="w-1/3 border-r bg-white rounded-l-lg shadow flex flex-col">
-          <div className="p-4 border-b bg-gray-50">
-            <h2 className="text-lg font-bold text-gray-800">Unified Inbox</h2>
+    <div className="h-[calc(100vh-64px)] flex bg-zinc-50 overflow-hidden">
+      {/* COLUMN 1: THREAD LIST & SENTIMENT FILTER */}
+      <div className="w-80 md:w-96 bg-white border-r border-zinc-200 flex flex-col flex-shrink-0">
+        <div className="p-4 border-b border-zinc-100 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-black text-zinc-900 tracking-tight">Unified Inbox</h2>
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md">
+              {threads.length} Active
+            </span>
           </div>
-          <div className="flex-1 overflow-y-auto">
-            {threads.length === 0 ? (
-              <div className="p-4 text-center text-sm text-gray-500">No replies recorded yet.</div>
-            ) : (
-              threads.map(thread => {
-                const latestEmail = thread.sentEmails?.[thread.sentEmails.length - 1];
-                return (
-                  <div 
-                    key={thread.id} 
-                    onClick={() => setActiveThreadId(thread.id)}
-                    className={`p-4 border-b cursor-pointer transition-colors ${activeThreadId === thread.id ? 'bg-blue-50 border-l-4 border-l-blue-600' : 'hover:bg-gray-50'}`}
-                  >
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-semibold text-gray-900 truncate">{thread.name}</span>
-                      <span className="text-xs text-gray-500">
-                        {latestEmail ? new Date(latestEmail.sentAt).toLocaleDateString() : ''}
-                      </span>
-                    </div>
-                    <div className="text-xs text-blue-600 mb-1 truncate">{thread.campaign?.name}</div>
-                    <div className="text-sm text-gray-600 truncate mb-2">{latestEmail?.subject || 'No subject'}</div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-gray-400 truncate w-2/3">{latestEmail?.body || ''}</span>
-                      {latestEmail?.isIncoming && getSentimentBadge(latestEmail.analysis)}
-                    </div>
-                  </div>
-                );
-              })
-            )}
+
+          <div className="flex gap-1 overflow-x-auto pb-1">
+            {(['ALL', 'POSITIVE', 'OBJECTION'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setFilterSentiment(tab)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                  filterSentiment === tab ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Right Pane: Active Thread */}
-        <div className="flex-1 bg-white rounded-r-lg shadow flex flex-col relative">
-          {activeThread ? (
-            <>
-              <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">{activeThread.name} <span className="text-sm font-normal text-gray-500">({activeThread.email})</span></h2>
-                  <p className="text-xs text-gray-500">{activeThread.company || 'No company'} | {activeThread.position || 'No position'}</p>
-                </div>
-              </div>
-
-              {/* Conversation History */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50">
-                {(activeThread.sentEmails || []).map((msg: any) => {
-                  const isIncoming = msg.isIncoming;
-                  let analysis = null;
-                  if (msg.analysis) {
-                    try { analysis = typeof msg.analysis === 'string' ? JSON.parse(msg.analysis) : msg.analysis; } catch(e){}
-                  }
-
-                  return (
-                    <div key={msg.id} className={`flex ${isIncoming ? 'justify-start' : 'justify-end'}`}>
-                      <div className={`max-w-[80%] p-4 rounded-lg shadow-sm ${isIncoming ? 'bg-white border border-gray-200' : 'bg-blue-600 text-white'}`}>
-                        <div className={`flex justify-between items-center mb-2 pb-2 border-b ${isIncoming ? 'border-gray-100' : 'border-blue-500'}`}>
-                          <span className="text-xs font-bold">{isIncoming ? msg.fromAddress || activeThread.name : 'You'}</span>
-                          <span className={`text-xs ${isIncoming ? 'text-gray-400' : 'text-blue-200'}`}>
-                            {new Date(msg.sentAt).toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="text-sm font-semibold mb-1">{msg.subject}</div>
-                        <div className={`text-sm whitespace-pre-wrap font-sans ${isIncoming ? 'text-gray-800' : 'text-blue-50'}`}>
-                          {msg.body}
-                        </div>
-                        
-                        {/* AI Insights on inbound replies */}
-                        {isIncoming && analysis && (
-                          <div className="mt-4 pt-3 border-t border-dashed border-gray-200">
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="text-xs font-bold text-gray-500">AI Insight:</span>
-                              {getSentimentBadge(msg.analysis)}
-                            </div>
-                            {analysis.intent && <div className="text-xs text-gray-600"><span className="font-semibold">Intent:</span> {analysis.intent}</div>}
-                            {analysis.painPoints?.length > 0 && <div className="text-xs text-red-600 mt-1"><span className="font-semibold">Pain Points:</span> {analysis.painPoints.join(', ')}</div>}
-                            {analysis.suggestedApproach && <div className="text-xs text-blue-600 mt-1 bg-blue-50 p-2 rounded"><span className="font-semibold">Suggested Action:</span> {analysis.suggestedApproach}</div>}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Reply Box */}
-              <div className="p-4 border-t bg-white">
-                <textarea
-                  value={replyBody}
-                  onChange={(e) => setReplyBody(e.target.value)}
-                  placeholder="Draft your reply..."
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none h-24"
-                ></textarea>
-                <div className="flex justify-end mt-2">
-                  <button
-                    onClick={handleSendReply}
-                    disabled={sending || !replyBody.trim()}
-                    className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {sending ? 'Sending...' : 'Send Reply'}
-                  </button>
-                </div>
-              </div>
-            </>
+        {/* Scrollable Thread Items */}
+        <div className="flex-1 overflow-y-auto divide-y divide-zinc-100">
+          {loading ? (
+            <div className="p-8 text-center text-xs text-zinc-400">Loading replies...</div>
+          ) : threads.length === 0 ? (
+            <div className="p-8 text-center text-xs text-zinc-400">No conversations recorded yet.</div>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-400">
-              Select a thread to view the conversation
-            </div>
+            threads.map((thread) => {
+              const latest = thread.sentEmails?.[thread.sentEmails.length - 1];
+              const isSelected = activeThreadId === thread.id;
+
+              return (
+                <div
+                  key={thread.id}
+                  onClick={() => setActiveThreadId(thread.id)}
+                  className={`p-4 cursor-pointer transition-colors text-left space-y-1 ${
+                    isSelected ? 'bg-blue-50/70 border-l-4 border-l-blue-600' : 'hover:bg-zinc-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-zinc-900 truncate">{thread.name}</span>
+                    <span className="text-[10px] text-zinc-400">
+                      {latest?.sentAt ? new Date(latest.sentAt).toLocaleDateString() : ''}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-medium text-blue-600 truncate">{thread.campaign?.name || 'Sequence'}</p>
+                  <p className="text-xs text-zinc-600 truncate opacity-90">{latest?.body || 'No text'}</p>
+                  <div className="pt-1">{latest?.isIncoming && getSentimentPill(latest.analysis)}</div>
+                </div>
+              );
+            })
           )}
         </div>
+      </div>
+
+      {/* COLUMN 2: ACTIVE CONVERSATION CANVAS */}
+      <div className="flex-1 flex flex-col bg-white overflow-hidden">
+        {activeThread ? (
+          <>
+            {/* Thread Header */}
+            <div className="h-16 px-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50 flex-shrink-0">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-900">{activeThread.name}</h3>
+                <p className="text-[11px] text-zinc-400 font-mono">{activeThread.email} · {activeThread.company || 'Direct Contact'}</p>
+              </div>
+            </div>
+
+            {/* Conversation Stream */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-zinc-50/50">
+              {(activeThread.sentEmails || []).map((msg: any) => (
+                <div key={msg.id} className={`flex ${msg.isIncoming ? 'justify-start' : 'justify-end'}`}>
+                  <div
+                    className={`max-w-[75%] p-4 rounded-2xl shadow-xs text-xs space-y-1 ${
+                      msg.isIncoming
+                        ? 'bg-white border border-zinc-200 text-zinc-900'
+                        : 'bg-blue-600 text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[10px] opacity-75 pb-1 border-b border-current/10">
+                      <span className="font-bold">{msg.isIncoming ? activeThread.name : 'You'}</span>
+                      <span>{new Date(msg.sentAt).toLocaleString()}</span>
+                    </div>
+                    <p className="font-bold text-[11px] pt-1">{msg.subject}</p>
+                    <p className="whitespace-pre-wrap leading-relaxed opacity-95">{msg.body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Action Reply Tray */}
+            <div className="p-4 border-t border-zinc-200 bg-white space-y-2 flex-shrink-0">
+              <textarea
+                value={replyBody}
+                onChange={(e) => setReplyBody(e.target.value)}
+                placeholder="Draft your reply (Cmd + Enter to dispatch)..."
+                rows={3}
+                className="w-full p-3 border border-zinc-200 rounded-xl text-xs font-sans focus:outline-none focus:border-blue-500 resize-none"
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    handleSendReply();
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={handleSendReply}
+                  disabled={sending || !replyBody.trim()}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50 shadow-xs transition-colors"
+                >
+                  {sending ? 'Sending...' : 'Send Reply'}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-xs text-zinc-400">
+            Select a conversation thread to inspect messages.
+          </div>
+        )}
       </div>
     </div>
   );

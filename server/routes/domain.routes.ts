@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { domainService } from '../services/domain.service';
 import { senderService } from '../services/sender.service';
+import { logger } from '../config/logger';
 
 const router = Router();
 
@@ -9,56 +10,62 @@ router.get('/', async (req: any, res) => {
     const domains = await domainService.getDomains(req.user.id);
     res.json(domains);
   } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to fetch domains');
     res.status(500).json({ error: error.message });
   }
 });
 
-// Default connect flow: paste the Mailgun key you already send with (the
-// same one that works with a plain curl call), we run one real test send
-// immediately, then hand back a one-time code + address to confirm
-// receiving. testRecipientEmail defaults to the caller's own account email.
 router.post('/', async (req: any, res) => {
   try {
     const { domainName, mailgunApiKey, region, testRecipientEmail } = req.body;
     if (!domainName) return res.status(400).json({ error: 'domainName is required' });
     if (!mailgunApiKey) return res.status(400).json({ error: 'mailgunApiKey is required' });
 
+    const recipient = testRecipientEmail || req.user?.email;
+    if (!recipient) {
+      return res.status(400).json({ error: 'A valid test recipient email address is required' });
+    }
+
     const domain = await domainService.connectWithKey(
       req.user.id,
       domainName,
       mailgunApiKey,
       region || null,
-      testRecipientEmail || req.user.email
+      recipient
     );
     res.status(201).json(domain);
   } catch (error: any) {
+    logger.error({ error: error.message, domainName: req.body?.domainName }, 'Domain connection failed');
     res.status(400).json({ error: error.message });
   }
 });
 
-// Retry the send test (e.g. after fixing a typo'd key) for an already-created domain row.
 router.post('/:id/send-test', async (req: any, res) => {
   try {
     const { testRecipientEmail } = req.body;
-    const domain = await domainService.runSendTest(req.user.id, req.params.id, testRecipientEmail || req.user.email);
+    const recipient = testRecipientEmail || req.user?.email;
+    if (!recipient) {
+      return res.status(400).json({ error: 'A valid test recipient email address is required' });
+    }
+
+    const domain = await domainService.runSendTest(req.user.id, req.params.id, recipient);
     res.json(domain);
   } catch (error: any) {
+    logger.error({ error: error.message, domainId: req.params.id }, 'Domain retry send-test failed');
     res.status(400).json({ error: error.message });
   }
 });
 
-// Regenerate the receiving-test code/address (in case the first attempt expired or was mistyped).
 router.post('/:id/receiving-test/reset', async (req: any, res) => {
   try {
     const domain = await domainService.resetReceivingTest(req.user.id, req.params.id);
     res.json(domain);
   } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to reset receiving test');
     res.status(400).json({ error: error.message });
   }
 });
 
-// Check whether the receiving test has been confirmed yet (set by the
-// inbound webhook when the test email actually arrives — see webhooks.service.ts).
 router.get('/:id/receiving-test', async (req: any, res) => {
   try {
     const result = await domainService.checkReceivingTest(req.user.id, req.params.id);
@@ -73,12 +80,12 @@ router.delete('/:id', async (req: any, res) => {
     await domainService.deleteDomain(req.user.id, req.params.id);
     res.json({ success: true });
   } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to delete domain');
     res.status(400).json({ error: error.message });
   }
 });
 
-// --- Senders (per-mailbox sending identity + quota) ---
-
+// Senders routes
 router.get('/senders/all', async (req: any, res) => {
   try {
     const senders = await senderService.listAllSendersForUser(req.user.id);

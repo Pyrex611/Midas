@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { campaignAPI, senderAPI } from '../services/api';
-import { LeadEmailPreviewModal } from '../components/LeadEmailPreviewModal';
+import { Sheet } from '../components/common/Sheet';
+import { SequenceCanvas } from '../components/campaigns/SequenceCanvas';
+import { SpintaxSimulator } from '../components/campaigns/SpintaxSimulator';
+import { LeadDrawer } from '../components/leads/LeadDrawer';
 import { RenameCampaignModal } from '../components/RenameCampaignModal';
 import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
-import { EditDraftModal } from '../components/EditDraftModal';
-import { CustomDraftModal } from '../components/CustomDraftModal';
 import { EditStrategyModal } from '../components/EditStrategyModal';
 import { InviteCollaboratorModal } from '../components/InviteCollaboratorModal';
+import { useToast } from '../context/ToastContext';
 
 const TIMEZONES = [
   'UTC', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
@@ -17,33 +19,37 @@ const TIMEZONES = [
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
+
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'leads' | 'drafts' | 'automation'>('leads');
-  const [previewLead, setPreviewLead] = useState<{
-    id: string;
-    name: string;
-    email: string;
-    outreachStatus?: string;
-  } | null>(null);
+  const [activeTab, setActiveTab] = useState<'flow' | 'leads' | 'drafts' | 'automation' | 'settings'>('flow');
 
+  // Header Dropdown & Modals
   const [menuOpen, setMenuOpen] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showStrategyModal, setShowStrategyModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
 
-  const [editingDraft, setEditingDraft] = useState<any>(null);
-  const [showEditDraftModal, setShowEditDraftModal] = useState(false);
-  const [showCustomDraftModal, setShowCustomDraftModal] = useState(false);
+  // Lead Inspector Drawer
+  const [previewLead, setPreviewLead] = useState<any | null>(null);
+  const [isLeadDrawerOpen, setIsLeadDrawerOpen] = useState(false);
+
+  // Draft Editor Drawer State
+  const [isDraftDrawerOpen, setIsDraftDrawerOpen] = useState(false);
+  const [editingDraft, setEditingDraft] = useState<any | null>(null);
+  const [draftSubject, setDraftSubject] = useState('');
+  const [draftBody, setDraftBody] = useState('');
+  const [savingDraft, setSavingDraft] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
+  // Senders Rotation State
   const [userSenders, setUserSenders] = useState<any[]>([]);
   const [campaignSenderIds, setCampaignSenderIds] = useState<Set<string>>(new Set());
   const [updatingSender, setUpdatingSender] = useState(false);
 
-  // --- Automation tab state ---
+  // Automation & Delivery Window State
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [savingAutoReply, setSavingAutoReply] = useState(false);
   const [sendHourUTC, setSendHourUTC] = useState(9);
@@ -54,8 +60,9 @@ export const CampaignDetail: React.FC = () => {
   const [savingActiveHours, setSavingActiveHours] = useState(false);
   const [followUpSteps, setFollowUpSteps] = useState<any[]>([]);
   const [savingSteps, setSavingSteps] = useState(false);
-  const [generatingStepDraft, setGeneratingStepDraft] = useState<number | null>(null);
+  const [generatingDraftFor, setGeneratingDraftFor] = useState<number | null>(null);
 
+  // RBAC Permission derivation
   const role: 'OWNER' | 'EDITOR' | 'VIEWER' = campaign?.role || 'VIEWER';
   const canEdit = role === 'OWNER' || role === 'EDITOR';
   const canDelete = role === 'OWNER';
@@ -63,7 +70,6 @@ export const CampaignDetail: React.FC = () => {
   const fetchCampaign = async () => {
     if (!id) return;
     setLoading(true);
-    setError(null);
     try {
       const res = await campaignAPI.get(id);
       setCampaign(res.data);
@@ -74,242 +80,273 @@ export const CampaignDetail: React.FC = () => {
       setTimezone(res.data.timezone || 'UTC');
       setFollowUpSteps((res.data.followUpSteps || []).sort((a: any, b: any) => a.stepNumber - b.stepNumber));
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message || 'Failed to load campaign');
+      toast.error('Failed to load campaign data', 'Network Error');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchUserSenders = async () => {
+  const fetchSenders = async () => {
     try {
-      const res = await senderAPI.listAll();
-      setUserSenders(res.data);
+      const [allRes, assignedRes] = await Promise.all([
+        senderAPI.listAll(),
+        campaignAPI.getCampaignSenders(id!),
+      ]);
+      setUserSenders(allRes.data || []);
+      setCampaignSenderIds(new Set((assignedRes.data || []).map((s: any) => s.id)));
     } catch (err) {
-      console.error('Failed to fetch senders', err);
-    }
-  };
-
-  const fetchCampaignSenders = async () => {
-    if (!id) return;
-    try {
-      const res = await campaignAPI.getCampaignSenders(id);
-      setCampaignSenderIds(new Set(res.data.map((s: any) => s.id)));
-    } catch (err) {
-      console.error('Failed to fetch campaign senders', err);
+      console.error(err);
     }
   };
 
   useEffect(() => {
     fetchCampaign();
-    fetchUserSenders();
+    fetchSenders();
   }, [id]);
-
-  useEffect(() => {
-    if (campaign) {
-      fetchCampaignSenders();
-    }
-  }, [campaign?.id]);
 
   const handleUpdate = () => {
     fetchCampaign();
-    fetchCampaignSenders();
+    fetchSenders();
     setMenuOpen(false);
   };
 
-  const handleDelete = async () => {
+  const handleDeleteCampaign = async () => {
     if (!id) return;
     try {
       await campaignAPI.delete(id);
+      toast.info('Campaign purged permanently', 'Deleted');
       navigate('/campaigns');
-    } catch (error) {
-      alert('Could not delete campaign');
+    } catch {
+      toast.error('Could not delete campaign', 'Error');
     }
   };
 
-  const handleGenerateDraft = async () => {
-    if (!campaign?.id) return;
-    setGeneratingDraft(true);
-    try {
-      await campaignAPI.generateDraft(campaign.id);
-      await fetchCampaign();
-    } catch (error) {
-      alert('Could not generate draft');
-    } finally {
-      setGeneratingDraft(false);
-    }
-  };
-
-  const handleEditDraft = async (draftId: string, data: { subject: string; body: string }) => {
-    if (!campaign?.id) return;
-    await campaignAPI.updateDraft(campaign.id, draftId, data);
-    await fetchCampaign();
-  };
-
-  const handleDeleteDraft = async (draftId: string) => {
-    if (!campaign?.id) return;
-    if (!confirm('Are you sure you want to delete this draft?')) return;
-    try {
-      await campaignAPI.deleteDraft(campaign.id, draftId);
-      await fetchCampaign();
-    } catch (error) {
-      alert('Could not delete draft');
-    }
-  };
-
-  const handleCreateCustomDraft = async (data: { subject: string; body: string }) => {
-    if (!campaign?.id) return;
-    await campaignAPI.createCustomDraft(campaign.id, data);
-    await fetchCampaign();
-  };
-
+  // Sender Rotation Toggle
   const toggleSender = async (senderId: string, checked: boolean) => {
     setUpdatingSender(true);
     try {
       if (checked) {
         await campaignAPI.addSenderToCampaign(id!, senderId);
         setCampaignSenderIds(prev => new Set(prev).add(senderId));
+        toast.success('Mailbox attached to campaign rotation', 'Sender Active');
       } else {
         await campaignAPI.removeSenderFromCampaign(id!, senderId);
         setCampaignSenderIds(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(senderId);
-          return newSet;
+          const next = new Set(prev);
+          next.delete(senderId);
+          return next;
         });
+        toast.info('Mailbox unlinked from rotation', 'Sender Removed');
       }
-    } catch (err) {
-      alert('Could not update sender assignment');
+    } catch {
+      toast.error('Could not update sender link', 'Error');
     } finally {
       setUpdatingSender(false);
     }
   };
 
-  // --- Automation tab handlers ---
+  // Draft Management
+  const handleOpenDraftDrawer = (draft?: any) => {
+    if (draft) {
+      setEditingDraft(draft);
+      setDraftSubject(draft.subject || '');
+      setDraftBody(draft.body || '');
+    } else {
+      setEditingDraft(null);
+      setDraftSubject('');
+      setDraftBody('');
+    }
+    setIsDraftDrawerOpen(true);
+  };
+
+  const handleSaveDraft = async () => {
+    if (!draftSubject.trim() || !draftBody.trim()) return;
+    setSavingDraft(true);
+    try {
+      if (editingDraft) {
+        await campaignAPI.updateDraft(id!, editingDraft.id, { subject: draftSubject, body: draftBody });
+        toast.success('Draft variation updated', 'Saved');
+      } else {
+        await campaignAPI.createCustomDraft(id!, { subject: draftSubject, body: draftBody });
+        toast.success('New draft variation created', 'Saved');
+      }
+      setIsDraftDrawerOpen(false);
+      await fetchCampaign();
+    } catch {
+      toast.error('Could not save draft', 'Error');
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const handleDeleteDraft = async (draftId: string) => {
+    if (!confirm('Are you sure you want to delete this draft variation?')) return;
+    try {
+      await campaignAPI.deleteDraft(id!, draftId);
+      toast.info('Draft variation deleted', 'Deleted');
+      await fetchCampaign();
+    } catch {
+      toast.error('Could not delete draft', 'Error');
+    }
+  };
+
+  const handleGenerateAiDraft = async () => {
+    setGeneratingDraft(true);
+    try {
+      await campaignAPI.generateDraft(id!);
+      toast.success('AI synthesized a fresh tonal draft variation', 'Synthesized');
+      await fetchCampaign();
+    } catch {
+      toast.error('Could not generate AI draft variation', 'AI Error');
+    } finally {
+      setGeneratingDraft(false);
+    }
+  };
+
+  const handleGenerateStepDraft = async (stepNumber: number) => {
+    setGeneratingDraftFor(stepNumber);
+    try {
+      await campaignAPI.generateStepDraft(id!, stepNumber);
+      toast.success(`Synthesized AI draft for step #${stepNumber}`, 'Complete');
+      await fetchCampaign();
+    } catch {
+      toast.error('Failed to generate step draft', 'AI Error');
+    } finally {
+      setGeneratingDraftFor(null);
+    }
+  };
+
+  // Automation Handlers
   const handleToggleAutoReply = async (checked: boolean) => {
-    if (!id) return;
-    setAutoReplyEnabled(checked); // optimistic
+    setAutoReplyEnabled(checked);
     setSavingAutoReply(true);
     try {
-      await campaignAPI.updateAutoReply(id, { autoReplyEnabled: checked });
-    } catch (err) {
+      await campaignAPI.updateAutoReply(id!, { autoReplyEnabled: checked });
+      toast.success(`Autonomous AI auto-reply is now ${checked ? 'ACTIVE' : 'PAUSED'}`, 'Auto-Reply');
+    } catch {
       setAutoReplyEnabled(!checked);
-      alert('Could not update auto-reply setting');
+      toast.error('Could not update auto-reply setting', 'Error');
     } finally {
       setSavingAutoReply(false);
     }
   };
 
   const handleSaveSendHour = async () => {
-    if (!id) return;
     setSavingSendHour(true);
     try {
-      await campaignAPI.updateSendHour(id, sendHourUTC);
-    } catch (err) {
-      alert('Could not update send hour');
+      await campaignAPI.updateSendHour(id!, sendHourUTC);
+      toast.success(`Preferred send window anchored to ${sendHourUTC}:00 UTC`, 'Saved');
+    } catch {
+      toast.error('Could not update preferred send hour', 'Error');
     } finally {
       setSavingSendHour(false);
     }
   };
 
   const handleSaveActiveHours = async () => {
-    if (!id) return;
     setSavingActiveHours(true);
     try {
-      await campaignAPI.updateActiveHours(id, {
+      await campaignAPI.updateActiveHours(id!, {
         activeStartHour: activeStartHour === '' ? null : Number(activeStartHour),
         activeEndHour: activeEndHour === '' ? null : Number(activeEndHour),
         timezone,
       });
-    } catch (err) {
-      alert('Could not update active hours');
+      toast.success('Active sending hours and timezone updated', 'Saved');
+    } catch {
+      toast.error('Could not update active hours window', 'Error');
     } finally {
       setSavingActiveHours(false);
     }
   };
 
-  const addFollowUpStep = () => {
-    const nextStepNumber = (followUpSteps[followUpSteps.length - 1]?.stepNumber || 0) + 1;
-    setFollowUpSteps([...followUpSteps, { stepNumber: nextStepNumber, delayDays: 3, enabled: true, _isNew: true }]);
-  };
-
-  const updateStepDelay = (index: number, delayDays: number) => {
-    const next = [...followUpSteps];
-    next[index] = { ...next[index], delayDays };
-    setFollowUpSteps(next);
-  };
-
-  const removeStep = (index: number) => {
-    setFollowUpSteps(followUpSteps.filter((_, i) => i !== index));
-  };
-
   const handleSaveFollowUpSteps = async () => {
-    if (!id) return;
     setSavingSteps(true);
     try {
       await campaignAPI.setFollowUpSteps(
-        id,
-        followUpSteps.map(s => ({ stepNumber: s.stepNumber, delayDays: Number(s.delayDays) }))
+        id!,
+        followUpSteps.map(s => ({ stepNumber: s.stepNumber, delayDays: s.delayDays }))
       );
+      toast.success('Follow-up sequence timeline persisted', 'Flow Updated');
       await fetchCampaign();
-    } catch (err) {
-      alert('Could not save follow-up steps');
+    } catch {
+      toast.error('Could not save follow-up sequence', 'Error');
     } finally {
       setSavingSteps(false);
     }
   };
 
-  const handleGenerateStepDraft = async (stepNumber: number) => {
-    if (!id) return;
-    setGeneratingStepDraft(stepNumber);
-    try {
-      await campaignAPI.generateStepDraft(id, stepNumber);
-      alert(`Draft generated for follow-up step ${stepNumber}. Check the Email Drafts tab.`);
-    } catch (err) {
-      alert('Could not generate a draft for this step');
-    } finally {
-      setGeneratingStepDraft(null);
-    }
-  };
-
-  if (loading) return <div className="text-center py-20 pt-28">Loading campaign details...</div>;
-  if (error || !campaign) return <div className="text-center py-20 text-red-600 pt-28">{error || 'Campaign not found'}</div>;
+  if (loading) return <div className="py-24 text-center text-xs text-zinc-400">Loading campaign workflow...</div>;
+  if (!campaign) return <div className="py-24 text-center text-rose-500">Campaign not found.</div>;
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 pt-20">
-      <div className="mb-6 flex justify-between items-center">
-        <Link to="/campaigns" className="text-blue-600 hover:text-blue-800 flex items-center">
-          ← Back to Campaigns
-        </Link>
+    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
+      {/* 
+        HEADER BAR:
+        Restores Back Navigation, View-Only Badges, Invite Button, and Context Actions Dropdown
+      */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <Link to="/campaigns" className="text-xs font-bold text-zinc-400 hover:text-zinc-700 flex items-center gap-1 mb-1">
+            ← Campaigns
+          </Link>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-black text-zinc-900 tracking-tight">{campaign.name}</h1>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700">
+              {campaign.status}
+            </span>
+            {role === 'VIEWER' && (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-zinc-100 text-zinc-600">
+                👁 View-Only Access
+              </span>
+            )}
+          </div>
+        </div>
 
         <div className="flex items-center gap-3">
-          {role === 'VIEWER' && (
-            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-600">
-              👁 View-only access
-            </span>
-          )}
+          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200/60">
+            {campaign.queuedCount || 0} In Queue
+          </span>
 
           {canEdit && (
-            <button onClick={() => setShowInviteModal(true)} className="px-4 py-2 bg-purple-600 text-white rounded-md text-sm font-medium hover:bg-purple-700">
-              👥 Invite Collaborator
+            <button
+              onClick={() => setShowInviteModal(true)}
+              className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs flex items-center gap-1.5"
+            >
+              <span>👥 Invite Collaborator</span>
             </button>
           )}
 
           {canEdit && (
             <div className="relative">
-              <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 rounded-full hover:bg-gray-200">
-                <svg className="h-6 w-6 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+              <button
+                onClick={() => setMenuOpen(!menuOpen)}
+                className="p-2 rounded-xl border border-zinc-200 hover:bg-zinc-100 text-zinc-600 transition-colors"
+                title="Campaign Settings"
+              >
+                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
                 </svg>
               </button>
+
               {menuOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10 border border-gray-200">
-                  <button onClick={() => { setShowRenameModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-zinc-200 py-1 z-30 animate-in fade-in zoom-in-95 duration-100">
+                  <button
+                    onClick={() => { setShowRenameModal(true); setMenuOpen(false); }}
+                    className="block w-full text-left px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                  >
                     Rename Campaign
                   </button>
-                  <button onClick={() => { setShowStrategyModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                    Edit Strategy
+                  <button
+                    onClick={() => { setShowStrategyModal(true); setMenuOpen(false); }}
+                    className="block w-full text-left px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                  >
+                    Refine SDR Strategy
                   </button>
                   {canDelete && (
-                    <button onClick={() => { setShowDeleteModal(true); setMenuOpen(false); }} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                    <button
+                      onClick={() => { setShowDeleteModal(true); setMenuOpen(false); }}
+                      className="block w-full text-left px-4 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                    >
                       Delete Campaign
                     </button>
                   )}
@@ -320,347 +357,386 @@ export const CampaignDetail: React.FC = () => {
         </div>
       </div>
 
+      {/* MODALS (Mounted and Preserved) */}
       <RenameCampaignModal isOpen={showRenameModal} onClose={() => setShowRenameModal(false)} campaign={campaign} onSuccess={handleUpdate} />
-      <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDelete} campaignName={campaign.name} />
-      <EditDraftModal isOpen={showEditDraftModal} onClose={() => setShowEditDraftModal(false)} draft={editingDraft} onSave={handleEditDraft} />
-      <CustomDraftModal isOpen={showCustomDraftModal} onClose={() => setShowCustomDraftModal(false)} onSubmit={handleCreateCustomDraft} />
+      <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDeleteCampaign} campaignName={campaign.name} />
       <EditStrategyModal isOpen={showStrategyModal} onClose={() => setShowStrategyModal(false)} campaign={campaign} onSuccess={handleUpdate} />
       <InviteCollaboratorModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} campaignId={campaign.id} onSuccess={handleUpdate} />
 
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="flex justify-between items-start">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{campaign.name}</h1>
-            <p className="text-sm text-gray-500 mt-1">{campaign.description || 'No description provided.'}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="px-3 py-1 text-xs font-bold rounded-full bg-blue-100 text-blue-800">
-              {campaign.status}
-            </span>
-            <span className="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">
-              {campaign.queuedCount || 0} Queued
-            </span>
-          </div>
-        </div>
-
-        {/* Sending Senders Assignment */}
-        <div className="mt-6 p-4 bg-white border rounded-lg shadow-sm">
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Senders (Round-Robin)</h3>
-          <p className="text-sm text-gray-600 mb-4">Select the mailboxes to rotate this campaign's sends across — each has its own daily quota.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {userSenders.length === 0 ? (
-              <p className="text-xs text-gray-400 italic">No senders yet. <Link to="/domains" className="text-blue-600 underline">Connect a domain and add a sender</Link>.</p>
-            ) : (
-              userSenders.map((s) => (
-                <label key={s.id} className={`flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50 ${canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-75'}`}>
-                  <input
-                    type="checkbox"
-                    checked={campaignSenderIds.has(s.id)}
-                    onChange={(e) => toggleSender(s.id, e.target.checked)}
-                    disabled={!canEdit || updatingSender || s.status !== 'active' || s.domain?.status !== 'active'}
-                    className="h-4 w-4 text-blue-600 rounded"
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">{s.localPart}@{s.domain?.domainName}</p>
-                    <p className="text-xs text-gray-500">
-                      {s.displayName ? `"${s.displayName}" · ` : ''}{s.dailyLimit}/day limit ({s.domain?.status?.toUpperCase()})
-                    </p>
-                  </div>
-                </label>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="border-b border-gray-200 mt-8">
-          <nav className="-mb-px flex space-x-8">
+      {/* NAVIGATION TABS */}
+      <div className="border-b border-zinc-200">
+        <nav className="flex space-x-8">
+          {[
+            ['flow', 'Sequence Flow'],
+            ['leads', `Leads (${campaign.leads?.length || 0})`],
+            ['drafts', `Copywriting (${campaign.drafts?.length || 0})`],
+            ['automation', 'Automation Rules'],
+            ['settings', 'Senders & Strategy'],
+          ].map(([key, label]) => (
             <button
-              onClick={() => setActiveTab('leads')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'leads' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}
+              key={key}
+              onClick={() => setActiveTab(key as any)}
+              className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors ${
+                activeTab === key ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-900'
+              }`}
             >
-              Leads ({campaign.leads?.length || 0})
+              {label}
             </button>
-            <button
-              onClick={() => setActiveTab('drafts')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'drafts' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}
-            >
-              Email Drafts ({campaign.drafts?.length || 0})
-            </button>
-            <button
-              onClick={() => setActiveTab('automation')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'automation' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}
-            >
-              Automation
-            </button>
-          </nav>
-        </div>
+          ))}
+        </nav>
+      </div>
 
-        {/* Leads Tab Content */}
-        {activeTab === 'leads' && (
-          <div className="mt-6 overflow-x-auto">
-            {(!campaign.leads || campaign.leads.length === 0) ? (
-              <div className="py-12 text-center text-gray-400">No leads attached to this campaign.</div>
-            ) : (
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Outreach Status</th>
+      {/* TAB 1: VISUAL SEQUENCE FLOW */}
+      {activeTab === 'flow' && (
+        <div className="space-y-8">
+          <SequenceCanvas
+            steps={followUpSteps}
+            canEdit={canEdit}
+            onAddStep={() => {
+              const nextNum = (followUpSteps[followUpSteps.length - 1]?.stepNumber || 0) + 1;
+              setFollowUpSteps([...followUpSteps, { stepNumber: nextNum, delayDays: 3 }]);
+            }}
+            onUpdateDelay={(idx, days) => {
+              const next = [...followUpSteps];
+              next[idx] = { ...next[idx], delayDays: days };
+              setFollowUpSteps(next);
+            }}
+            onRemoveStep={(idx) => setFollowUpSteps(followUpSteps.filter((_, i) => i !== idx))}
+            onGenerateDraft={handleGenerateStepDraft}
+            generatingDraftFor={generatingDraftFor}
+          />
+
+          {canEdit && (
+            <div className="flex justify-end">
+              <button
+                onClick={handleSaveFollowUpSteps}
+                disabled={savingSteps}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs disabled:opacity-50"
+              >
+                {savingSteps ? 'Saving...' : 'Save Sequence Timeline'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 2: LEADS LIST */}
+      {activeTab === 'leads' && (
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-xs">
+          {(!campaign.leads || campaign.leads.length === 0) ? (
+            <div className="py-20 text-center text-xs text-zinc-400">No leads attached to this sequence.</div>
+          ) : (
+            <table className="min-w-full divide-y divide-zinc-100 text-left text-xs">
+              <thead className="bg-zinc-50/75 text-zinc-500 font-bold uppercase tracking-wider">
+                <tr>
+                  <th className="py-3 px-4">Name</th>
+                  <th className="py-3 px-4">Email</th>
+                  <th className="py-3 px-4">Company</th>
+                  <th className="py-3 px-4">Outreach Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+                {campaign.leads.map((l: any) => (
+                  <tr
+                    key={l.id}
+                    onClick={() => { setPreviewLead(l); setIsLeadDrawerOpen(true); }}
+                    className="hover:bg-zinc-50 cursor-pointer transition-colors"
+                  >
+                    <td className="py-3 px-4 font-bold text-zinc-900">{l.name}</td>
+                    <td className="py-3 px-4 font-mono text-zinc-500">{l.email}</td>
+                    <td className="py-3 px-4 text-zinc-600">{l.company || '—'}</td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-zinc-100 text-zinc-700">
+                        {l.outreachStatus || l.status}
+                      </span>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {campaign.leads.map((lead: any) => (
-                    <tr key={lead.id} onClick={() => setPreviewLead(lead)} className="hover:bg-gray-50 cursor-pointer">
-                      <td className="px-4 py-3 text-sm font-semibold text-gray-900">{lead.name}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500">{lead.email}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500">{lead.company || '-'}</td>
-                      <td className="px-4 py-3 text-sm">
-                        <span className="px-2 py-0.5 text-xs font-semibold rounded bg-gray-100 text-gray-800">
-                          {lead.outreachStatus || lead.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
-        {/* Drafts Tab Content */}
-        {activeTab === 'drafts' && (
-          <div className="mt-6 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold text-gray-700 uppercase">Copywriting Drafts</h3>
-              {canEdit && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleGenerateDraft}
-                    disabled={generatingDraft}
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {generatingDraft ? 'Generating...' : '✨ Generate AI Variation'}
-                  </button>
-                  <button
-                    onClick={() => setShowCustomDraftModal(true)}
-                    className="px-3 py-1.5 bg-gray-800 text-white rounded text-xs font-bold hover:bg-gray-900"
-                  >
-                    + Custom Draft
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(campaign.drafts || []).map((draft: any) => (
-                <div key={draft.id} className="border rounded-xl p-4 bg-gray-50 shadow-sm relative">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 bg-blue-100 text-blue-800 rounded">
-                      Tone: {draft.tone} ({draft.useCase}{draft.stepNumber ? ` #${draft.stepNumber}` : ''})
-                    </span>
-                    {canEdit && (
-                      <div className="flex gap-2">
-                        <button onClick={() => { setEditingDraft(draft); setShowEditDraftModal(true); }} className="text-xs text-blue-600 hover:underline">Edit</button>
-                        <button onClick={() => handleDeleteDraft(draft.id)} className="text-xs text-red-600 hover:underline">Delete</button>
-                      </div>
-                    )}
-                  </div>
-                  <h4 className="text-sm font-bold text-gray-900 mb-1">{draft.subject}</h4>
-                  <p className="text-xs text-gray-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Automation Tab Content */}
-        {activeTab === 'automation' && (
-          <div className="mt-6 space-y-8">
-            {!canEdit && (
-              <div className="p-3 bg-gray-50 border rounded-md text-xs text-gray-500">
-                You have view-only access to this campaign — automation settings are shown but can't be changed.
-              </div>
-            )}
-
-            {/* Auto-reply */}
-            <div className="p-4 border rounded-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">Auto-Reply</h3>
-                  <p className="text-xs text-gray-500 mt-1 max-w-xl">
-                    When enabled, incoming replies are answered automatically by AI as soon as they arrive,
-                    with no manual approval step. Leave this off if you want to review and send replies
-                    yourself from each lead's thread.
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={autoReplyEnabled}
-                    disabled={!canEdit || savingAutoReply}
-                    onChange={(e) => handleToggleAutoReply(e.target.checked)}
-                  />
-                  <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 peer-disabled:opacity-50 transition-colors" />
-                  <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5" />
-                </label>
-              </div>
-            </div>
-
-            {/* Send hour */}
-            <div className="p-4 border rounded-lg">
-              <h3 className="text-sm font-bold text-gray-900">Preferred Send Hour (UTC)</h3>
-              <p className="text-xs text-gray-500 mt-1 mb-3">The queue prefers to start new domain-limit windows around this hour.</p>
-              <div className="flex items-center gap-3">
-                <select
-                  value={sendHourUTC}
-                  disabled={!canEdit}
-                  onChange={(e) => setSendHourUTC(Number(e.target.value))}
-                  className="px-3 py-2 border rounded-md text-sm disabled:opacity-50"
+      {/* TAB 3: DRAFTS & SPINTAX SIMULATOR */}
+      {activeTab === 'drafts' && (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center">
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Copywriting Variations</h3>
+            {canEdit && (
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGenerateAiDraft}
+                  disabled={generatingDraft}
+                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs disabled:opacity-50"
                 >
-                  {Array.from({ length: 24 }, (_, h) => (
-                    <option key={h} value={h}>{String(h).padStart(2, '0')}:00 UTC</option>
-                  ))}
-                </select>
-                {canEdit && (
-                  <button
-                    onClick={handleSaveSendHour}
-                    disabled={savingSendHour}
-                    className="px-4 py-2 bg-gray-800 text-white rounded text-sm font-medium hover:bg-gray-900 disabled:opacity-50"
-                  >
-                    {savingSendHour ? 'Saving...' : 'Save'}
-                  </button>
-                )}
+                  {generatingDraft ? 'Synthesizing...' : '✨ Generate AI Variation'}
+                </button>
+                <button
+                  onClick={() => handleOpenDraftDrawer()}
+                  className="px-3.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold rounded-xl shadow-xs"
+                >
+                  + Custom Draft
+                </button>
               </div>
-            </div>
+            )}
+          </div>
 
-            {/* Active hours & timezone */}
-            <div className="p-4 border rounded-lg">
-              <h3 className="text-sm font-bold text-gray-900">Active Sending Window</h3>
-              <p className="text-xs text-gray-500 mt-1 mb-3">
-                Emails only send during this window, in the selected timezone. Leave both hours blank to send
-                any time of day.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Start Hour</label>
-                  <input
-                    type="number" min={0} max={23}
-                    value={activeStartHour}
-                    disabled={!canEdit}
-                    onChange={(e) => setActiveStartHour(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="w-full px-3 py-2 border rounded-md text-sm disabled:opacity-50"
-                    placeholder="e.g. 8"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">End Hour</label>
-                  <input
-                    type="number" min={0} max={23}
-                    value={activeEndHour}
-                    disabled={!canEdit}
-                    onChange={(e) => setActiveEndHour(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="w-full px-3 py-2 border rounded-md text-sm disabled:opacity-50"
-                    placeholder="e.g. 18"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Timezone</label>
-                  <select
-                    value={timezone}
-                    disabled={!canEdit}
-                    onChange={(e) => setTimezone(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-md text-sm disabled:opacity-50"
-                  >
-                    {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
-                  </select>
-                </div>
-                {canEdit && (
-                  <button
-                    onClick={handleSaveActiveHours}
-                    disabled={savingActiveHours}
-                    className="px-4 py-2 bg-gray-800 text-white rounded text-sm font-medium hover:bg-gray-900 disabled:opacity-50"
-                  >
-                    {savingActiveHours ? 'Saving...' : 'Save'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Follow-up sequence */}
-            <div className="p-4 border rounded-lg">
-              <div className="flex justify-between items-center mb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">Follow-Up Sequence</h3>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Each step fires automatically the given number of days after the initial email, if the lead
-                    hasn't replied yet. A draft (tone: "followup") must exist for a step or it will be skipped.
-                  </p>
-                </div>
-                {canEdit && (
-                  <button onClick={addFollowUpStep} className="px-3 py-1.5 bg-gray-800 text-white rounded text-xs font-bold hover:bg-gray-900">
-                    + Add Step
-                  </button>
-                )}
-              </div>
-
-              {followUpSteps.length === 0 ? (
-                <p className="text-xs text-gray-400 italic">No follow-up steps configured.</p>
-              ) : (
-                <div className="space-y-2">
-                  {followUpSteps.map((step, i) => (
-                    <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 border rounded-md">
-                      <span className="text-xs font-bold text-gray-500 w-16">Step {step.stepNumber}</span>
-                      <span className="text-xs text-gray-500">Send after</span>
-                      <input
-                        type="number" min={1} max={60}
-                        value={step.delayDays}
-                        disabled={!canEdit}
-                        onChange={(e) => updateStepDelay(i, Number(e.target.value))}
-                        className="w-16 px-2 py-1 border rounded text-sm disabled:opacity-50"
-                      />
-                      <span className="text-xs text-gray-500">days</span>
-                      {canEdit && (
-                        <div className="ml-auto flex gap-3">
-                          <button
-                            onClick={() => handleGenerateStepDraft(step.stepNumber)}
-                            disabled={generatingStepDraft === step.stepNumber}
-                            className="text-xs text-blue-600 hover:underline"
-                          >
-                            {generatingStepDraft === step.stepNumber ? 'Generating...' : '✨ Generate Draft'}
-                          </button>
-                          <button onClick={() => removeStep(i)} className="text-xs text-red-600 hover:underline">Remove</button>
-                        </div>
-                      )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {(campaign.drafts || []).map((draft: any) => (
+              <div key={draft.id} className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-3">
+                <div className="flex justify-between items-start">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+                    {draft.tone} ({draft.useCase}{draft.stepNumber ? ` #${draft.stepNumber}` : ''})
+                  </span>
+                  {canEdit && (
+                    <div className="flex gap-3 text-xs font-bold">
+                      <button onClick={() => handleOpenDraftDrawer(draft)} className="text-blue-600 hover:underline">
+                        Edit
+                      </button>
+                      <button onClick={() => handleDeleteDraft(draft.id)} className="text-rose-600 hover:underline">
+                        Delete
+                      </button>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
+                <h4 className="text-sm font-bold text-zinc-900">{draft.subject}</h4>
+                <p className="text-xs text-zinc-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
 
+                {/* Embedded Live Spintax Tester */}
+                <SpintaxSimulator subject={draft.subject} body={draft.body} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: AUTOMATION RULES (RESTORED COMPLETELY) */}
+      {activeTab === 'automation' && (
+        <div className="space-y-6">
+          {!canEdit && (
+            <div className="p-3 bg-zinc-100 rounded-xl text-xs text-zinc-600 font-medium">
+              You have view-only access — automation configurations are displayed in read-only mode.
+            </div>
+          )}
+
+          {/* Autonomous Auto-Reply Toggle */}
+          <div className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs flex items-center justify-between">
+            <div className="max-w-xl">
+              <h3 className="text-sm font-bold text-zinc-900">Autonomous AI Auto-Reply</h3>
+              <p className="text-xs text-zinc-500 mt-1">
+                When enabled, incoming replies from leads are analyzed and answered by AI immediately upon receipt, with zero manual operator intervention. Leave disabled for manual review in Unified Inbox.
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={autoReplyEnabled}
+                disabled={!canEdit || savingAutoReply}
+                onChange={(e) => handleToggleAutoReply(e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-zinc-200 rounded-full peer peer-checked:bg-blue-600 peer-disabled:opacity-50 transition-colors" />
+              <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5" />
+            </label>
+          </div>
+
+          {/* Preferred Send Hour (UTC) */}
+          <div className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-3">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-900">Preferred Send Hour (UTC)</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">The queue worker prefers to schedule new mailbox capacity windows around this hour.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <select
+                value={sendHourUTC}
+                disabled={!canEdit}
+                onChange={(e) => setSendHourUTC(Number(e.target.value))}
+                className="px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-800 disabled:opacity-50"
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, '0')}:00 UTC</option>
+                ))}
+              </select>
               {canEdit && (
                 <button
-                  onClick={handleSaveFollowUpSteps}
-                  disabled={savingSteps}
-                  className="mt-4 px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                  onClick={handleSaveSendHour}
+                  disabled={savingSendHour}
+                  className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition-colors shadow-xs"
                 >
-                  {savingSteps ? 'Saving...' : 'Save Follow-Up Sequence'}
+                  {savingSendHour ? 'Saving...' : 'Save Send Hour'}
                 </button>
               )}
             </div>
           </div>
-        )}
-      </div>
 
-      <LeadEmailPreviewModal
-        isOpen={!!previewLead}
-        onClose={() => setPreviewLead(null)}
-        campaignId={campaign.id}
+          {/* Active Sending Window & Timezone */}
+          <div className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-3">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-900">Active Business Hours Window</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Emails are dispatched strictly during this window in the target prospect timezone. Leave hours blank to allow 24-hour dispatch.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Start Hour (0-23)</label>
+                <input
+                  type="number" min={0} max={23}
+                  value={activeStartHour}
+                  disabled={!canEdit}
+                  onChange={(e) => setActiveStartHour(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold disabled:opacity-50"
+                  placeholder="e.g. 8"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">End Hour (0-23)</label>
+                <input
+                  type="number" min={0} max={23}
+                  value={activeEndHour}
+                  disabled={!canEdit}
+                  onChange={(e) => setActiveEndHour(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold disabled:opacity-50"
+                  placeholder="e.g. 18"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Timezone</label>
+                <select
+                  value={timezone}
+                  disabled={!canEdit}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold disabled:opacity-50"
+                >
+                  {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                </select>
+              </div>
+              {canEdit && (
+                <button
+                  onClick={handleSaveActiveHours}
+                  disabled={savingActiveHours}
+                  className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  {savingActiveHours ? 'Saving...' : 'Save Window'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: SETTINGS, STRATEGY & SENDERS */}
+      {activeTab === 'settings' && (
+        <div className="space-y-6">
+          {/* Assigned Senders */}
+          <div className="p-6 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-900">Assigned Mailboxes (Round-Robin)</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">Select which active inboxes rotate this campaign's outbound dispatches.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {userSenders.length === 0 ? (
+                <p className="text-xs text-zinc-400 italic">No senders available. Connect a domain on the Domains page first.</p>
+              ) : (
+                userSenders.map((s) => (
+                  <label key={s.id} className="flex items-center gap-3 p-3.5 border border-zinc-200 rounded-xl hover:bg-zinc-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={campaignSenderIds.has(s.id)}
+                      onChange={(e) => toggleSender(s.id, e.target.checked)}
+                      disabled={!canEdit || updatingSender || s.status !== 'active'}
+                      className="rounded border-zinc-300 text-blue-600 focus:ring-0"
+                    />
+                    <div>
+                      <p className="text-xs font-bold text-zinc-900 font-mono">{s.localPart}@{s.domain?.domainName}</p>
+                      <p className="text-[11px] text-zinc-400">Limit: {s.dailyLimit}/day · Sent today: {s.sentCountToday}</p>
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Strategy Context Summary */}
+          <div className="p-6 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-900">SDR Strategy & Conversion Goal</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">The core objective guiding AI personalization and objection handling.</p>
+              </div>
+              {canEdit && (
+                <button
+                  onClick={() => setShowStrategyModal(true)}
+                  className="px-3.5 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 rounded-xl text-xs font-bold transition-colors"
+                >
+                  Edit Strategy
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Primary Objective</span>
+                <p className="font-semibold text-zinc-800 mt-0.5">{campaign.objective || 'Not specified'}</p>
+              </div>
+              <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Target Conversion Tool</span>
+                <p className="font-semibold text-zinc-800 mt-0.5">{campaign.targetTool || 'Not specified'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SLIDE-OVER LEAD INSPECTOR */}
+      <LeadDrawer
+        isOpen={isLeadDrawerOpen}
+        onClose={() => setIsLeadDrawerOpen(false)}
         lead={previewLead}
-        onSendSuccess={fetchCampaign}
+        campaignId={campaign.id}
+        onUpdate={fetchCampaign}
       />
+
+      {/* SLIDE-OVER DRAFT EDITOR */}
+      <Sheet
+        isOpen={isDraftDrawerOpen}
+        onClose={() => setIsDraftDrawerOpen(false)}
+        title={editingDraft ? 'Edit Copywriting Draft' : 'Create Custom Draft'}
+        description="Include Spintax {Option A|Option B} and {{name}} or {{company}} placeholders."
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Subject Line</label>
+            <input
+              type="text"
+              value={draftSubject}
+              onChange={(e) => setDraftSubject(e.target.value)}
+              className="w-full px-3 py-2 border border-zinc-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Body Text</label>
+            <textarea
+              rows={10}
+              value={draftBody}
+              onChange={(e) => setDraftBody(e.target.value)}
+              className="w-full p-3 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+            <button onClick={() => setIsDraftDrawerOpen(false)} className="px-3 py-1.5 text-xs text-zinc-600">Cancel</button>
+            <button
+              onClick={handleSaveDraft}
+              disabled={savingDraft}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50"
+            >
+              {savingDraft ? 'Saving...' : 'Save Draft'}
+            </button>
+          </div>
+        </div>
+      </Sheet>
     </div>
   );
 };
