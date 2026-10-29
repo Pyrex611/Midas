@@ -1,17 +1,17 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
 /**
  * GET /api/user/profile
- * Return the authenticated user's profile and aggregated campaign stats.
+ * Returns authenticated user's profile and aggregated campaign performance metrics.
  */
 export const getProfile = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
 
-    // Fetch user
+    // Fetch user profile
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -27,7 +27,7 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Fetch all campaigns for this user with counts
+    // Fetch all campaigns owned by this user with count aggregates
     const campaigns = await prisma.campaign.findMany({
       where: { userId },
       include: {
@@ -38,11 +38,11 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
             emails: true,
           },
         },
-        // We also need reply count per campaign: count of incoming emails where repliedAt is not null
       },
+      orderBy: { createdAt: 'desc' },
     });
 
-    // For reply rate, we need to count sent emails and replies
+    // Compute sent counts, reply counts, and reply rate per campaign
     const campaignStats = await Promise.all(
       campaigns.map(async (campaign) => {
         const sentCount = await prisma.outboundEmail.count({
@@ -82,21 +82,21 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
 
 /**
  * PUT /api/user/profile
- * Update user's name.
+ * Updates the user's display name in PostgreSQL.
  */
 export const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
     const { name } = req.body;
 
-    if (typeof name !== 'string') {
-      return res.status(400).json({ error: 'Name must be a string' });
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'A valid name string is required' });
     }
 
     const updated = await prisma.user.update({
       where: { id: userId },
-      data: { name },
-      select: { id: true, email: true, name: true },
+      data: { name: name.trim() },
+      select: { id: true, email: true, name: true, isAdmin: true },
     });
 
     res.json(updated);

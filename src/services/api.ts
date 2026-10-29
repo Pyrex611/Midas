@@ -138,6 +138,9 @@ export const campaignAPI = {
   generateStepDraft: (campaignId: string, stepNumber: number) =>
     api.post(`/campaigns/${campaignId}/steps/${stepNumber}/generate-draft`),
 
+  gradeDraft: (campaignId: string, data: { subject: string; body: string }) =>
+    api.post(`/campaigns/${campaignId}/drafts/grade`, data),
+
   getCampaignSenders: (campaignId: string) => api.get(`/campaigns/${campaignId}/senders`),
   addSenderToCampaign: (campaignId: string, senderId: string) => api.post(`/campaigns/${campaignId}/senders`, { senderId }),
   removeSenderFromCampaign: (campaignId: string, senderId: string) => api.delete(`/campaigns/${campaignId}/senders/${senderId}`),

@@ -5,14 +5,12 @@ import { personalisationService } from '../services/personalisation.service';
 import { emailService } from '../services/email.service';
 import { aiService } from '../services/ai.service';
 import { emailQueueService } from '../services/emailQueue.service';
+import { complianceService } from '../services/compliance.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { CampaignRequest } from '../middleware/campaignAccess.middleware';
 import { ensureUnsubscribeToken, buildUnsubscribeUrl } from '../lib/unsubscribe';
 
-/**
- * Generates alternative tonal drafts in the background without blocking the HTTP response.
- */
 async function generateBackgroundTonalDrafts(
   userId: string,
   campaignId: string,
@@ -71,7 +69,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
 
     if (!name) return res.status(400).json({ error: 'Campaign name is required' });
 
-    // 1. Atomically create Campaign and assign OWNER membership
     const campaign = await prisma.$transaction(async (tx) => {
       const camp = await tx.campaign.create({
         data: {
@@ -105,7 +102,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       return camp;
     });
 
-    // 2. Generate Primary Draft synchronously with strict fallback to ensure zero timeouts
     let initialDraftData = {
       subject: `Quick question regarding {{company}}`,
       body: `Hi {{name}},\n\nI noticed your work at {{company}}. We help teams automate pipeline conversion without adding overhead.\n\nWorth exploring?\n\nBest,\n{{senderName}}`,
@@ -122,7 +118,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
         initialDraftData = generated;
       }
     } catch (aiErr: any) {
-      logger.warn({ err: aiErr?.message }, 'Primary draft AI synthesis timed out or failed — utilizing high-converting baseline');
+      logger.warn({ err: aiErr?.message }, 'Primary draft AI synthesis timed out or failed — utilizing baseline');
     }
 
     const savedInitialDraft = await prisma.draft.create({
@@ -136,7 +132,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       },
     });
 
-    // 3. Initialize Step 1 in FollowUpStep
     await prisma.followUpStep.create({
       data: {
         campaignId: campaign.id,
@@ -145,7 +140,6 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       },
     });
 
-    // 4. Auto-queue initial outreach emails if starting with leads
     if (leadIds?.length) {
       await prisma.lead.updateMany({
         where: { id: { in: leadIds }, userId },
@@ -168,23 +162,36 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
         data: pendingRecords,
       });
 
-      // Opportunistic trigger: fire queue processor immediately in background
       emailQueueService.processQueue().catch(err => {
         logger.error({ err }, 'Background queue trigger failed');
       });
     }
 
-    // 5. Fire background worker for remaining 4 tonal variations (Non-blocking)
     generateBackgroundTonalDrafts(userId, campaign.id, context, reference).catch(err => {
       logger.error({ err }, 'Unhandled error in background tonal draft worker');
     });
 
-    // 6. Return response immediately (< 800ms)
     res.status(201).json({
       success: true,
       campaignId: campaign.id,
       message: leadIds?.length ? `Campaign started with ${leadIds.length} leads queued` : 'Campaign created',
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const gradeCampaignDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { subject, body } = req.body;
+
+    if (!subject || !body || typeof subject !== 'string' || typeof body !== 'string') {
+      return res.status(400).json({ error: 'Valid subject and body strings are required for deliverability grading' });
+    }
+
+    const grade = await complianceService.gradeEmail(userId, subject, body);
+    res.json(grade);
   } catch (error) {
     next(error);
   }
@@ -548,7 +555,8 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
       outboundRecord.id,
       activeSender.displayName || campaign.senderName,
       undefined,
-      unsubscribeUrl
+      unsubscribeUrl,
+      { leadId: lead.id, campaignId: campaign.id }
     );
 
     if (!result.success) throw new Error(result.error);
@@ -693,7 +701,9 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       pBody,
       outboundRecord.id,
       activeSender.displayName || campaign.senderName,
-      latestIncoming?.messageId
+      latestIncoming?.messageId,
+      undefined,
+      { leadId: lead.id, campaignId: campaign.id }
     );
 
     if (!result.success) throw new Error(result.error);

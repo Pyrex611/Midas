@@ -4,6 +4,7 @@ import { campaignAPI, senderAPI } from '../services/api';
 import { Sheet } from '../components/common/Sheet';
 import { SequenceCanvas } from '../components/campaigns/SequenceCanvas';
 import { SpintaxSimulator } from '../components/campaigns/SpintaxSimulator';
+import { DeliverabilityGrader } from '../components/campaigns/DeliverabilityGrader';
 import { LeadDrawer } from '../components/leads/LeadDrawer';
 import { RenameCampaignModal } from '../components/RenameCampaignModal';
 import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
@@ -280,10 +281,7 @@ export const CampaignDetail: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* 
-        HEADER BAR:
-        Restores Back Navigation, View-Only Badges, Invite Button, and Context Actions Dropdown
-      */}
+      {/* Top Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <Link to="/campaigns" className="text-xs font-bold text-zinc-400 hover:text-zinc-700 flex items-center gap-1 mb-1">
@@ -357,13 +355,13 @@ export const CampaignDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* MODALS (Mounted and Preserved) */}
+      {/* Modals */}
       <RenameCampaignModal isOpen={showRenameModal} onClose={() => setShowRenameModal(false)} campaign={campaign} onSuccess={handleUpdate} />
       <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDeleteCampaign} campaignName={campaign.name} />
       <EditStrategyModal isOpen={showStrategyModal} onClose={() => setShowStrategyModal(false)} campaign={campaign} onSuccess={handleUpdate} />
       <InviteCollaboratorModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} campaignId={campaign.id} onSuccess={handleUpdate} />
 
-      {/* NAVIGATION TABS */}
+      {/* Tabs */}
       <div className="border-b border-zinc-200">
         <nav className="flex space-x-8">
           {[
@@ -458,7 +456,7 @@ export const CampaignDetail: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 3: DRAFTS & SPINTAX SIMULATOR */}
+      {/* TAB 3: DRAFTS, DELIVERABILITY GRADER & SPINTAX SIMULATOR */}
       {activeTab === 'drafts' && (
         <div className="space-y-6">
           <div className="flex justify-between items-center">
@@ -484,7 +482,7 @@ export const CampaignDetail: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {(campaign.drafts || []).map((draft: any) => (
-              <div key={draft.id} className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-3">
+              <div key={draft.id} className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
                 <div className="flex justify-between items-start">
                   <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700">
                     {draft.tone} ({draft.useCase}{draft.stepNumber ? ` #${draft.stepNumber}` : ''})
@@ -500,18 +498,26 @@ export const CampaignDetail: React.FC = () => {
                     </div>
                   )}
                 </div>
+
                 <h4 className="text-sm font-bold text-zinc-900">{draft.subject}</h4>
                 <p className="text-xs text-zinc-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
 
-                {/* Embedded Live Spintax Tester */}
-                <SpintaxSimulator subject={draft.subject} body={draft.body} />
+                {/* PROPERLY NESTED DELIVERABILITY GRADER & SPINTAX TESTER */}
+                <div className="space-y-3 pt-3 border-t border-zinc-100">
+                  <DeliverabilityGrader
+                    campaignId={campaign.id}
+                    subject={draft.subject}
+                    body={draft.body}
+                  />
+                  <SpintaxSimulator subject={draft.subject} body={draft.body} />
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* TAB 4: AUTOMATION RULES (RESTORED COMPLETELY) */}
+      {/* TAB 4: AUTOMATION RULES */}
       {activeTab === 'automation' && (
         <div className="space-y-6">
           {!canEdit && (
@@ -520,7 +526,6 @@ export const CampaignDetail: React.FC = () => {
             </div>
           )}
 
-          {/* Autonomous Auto-Reply Toggle */}
           <div className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs flex items-center justify-between">
             <div className="max-w-xl">
               <h3 className="text-sm font-bold text-zinc-900">Autonomous AI Auto-Reply</h3>
@@ -541,7 +546,6 @@ export const CampaignDetail: React.FC = () => {
             </label>
           </div>
 
-          {/* Preferred Send Hour (UTC) */}
           <div className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-3">
             <div>
               <h3 className="text-sm font-bold text-zinc-900">Preferred Send Hour (UTC)</h3>
@@ -570,7 +574,6 @@ export const CampaignDetail: React.FC = () => {
             </div>
           </div>
 
-          {/* Active Sending Window & Timezone */}
           <div className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-3">
             <div>
               <h3 className="text-sm font-bold text-zinc-900">Active Business Hours Window</h3>
@@ -629,7 +632,6 @@ export const CampaignDetail: React.FC = () => {
       {/* TAB 5: SETTINGS, STRATEGY & SENDERS */}
       {activeTab === 'settings' && (
         <div className="space-y-6">
-          {/* Assigned Senders */}
           <div className="p-6 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
             <div>
               <h3 className="text-sm font-bold text-zinc-900">Assigned Mailboxes (Round-Robin)</h3>
@@ -659,7 +661,6 @@ export const CampaignDetail: React.FC = () => {
             </div>
           </div>
 
-          {/* Strategy Context Summary */}
           <div className="p-6 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -690,7 +691,7 @@ export const CampaignDetail: React.FC = () => {
         </div>
       )}
 
-      {/* SLIDE-OVER LEAD INSPECTOR */}
+      {/* Slide-Over Lead Inspector */}
       <LeadDrawer
         isOpen={isLeadDrawerOpen}
         onClose={() => setIsLeadDrawerOpen(false)}
@@ -699,7 +700,7 @@ export const CampaignDetail: React.FC = () => {
         onUpdate={fetchCampaign}
       />
 
-      {/* SLIDE-OVER DRAFT EDITOR */}
+      {/* Slide-Over Draft Editor */}
       <Sheet
         isOpen={isDraftDrawerOpen}
         onClose={() => setIsDraftDrawerOpen(false)}

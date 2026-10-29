@@ -78,7 +78,7 @@ model Sender {
   userId         String   @map("user_id") @db.Uuid
   localPart      String   @map("local_part")
   displayName    String?  @map("display_name")
-  status         String   @default("active") // 'active' | 'paused'
+  status         String   @default("active")
   warmupDay      Int      @default(1) @map("warmup_day")
   dailyLimit     Int      @default(20) @map("daily_limit")
   sentCountToday Int      @default(0) @map("sent_count_today")
@@ -233,14 +233,13 @@ model Lead {
   @@index([status])
 }
 
-// --- Behavioral Telemetry & Event Audit (Phase 3) ---
 model LeadActivityEvent {
   id         String   @id @default(cuid())
   leadId     String   @map("lead_id")
   lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaignId String?  @map("campaign_id")
-  eventType  String   @map("event_type") // EMAIL_SENT, EMAIL_OPENED, EMAIL_CLICKED, EMAIL_BOUNCED, EMAIL_REPLIED, UNSUBSCRIBED
-  metadata   Json?    // { url, ip, userAgent, isScannerFiltered, stepNumber }
+  eventType  String   @map("event_type")
+  metadata   Json?
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([leadId, eventType])
@@ -362,12 +361,16 @@ model PendingEmail {
 }
 
 model UserSettings {
-  userId        String   @id @map("user_id") @db.Uuid
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sendLimit     Int?     @map("send_limit")
-  sendPeriod    String?  @map("send_period")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  userId           String   @id @map("user_id") @db.Uuid
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sendLimit        Int?     @map("send_limit")
+  sendPeriod       String?  @map("send_period")
+  // Legal & Postal Compliance (CAN-SPAM / CASL Mandates)
+  companyName      String?  @map("company_name")
+  physicalAddress  String?  @map("physical_address")
+  customOptOutText String?  @map("custom_opt_out_text")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 }
 
 model CronLock {

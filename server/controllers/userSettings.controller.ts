@@ -24,12 +24,16 @@ const VALID_PERIODS = ['hour', 'day'] as const;
 export const updateSettings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { sendLimit, sendPeriod } = req.body;
+    const { sendLimit, sendPeriod, companyName, physicalAddress, customOptOutText } = req.body;
 
-    // Previously this endpoint silently discarded the request body entirely
-    // (the UserSettings model had no columns to write to) — the frontend's
-    // "Settings updated successfully" message was a false positive. Now real.
-    const data: { sendLimit?: number | null; sendPeriod?: string | null } = {};
+    const data: {
+      sendLimit?: number | null;
+      sendPeriod?: string | null;
+      companyName?: string | null;
+      physicalAddress?: string | null;
+      customOptOutText?: string | null;
+    } = {};
+
     if (sendLimit !== undefined) {
       const n = Number(sendLimit);
       if (sendLimit !== null && (!Number.isInteger(n) || n <= 0)) {
@@ -37,11 +41,24 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       }
       data.sendLimit = sendLimit === null ? null : n;
     }
+
     if (sendPeriod !== undefined) {
       if (sendPeriod !== null && !VALID_PERIODS.includes(sendPeriod)) {
         return res.status(400).json({ error: `sendPeriod must be one of: ${VALID_PERIODS.join(', ')}` });
       }
       data.sendPeriod = sendPeriod;
+    }
+
+    if (companyName !== undefined) {
+      data.companyName = typeof companyName === 'string' ? companyName.trim() : null;
+    }
+
+    if (physicalAddress !== undefined) {
+      data.physicalAddress = typeof physicalAddress === 'string' ? physicalAddress.trim() : null;
+    }
+
+    if (customOptOutText !== undefined) {
+      data.customOptOutText = typeof customOptOutText === 'string' ? customOptOutText.trim() : null;
     }
 
     const settings = await prisma.userSettings.upsert({

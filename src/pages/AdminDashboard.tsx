@@ -62,7 +62,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    // Check existing valid session
+    // Check existing valid session in sessionStorage
     const token = sessionStorage.getItem('midas_operator_token');
     const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
 
@@ -71,13 +71,13 @@ export const AdminDashboard: React.FC = () => {
       fetchAll();
     }
 
-    // Activity event listeners
+    // Register debounced activity listeners
     window.addEventListener('mousemove', recordActivity);
     window.addEventListener('keydown', recordActivity);
     window.addEventListener('scroll', recordActivity);
     window.addEventListener('click', recordActivity);
 
-    // Inactivity interval check every 30 seconds
+    // Inactivity check every 30 seconds
     inactivityTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
       const remaining = Math.max(0, 60 - Math.floor(elapsed / (60 * 1000)));
@@ -118,7 +118,6 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Action Protection Confirmation Execution
   const handleExecuteProtectedAction = async () => {
     if (!actionTargetDomain || !actionConfirmPassphrase.trim()) return;
 
@@ -339,10 +338,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 
-        3. ACTION PROTECTION STEP-UP CONFIRMATION MODAL
-        Requires re-entering operator passphrase before executing domain pause/unpause.
-      */}
+      {/* Step-Up Action Protection Modal */}
       {actionTargetDomain && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm" onClick={() => setActionTargetDomain(null)} />
