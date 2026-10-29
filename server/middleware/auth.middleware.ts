@@ -20,37 +20,35 @@ const userCache = new Map<string, { value: CachedUser; expiresAt: number }>();
 
 const cleanKey = (key?: string) => (key ? key.trim().replace(/^["']|["']$/g, '') : '');
 
-// 1. Resolve publishable key from any configured environment variable name
+// 1. Resolve publishable key from CLERK_PUBLISHABLE_KEY or VITE_CLERK_PUBLISHABLE_KEY
 const resolvedPublishableKey = cleanKey(
   process.env.CLERK_PUBLISHABLE_KEY ||
   process.env.VITE_CLERK_PUBLISHABLE_KEY ||
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 );
 
-// 2. Synchronize to process.env.CLERK_PUBLISHABLE_KEY where @clerk/clerk-sdk-node expects it.
-// ClerkMiddlewareOptions does NOT accept publishableKey in its options object.
-if (resolvedPublishableKey) {
+// 2. Synchronize to process.env.CLERK_PUBLISHABLE_KEY where @clerk/clerk-sdk-node expects it
+if (resolvedPublishableKey && !process.env.CLERK_PUBLISHABLE_KEY) {
   process.env.CLERK_PUBLISHABLE_KEY = resolvedPublishableKey;
 }
 
 // 3. Resolve and sanitize secret key
 const resolvedSecretKey = cleanKey(process.env.CLERK_SECRET_KEY);
-if (resolvedSecretKey) {
+if (resolvedSecretKey && !process.env.CLERK_SECRET_KEY) {
   process.env.CLERK_SECRET_KEY = resolvedSecretKey;
 }
 
-// 4. Instantiate ClerkExpressRequireAuth with valid ClerkMiddlewareOptions (only accepts secretKey, jwtKey, etc.)
-const clerkAuthHandler = ClerkExpressRequireAuth(
-  resolvedSecretKey ? { secretKey: resolvedSecretKey } : {}
-);
+// 4. Instantiate ClerkExpressRequireAuth with NO arguments.
+// @clerk/clerk-sdk-node reads CLERK_SECRET_KEY and CLERK_PUBLISHABLE_KEY directly from process.env.
+const clerkAuthHandler = ClerkExpressRequireAuth();
 
 export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  if (!process.env.CLERK_SECRET_KEY && !resolvedSecretKey) {
+  if (!process.env.CLERK_SECRET_KEY) {
     logger.error('[AUTH] CLERK_SECRET_KEY is missing from environment variables');
     return res.status(500).json({ error: 'Authentication service not configured (missing secret key)' });
   }
 
-  if (!process.env.CLERK_PUBLISHABLE_KEY && !resolvedPublishableKey) {
+  if (!process.env.CLERK_PUBLISHABLE_KEY) {
     logger.error('[AUTH] CLERK_PUBLISHABLE_KEY / VITE_CLERK_PUBLISHABLE_KEY is missing from environment variables');
     return res.status(500).json({ error: 'Authentication service not configured (missing publishable key)' });
   }

@@ -52,24 +52,41 @@ export class LeadQueueService {
         AND updated_at < NOW() - INTERVAL '15 minutes'
       `;
 
-      const lockedJobs = await prisma.$queryRaw<{ id: string }[]>`
-        SELECT id FROM "UploadJob"
-        WHERE status IN ('PENDING', 'VERIFYING')
-        ORDER BY created_at ASC
-        LIMIT 5
-        FOR UPDATE SKIP LOCKED
-      `;
+      // Atomic claim of pending upload jobs
+      let jobIds: string[] = [];
+      try {
+        jobIds = await prisma.$transaction(async (tx) => {
+          const lockedJobs = await tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM "UploadJob"
+            WHERE status IN ('PENDING', 'VERIFYING')
+            ORDER BY created_at ASC
+            LIMIT 5
+            FOR UPDATE SKIP LOCKED
+          `;
 
-      if (lockedJobs.length === 0) return { jobsProcessed: 0 };
+          if (lockedJobs.length === 0) return [];
+          const ids = lockedJobs.map(j => j.id);
 
-      for (const jobHeader of lockedJobs) {
-        const job = await prisma.uploadJob.findUnique({ where: { id: jobHeader.id } });
+          await tx.uploadJob.updateMany({
+            where: { id: { in: ids }, status: 'PENDING' },
+            data: { status: 'PROCESSING' }
+          });
+
+          return ids;
+        }, { maxWait: 5000, timeout: 8000 });
+      } catch (txErr: any) {
+        logger.warn({ err: txErr?.message }, 'Upload job claim transaction timed out — will retry on next tick');
+        return { jobsProcessed: 0 };
+      }
+
+      if (jobIds.length === 0) return { jobsProcessed: 0 };
+
+      for (const jobId of jobIds) {
+        const job = await prisma.uploadJob.findUnique({ where: { id: jobId } });
         if (!job) continue;
 
         try {
-          if (job.status === 'PENDING') {
-            await prisma.uploadJob.update({ where: { id: job.id }, data: { status: 'PROCESSING' } });
-
+          if (job.status === 'PROCESSING') {
             const response = await fetch(job.blobUrl);
             const csvText = await response.text();
 
@@ -101,11 +118,6 @@ export class LeadQueueService {
               continue;
             }
 
-            // ---- Fast path: verification opted out (or globally unavailable) ----
-            // Import leads immediately, skipping the vendor round-trip entirely.
-            // This is the default today (no verification API key is configured
-            // yet) and keeps uploads fast regardless of that — leads land as
-            // `UNVERIFIED` and can be (re-)verified later once a provider is on.
             if (!job.verifyEmails || !verificationService.isAvailable()) {
               await this.insertLeads(
                 job.id,
@@ -117,7 +129,6 @@ export class LeadQueueService {
               continue;
             }
 
-            // ---- Verified path: submit to whichever provider is configured ----
             const emailsToVerify = validRows.map(r => r.email);
             const verificationId = await verificationService.submitBulkJob(emailsToVerify);
 
@@ -134,7 +145,6 @@ export class LeadQueueService {
             jobsProcessed++;
             logger.info(`Job ${job.id} sent to ${verificationService.providerName} for verification.`);
           }
-
           else if (job.status === 'VERIFYING' && job.verificationId) {
             const rawRows: { name: string; email: string; company: string | null; position: string | null }[] =
               JSON.parse(job.pendingRows || '[]');

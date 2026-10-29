@@ -10,12 +10,68 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import { CampaignRequest } from '../middleware/campaignAccess.middleware';
 import { ensureUnsubscribeToken, buildUnsubscribeUrl } from '../lib/unsubscribe';
 
+/**
+ * Generates alternative tonal drafts in the background without blocking the HTTP response.
+ */
+async function generateBackgroundTonalDrafts(
+  userId: string,
+  campaignId: string,
+  context?: string,
+  reference?: string
+) {
+  const secondaryTones = ['friendly', 'urgent', 'data-driven', 'storytelling'];
+  const requestDelayMs = Number(process.env.AI_REQUEST_DELAY_MS) || 500;
+
+  for (const tone of secondaryTones) {
+    try {
+      await new Promise(resolve => setTimeout(resolve, requestDelayMs));
+      const draft = await aiService.generateDraft(
+        tone,
+        'initial',
+        context,
+        reference,
+        undefined,
+        undefined,
+        undefined
+      );
+
+      await prisma.draft.create({
+        data: {
+          userId,
+          campaignId,
+          subject: draft.subject,
+          body: draft.body,
+          tone,
+          useCase: 'initial',
+        },
+      });
+      logger.info({ campaignId, tone }, 'Background tonal draft generated successfully');
+    } catch (err: any) {
+      logger.warn({ err: err?.message, campaignId, tone }, 'Failed to generate background tonal draft');
+    }
+  }
+}
+
 export const createCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { name, description, context, reference, senderName, leadIds, autoReplyEnabled, sendHourUTC, objective, targetTool, extendedObjective } = req.body;
+    const {
+      name,
+      description,
+      context,
+      reference,
+      senderName,
+      leadIds,
+      autoReplyEnabled,
+      sendHourUTC,
+      objective,
+      targetTool,
+      extendedObjective,
+    } = req.body;
+
     if (!name) return res.status(400).json({ error: 'Campaign name is required' });
 
+    // 1. Atomically create Campaign and assign OWNER membership
     const campaign = await prisma.$transaction(async (tx) => {
       const camp = await tx.campaign.create({
         data: {
@@ -49,36 +105,38 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       return camp;
     });
 
-    // Generate the 5 tonal drafts with a small delay between calls so we don't
-    // hammer the configured AI provider's rate limit, and so this request
-    // doesn't need to hold open 5 back-to-back LLM round-trips with zero gap.
-    const tones = ['professional', 'friendly', 'urgent', 'data-driven', 'storytelling'];
-    const requestDelayMs = Number(process.env.AI_REQUEST_DELAY_MS) || 500;
-    const createdDrafts = [];
-    for (let i = 0; i < 5; i++) {
-      if (i > 0) await new Promise(resolve => setTimeout(resolve, requestDelayMs));
-      const draft = await aiService.generateDraft(
-        tones[i % tones.length],
-        'initial',
-        context,
-        reference,
-        undefined,
-        undefined,
-        undefined
-      );
-      const savedDraft = await prisma.draft.create({
-        data: {
-          userId,
-          campaignId: campaign.id,
-          subject: draft.subject,
-          body: draft.body,
-          tone: tones[i % tones.length],
-          useCase: 'initial',
-        },
-      });
-      createdDrafts.push(savedDraft);
+    // 2. Generate Primary Draft synchronously with strict fallback to ensure zero timeouts
+    let initialDraftData = {
+      subject: `Quick question regarding {{company}}`,
+      body: `Hi {{name}},\n\nI noticed your work at {{company}}. We help teams automate pipeline conversion without adding overhead.\n\nWorth exploring?\n\nBest,\n{{senderName}}`,
+    };
+
+    try {
+      const generated = await Promise.race([
+        aiService.generateDraft('professional', 'initial', context, reference),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('AI initial draft generation timed out')), 4000)
+        ),
+      ]);
+      if (generated && generated.subject && generated.body) {
+        initialDraftData = generated;
+      }
+    } catch (aiErr: any) {
+      logger.warn({ err: aiErr?.message }, 'Primary draft AI synthesis timed out or failed — utilizing high-converting baseline');
     }
 
+    const savedInitialDraft = await prisma.draft.create({
+      data: {
+        userId,
+        campaignId: campaign.id,
+        subject: initialDraftData.subject,
+        body: initialDraftData.body,
+        tone: 'professional',
+        useCase: 'initial',
+      },
+    });
+
+    // 3. Initialize Step 1 in FollowUpStep
     await prisma.followUpStep.create({
       data: {
         campaignId: campaign.id,
@@ -87,21 +145,20 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
       },
     });
 
-    // Auto-queue initial outreach emails when starting campaign with leads
-    if (leadIds?.length && createdDrafts.length > 0) {
+    // 4. Auto-queue initial outreach emails if starting with leads
+    if (leadIds?.length) {
       await prisma.lead.updateMany({
         where: { id: { in: leadIds }, userId },
         data: { outreachStatus: 'PENDING', campaignId: campaign.id },
       });
 
-      const initialDraft = createdDrafts[0];
       const pendingRecords = leadIds.map((leadId: string) => ({
         userId,
         campaignId: campaign.id,
         leadId,
-        draftId: initialDraft.id,
-        subject: initialDraft.subject,
-        body: initialDraft.body,
+        draftId: savedInitialDraft.id,
+        subject: savedInitialDraft.subject,
+        body: savedInitialDraft.body,
         status: 'PENDING',
         priority: 1,
         scheduledAt: new Date(),
@@ -111,14 +168,18 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
         data: pendingRecords,
       });
 
-      // Opportunistic trigger: don't wait on the next cron tick for the first
-      // batch to start moving — kick the queue right now too. Safe to call
-      // concurrently with any scheduled/external trigger (see emailQueue.service.ts).
+      // Opportunistic trigger: fire queue processor immediately in background
       emailQueueService.processQueue().catch(err => {
         logger.error({ err }, 'Background queue trigger failed');
       });
     }
 
+    // 5. Fire background worker for remaining 4 tonal variations (Non-blocking)
+    generateBackgroundTonalDrafts(userId, campaign.id, context, reference).catch(err => {
+      logger.error({ err }, 'Unhandled error in background tonal draft worker');
+    });
+
+    // 6. Return response immediately (< 800ms)
     res.status(201).json({
       success: true,
       campaignId: campaign.id,
@@ -151,9 +212,6 @@ export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFu
       },
     });
 
-    // Resolve an explicit `role` per campaign (OWNER if they created it,
-    // otherwise their membership row) so the frontend can gate UI per-campaign
-    // instead of showing every action to every collaborator.
     const withRole = campaigns.map(c => ({
       ...c,
       role: c.userId === userId ? 'OWNER' : (c.members[0]?.role ?? 'VIEWER'),
@@ -167,7 +225,6 @@ export const getCampaigns = async (req: AuthRequest, res: Response, next: NextFu
 
 export const getCampaignDetails = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
-    // Access already verified by requireCampaignRole('VIEWER') middleware.
     const id = req.params.id as string;
 
     const campaign = await prisma.campaign.findUnique({
@@ -222,8 +279,6 @@ export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, ne
       return res.status(400).json({ error: 'leadIds must be a non-empty array' });
     }
 
-    // Access already verified by requireCampaignRole('EDITOR'). Only need the
-    // leads relation here, which the middleware's lightweight fetch doesn't include.
     const campaign = await prisma.campaign.findUnique({
       where: { id },
       include: { leads: { select: { id: true } } },
@@ -249,7 +304,6 @@ export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, ne
       });
     }
 
-    // Auto-generate queue records for newly added leads
     const initialDraft = await prisma.draft.findFirst({
       where: { campaignId: id, isActive: true, useCase: 'initial' },
       orderBy: { createdAt: 'asc' },
@@ -342,7 +396,6 @@ export const createInvite = async (req: CampaignRequest, res: Response, next: Ne
     const { email, role } = req.body;
 
     if (!email) return res.status(400).json({ error: 'Email is required' });
-    // Role floor (EDITOR) already enforced by requireCampaignRole('EDITOR') middleware.
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date();
@@ -369,7 +422,6 @@ export const updateCampaignStrategy = async (req: CampaignRequest, res: Response
   try {
     const campaignId = req.params.id;
     const { objective, targetTool, extendedObjective } = req.body;
-    // Role floor (EDITOR) already enforced by requireCampaignRole('EDITOR') middleware.
 
     const updated = await prisma.campaign.update({
       where: { id: campaignId },
@@ -609,7 +661,6 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
 
     const activeSenders = campaign.senderLinks.map(l => l.sender).filter(s => s.status === 'active' && s.domain.status === 'active');
     if (activeSenders.length === 0) return res.status(400).json({ error: 'No active sender found' });
-    // Prefer a sender on the SAME domain the original thread was sent from, for continuity.
     const activeSender = activeSenders.find(s => s.domainId === latestIncoming?.domainId) || activeSenders[0];
 
     const { subject: pSubject, body: pBody } = personalisationService.personalise(
@@ -618,8 +669,6 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       body,
       campaign.reference,
       activeSender.displayName || campaign.senderName
-      // No unsubscribe footer on manual replies — this is a reply within an
-      // already-engaged conversation, not a cold outbound send.
     );
 
     const outboundRecord = await prisma.outboundEmail.create({
@@ -735,9 +784,6 @@ export const setFollowUpSteps = async (req: AuthRequest, res: Response, next: Ne
 
 export const deleteFollowUpStep = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    // Note: :stepId belongs to the :id campaign already authorized by the
-    // middleware, but we still scope the delete by campaignId defensively
-    // so a stepId from a *different* campaign can never be deleted via this URL.
     const id = req.params.id as string;
     const stepId = req.params.stepId as string;
     await prisma.followUpStep.deleteMany({ where: { id: stepId, campaignId: id } });
@@ -750,8 +796,6 @@ const CAMPAIGN_UPDATABLE_FIELDS = ['name', 'description', 'context', 'reference'
 export const updateCampaign = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    // Whitelist fields — `data: req.body` previously allowed a caller to set
-    // ANY campaign column (userId, status, autoReplyEnabled, etc.) via this route.
     const data: Record<string, any> = {};
     for (const field of CAMPAIGN_UPDATABLE_FIELDS) {
       if (req.body[field] !== undefined) data[field] = req.body[field];
@@ -790,8 +834,6 @@ export const updateDraft = async (req: AuthRequest, res: Response, next: NextFun
     for (const field of DRAFT_UPDATABLE_FIELDS) {
       if (req.body[field] !== undefined) data[field] = req.body[field];
     }
-    // Scope by campaignId (already authorized) so a draftId from another
-    // campaign can't be edited through this URL.
     const result = await prisma.draft.updateMany({ where: { id: draftId, campaignId }, data });
     if (result.count === 0) return res.status(404).json({ error: 'Draft not found on this campaign' });
     const updated = await prisma.draft.findUnique({ where: { id: draftId } });
@@ -907,8 +949,6 @@ export const addSenderToCampaign = async (req: AuthRequest, res: Response, next:
     const userId = req.user!.id;
     const { senderId } = req.body;
 
-    // The sender itself must belong to the caller — otherwise any editor
-    // could attach someone else's mailbox to their campaign.
     const sender = await prisma.sender.findFirst({ where: { id: senderId, userId } });
     if (!sender) return res.status(404).json({ error: 'Sender not found on your account' });
 

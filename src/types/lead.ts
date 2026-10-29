@@ -21,8 +21,9 @@ export interface Lead {
   company: string | null;
   position: string | null;
   status: LeadStatus;
-  outreachStatus?: OutreachStatus; // ✅ ADDED
-  campaignId?: string;
+  outreachStatus?: OutreachStatus;
+  verificationStatus?: string;
+  campaignId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -55,4 +56,5 @@ export interface UploadPreviewResponse {
       position: string | null;
     };
   }[];
+  createdLeadIds?: string[];
 }

@@ -47,7 +47,6 @@ docs/QSTASH_SETUP.md
 docs/SCHEDULING.md
 index.html
 INTEGRATION.md
-lib/prisma.ts
 LICENSE
 package.json
 postcss.config.js
@@ -68,7 +67,6 @@ prisma/migrations/migration_lock.toml
 prisma/rls.sql
 prisma/schema.prisma
 prisma/seedCollaboration.ts
-README.md
 scripts/baseline-migrations.js
 server/app.ts
 server/config/env.ts
@@ -239,13 +237,19 @@ backend/node_modules/
 .env*
 .env.local
 .env.fresh
+
+repomix-output.xml
+README.md
+package-lock.json
 </file>
 
 <file path="api/index.ts">
-import serverless from 'serverless-http';
 import app from '../server/app';
 
-export default serverless(app);
+// Export Express app directly as the Vercel Serverless Function entry point.
+// Vercel's Node.js runtime natively invokes (req, res) listeners.
+// Wrapping with serverless-http was preventing res.end() from closing the socket.
+export default app;
 </file>
 
 <file path="docs/QSTASH_SETUP.md">
@@ -737,39 +741,6 @@ honest about current scope but no longer a fake save.
   decision.
 </file>
 
-<file path="lib/prisma.ts">
-import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-
-// Use Neon's POOLED (Supavisor-style, port 5432 pooler) connection string here —
-// NOT the HTTP-driver connection string. This is the actual fix for the
-// prior 300s timeout: standard TCP + node-postgres has real connection-level
-// timeouts instead of the HTTP driver's un-timed fetch.
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  throw new Error("DATABASE_URL is not set");
-}
-
-const adapter = new PrismaPg({
-  connectionString,
-  // node-postgres has NO default connection timeout (v7 changed this from
-  // Prisma's old 5s default) — set these explicitly or you reintroduce the
-  // exact class of bug we just fixed, via a different driver.
-  connectionTimeoutMillis: 5_000,
-  idleTimeoutMillis: 30_000,
-  max: 10, // cap pool size per serverless instance — Neon pooler has its own upstream limit
-});
-
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
-export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
-</file>
-
 <file path="LICENSE">
 Apache License
                            Version 2.0, January 2004
@@ -983,7 +954,7 @@ Apache License
     "dev": "vite",
     "build": "prisma generate && tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/index.js",
-    "vercel-build": "prisma generate && prisma migrate deploy && tsc -p tsconfig.server.json && vite build",
+    "vercel-build": "prisma generate && prisma db push --accept-data-loss && tsc -p tsconfig.server.json && vite build",
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
@@ -2439,509 +2410,6 @@ async function main() {
 main().finally(() => prisma.$disconnect());
 </file>
 
-<file path="README.md">
-# Midas: AI-Powered Cold Email Outreach & Follow-up System
-
-> A semi-automated cold email outreach and follow-up agent with intelligent leads management, powered by multiple AI providers and deployed on Vercel.
-
-**Branch:** `vercel` | **Status:** Production-ready MVP with Phase 3.5+ features
-
----
-
-## 🎯 Overview
-
-Midas is a full-stack TypeScript/Python application that automates the entire cold email outreach workflow:
-
-1. **Lead Management** – Upload and manage CSV/XLSX files with prospect data
-2. **Campaign Orchestration** – Create campaigns with customizable follow-up sequences
-3. **Intelligent Email Drafting** – AI-powered email generation based on tone, use case, and campaign context
-4. **Automated Sending** – Scheduled delivery via Mailgun with domain deliverability management
-5. **Reply Intelligence** – Automatic sentiment analysis and reply-to-reply generation
-6. **Inbox Management** – Centralized inbox for monitoring opens, clicks, bounces, and replies
-7. **Domain Warmup** – Built-in sender reputation management with daily send limits and bounce tracking
-
-**Key Stats:**
-- **84.5% TypeScript** | 12.9% Python | 3.6% Other
-- **Tech Stack:** Vite + React, Express.js, Prisma, PostgreSQL (Neon), Clerk Auth, Mailgun, Multiple AI Providers
-- **Deployment:** Vercel (serverless) with scheduled cron jobs
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Node.js** 18+ 
-- **PostgreSQL** database (Neon recommended for serverless)
-- **Environment variables** (see Configuration section)
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/Pyrex611/Midas.git
-cd Midas
-git checkout vercel
-
-# Install dependencies
-npm install
-
-# Generate Prisma client
-npx prisma generate
-
-# Setup database
-npx prisma db push
-
-# Start development server
-npm run dev
-```
-
-**Frontend:** Accessible at `http://localhost:5173`  
-**Backend API:** Accessible at `http://localhost:3000/api`
-
-### Build & Deploy
-
-```bash
-# Build for production
-npm run build
-
-# Start production server
-npm start
-
-# Vercel deployment
-npm run vercel-build
-```
-
----
-
-## 📋 Configuration
-
-Create a `.env.local` file in the project root with the following variables:
-
-```env
-# Database
-DATABASE_URL=postgresql://user:password@host/dbname
-DATABASE_URL_POOLED=postgresql://user:password@host/dbname?sslmode=require
-
-# Frontend
-VITE_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
-
-# Backend Authentication
-CLERK_SECRET_KEY=your_clerk_secret_key
-CLERK_WEBHOOK_SECRET=your_clerk_webhook_secret
-
-# CORS & Deployment
-CORS_ORIGIN=http://localhost:5173,https://midas-aem.vercel.app
-NODE_ENV=development
-PORT=3000
-
-# Email Service (Mailgun)
-EMAIL_SERVICE=mailgun
-EMAIL_FROM=hello@yourdomain.com
-MAILGUN_API_KEY=your_mailgun_api_key
-MAILGUN_WEBHOOK_KEY=your_mailgun_webhook_key
-
-# File Storage
-BLOB_READ_WRITE_TOKEN=your_vercel_blob_token
-MAX_FILE_SIZE_MB=10
-
-# Cron Job Security
-CRON_SECRET=your_32_char_minimum_secret
-
-# AI Provider (choose one or multiple)
-AI_PROVIDER=openrouter
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4-turbo-preview
-GEMINI_API_KEY=your_gemini_key
-GEMINI_MODEL=gemini-2.5-flash-lite
-DEEPSEEK_API_KEY=your_deepseek_key
-DEEPSEEK_MODEL=deepseek-chat
-OPENROUTER_API_KEY=your_openrouter_key
-OPENROUTER_MODEL=deepseek/deepseek-r1:free
-
-# Optional: Local LLM (Ollama)
-OLLAMA_URL=http://localhost:11434
-OLLAMA_FAST_MODEL=llama3.2:1b
-OLLAMA_POWERFUL_MODEL=llama3.1:8b
-
-# Optional: Email Verification
-BOUNCEBAN_API_KEY=your_bounceban_key
-
-# Encryption (generate a 64-char hex key or use default for dev)
-ENCRYPTION_KEY=your_64_char_hex_encryption_key
-```
-
----
-
-## 🏗️ Architecture
-
-### Project Structure
-
-```
-Midas/
-├── src/                          # React Frontend (84.5% TypeScript)
-│   ├── main.tsx                 # Entry point with Clerk provider
-│   ├── App.tsx                  # Router & route definitions
-│   ├── pages/                   # Route components (Home, Leads, Campaigns, etc.)
-│   ├── components/              # Reusable UI components
-│   ├── context/                 # React context (AuthContext)
-│   └── index.css                # Tailwind CSS styles
-│
-├── server/                       # Express.js Backend
-│   ├── app.ts                   # Express app setup with CORS & routes
-│   ├── index.ts                 # Server entry point (port 3000)
-│   ├── config/                  # Configuration modules
-│   │   ├── env.ts              # Environment validation (Zod)
-│   │   └── logger.ts           # Winston logging
-│   ├── middleware/              # Auth & request handlers
-│   │   └── auth.middleware.ts  # Clerk JWT verification + user sync
-│   └── routes/                  # API route handlers
-│       ├── lead.routes.ts      # Lead CRUD & upload
-│       ├── campaign.routes.ts  # Campaign management
-│       ├── domain.routes.ts    # Domain verification & warmup
-│       ├── inbox.routes.ts     # Email tracking & replies
-│       ├── ai.routes.ts        # Draft generation & sentiment analysis
-│       ├── webhooks.routes.ts  # Mailgun & Clerk webhooks
-│       ├── cron.routes.ts      # Scheduled email sending
-│       ├── user.routes.ts      # User profile
-│       └── diagnostic.routes.ts # Health checks
-│
-├── api/                         # Vercel Serverless Functions
-│   └── index.ts                # Serverless HTTP wrapper (serverless-http)
-│
-├── prisma/                      # Database Schema
-│   └── schema.prisma           # 14+ models (User, Campaign, Lead, etc.)
-│
-├── vite.config.ts              # Vite build configuration
-├── tsconfig.json               # TypeScript config (frontend)
-├── tsconfig.server.json        # TypeScript config (backend)
-├── vercel.json                 # Vercel deployment & cron config
-├── package.json                # Dependencies & build scripts
-└── .dockerfile                 # Docker image for Cloud Run deployment
-```
-
-### Database Schema (Prisma)
-
-**Core Models:**
-- **User** – Clerk-integrated user accounts with UUID primary key
-- **Campaign** – Email campaigns with follow-up steps, timezones, and status tracking
-- **Lead** – Prospects with email verification status and outreach tracking
-- **Domain** – Sender domains with DKIM/SPF/MX/tracking verification, warmup day, daily limits
-- **Draft** – Email templates (subject + body) with version control and reusability
-- **OutboundEmail** – Sent emails with delivery tracking (open, click, reply, bounce)
-- **PendingEmail** – Scheduled emails awaiting dispatch
-- **FollowUpStep** – Configured delays between campaign steps
-- **CampaignMember** – Multi-user collaboration (OWNER/EDITOR/VIEWER roles)
-- **CampaignInvite** – Email invitations with expiration tokens
-- **Blocklist** – Regex patterns to filter leads
-- **UploadJob** – Async lead upload progress tracking
-- **UserSettings** – User preferences and configuration
-
-[View full schema](https://github.com/Pyrex611/Midas/blob/vercel/prisma/schema.prisma)
-
----
-
-## 🔐 Authentication & Security
-
-### Clerk Integration
-- **Frontend:** React SDK with `@clerk/clerk-react`
-- **Backend:** Node SDK with JWT verification via `@clerk/clerk-sdk-node`
-- **Middleware:** `requireAuth` middleware validates RS256 signatures and auto-syncs users to PostgreSQL
-- **User Cache:** In-memory cache maps Clerk IDs to local UUIDs for 0ms resolution
-
-### CORS Policy
-Allowed origins include:
-- Configured `CORS_ORIGIN` list
-- All `*.vercel.app` deployments
-- `localhost:*` and `127.0.0.1:*` (development)
-- All origins in development mode
-
-### Protected Routes
-- `/api/leads`, `/api/campaigns`, `/api/domains`, `/api/inbox`, `/api/ai`, `/api/user`, `/api/diagnostics` – Protected by Clerk auth
-- `/api/webhooks` – Public (Mailgun & Clerk webhooks)
-- `/api/cron` – Protected by `CRON_SECRET` bearer token
-- `/api/health` – Public health check
-
----
-
-## 📧 Email Infrastructure
-
-### Mailgun Integration
-- **API Key:** Validated during domain setup
-- **Webhook Key:** Verifies webhook signatures
-- **Events Tracked:** Delivered, opened, clicked, bounced, complained
-- **Sender Format:** `{senderLocalPart}@{domainName}` (default: `hello@domain.com`)
-
-### Domain Verification
-- **DKIM, SPF, MX Verification** – Status flags for each domain
-- **Tracking Enabled** – Optional tracking domain for open/click events
-- **Warmup Protocol:**
-  - Day 1 warmup start
-  - Configurable daily send limit (default: 20)
-  - Bounce/complaint rate tracking
-  - Automatic rate limiting based on reputation
-
-### Email Delivery Flow
-1. **Draft Generation** – AI creates email from campaign context
-2. **Pending Queue** – Email scheduled with optional domain preference
-3. **Cron Dispatch** – 09:00 UTC daily (`/api/cron/queue`)
-4. **Mailgun Send** – Domain selected via round-robin or preference
-5. **Webhook Events** – Real-time delivery status updates
-6. **Reply Capture** – Incoming replies parsed and stored
-7. **Sentiment Analysis** – AI analyzes reply tone
-8. **Auto-Reply Draft** – AI generates contextual response (user approval required)
-
----
-
-## 🤖 AI & Automation
-
-### Supported Providers
-- **OpenAI** – `gpt-4-turbo-preview` (default for powerful tasks)
-- **Google Gemini** – `gemini-2.5-flash-lite`
-- **DeepSeek** – `deepseek-chat`
-- **OpenRouter** – `deepseek/deepseek-r1:free` (free tier default)
-- **Ollama** – Local models for privacy (`llama3.2:1b`, `llama3.1:8b`)
-- **Mock** – Development mode (returns static responses)
-
-### AI Capabilities
-- **Email Draft Generation** – Contextual cold emails from tone, use case, and campaign objective
-- **Sentiment Analysis** – Reply classification (positive, negative, neutral, interested, not-interested)
-- **Intent Recognition** – Detect action items in replies
-- **Auto-Reply Drafting** – Generate follow-ups based on sentiment and thread context
-- **Request Delay** – Configurable delay between AI requests (default: 500ms) to respect rate limits
-
-### Configuration
-```env
-AI_PROVIDER=openrouter                          # Primary provider
-PRIMARY_FALLBACK_PROVIDER=gemini               # Fallback if primary fails
-OPENROUTER_API_KEY=sk-...
-OPENROUTER_MODEL=deepseek/deepseek-r1:free
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.5-flash-lite
-AI_REQUEST_DELAY_MS=500                        # Delay between API calls
-```
-
----
-
-## 🔄 Automation & Cron Jobs
-
-### Scheduled Tasks (Vercel Cron)
-
-**Queue Processing:** `0 9 * * *` (09:00 UTC daily)
-- Dispatches pending emails respecting domain daily limits
-- Checks warmup status and adjusts send rates
-- Handles retries for failed sends
-
-**Lead Processing:** `0 10 * * *` (10:00 UTC daily)
-- Processes incoming replies
-- Runs sentiment analysis
-- Generates auto-reply drafts
-
-### Configuration
-```json
-{
-  "crons": [
-    { "path": "/api/cron/queue", "schedule": "0 9 * * *" },
-    { "path": "/api/cron/leads", "schedule": "0 10 * * *" }
-  ]
-}
-```
-
-Secure cron requests with `CRON_SECRET` header:
-```bash
-curl -H "Authorization: Bearer $CRON_SECRET" https://midas-aem.vercel.app/api/cron/queue
-```
-
----
-
-## 🎨 Frontend Features
-
-### Pages
-- **Home** – Dashboard overview
-- **Leads** – Lead list with CSV/XLSX upload, status filters, verification tracking
-- **Campaigns** – Campaign creation, editing, follow-up step configuration
-- **Campaign Detail** – Per-campaign email tracking and member collaboration
-- **Domains** – Domain verification, DNS record display, warmup status
-- **Inbox** – Unified inbox for sent emails, replies, opens, clicks
-- **Profile** – User settings and account management
-
-### UI/UX
-- **Responsive Design** – Tailwind CSS v4 for modern styling
-- **Dropzone** – `react-dropzone` for file uploads
-- **CSV Parsing** – `papaparse` for lead import
-- **Routing** – React Router v6 for SPA navigation
-- **Error Boundaries** – Graceful error handling
-
----
-
-## 📦 Build & Deployment
-
-### Development Build
-```bash
-npm run dev
-```
-- Vite dev server on port 5173 (frontend)
-- Express server on port 3000 (backend)
-- Hot module replacement enabled
-
-### Production Build
-```bash
-npm run build
-```
-Executes:
-1. `prisma generate` – Generate Prisma client
-2. `tsc -p tsconfig.server.json` – Compile backend to `dist/server`
-3. `vite build` – Bundle frontend to `dist/client`
-
-### Vercel Deployment
-```bash
-npm run vercel-build
-```
-Executes:
-1. `prisma generate`
-2. `prisma db push --accept-data-loss` – Auto-migrate schema
-3. `tsc -p tsconfig.server.json`
-4. `vite build`
-
-**Deployment Config** (`vercel.json`):
-- Rewrites `/api/*` requests to `/api/index.ts` (serverless function)
-- Rewrites all other requests to `/index.html` (SPA routing)
-- Cron jobs configured for background tasks
-
-### Docker Deployment
-A multi-stage `.dockerfile` is included for Cloud Run:
-```dockerfile
-FROM node:18-slim AS build
-# Build backend and frontend
-
-FROM node:18-slim
-# Copy dist and node_modules, expose port 8080
-```
-
----
-
-## 🔧 Dependencies
-
-### Frontend
-- `react` – UI framework
-- `react-router-dom` – Client-side routing
-- `@clerk/clerk-react` – Authentication UI
-- `tailwindcss` – Styling
-- `axios` – HTTP client
-- `papaparse` – CSV parsing
-- `react-dropzone` – File upload
-
-### Backend
-- `express` – Web framework
-- `prisma` & `@prisma/client` – ORM & database client
-- `@neondatabase/serverless` – Neon PostgreSQL driver
-- `@clerk/clerk-sdk-node` – Server-side auth
-- `mailgun.js` – Email API
-- `svix` – Webhook verification
-- `bcryptjs` – Password hashing
-- `jsonwebtoken` – JWT handling
-- `winston` – Logging
-- `zod` – Schema validation
-- `serverless-http` – HTTP wrapper for serverless
-
-### Build Tools
-- `vite` – Build bundler
-- `typescript` – Type safety
-- `@vitejs/plugin-react` – React plugin
-
----
-
-## 🧪 Testing & Monitoring
-
-### Health Check
-```bash
-curl https://midas-aem.vercel.app/api/health
-# Returns: { "status": "ok", "timestamp": "2026-..." }
-```
-
-### Logging
-- **Winston Logger** – Structured JSON logs
-- **Environment-aware** – `debug` level in development, `info` in production
-- **Console Transport** – Logs to stdout (Vercel compatible)
-
-### Error Handling
-- Clerk auth failures return `401 Unauthorized`
-- Database errors return `500 Internal Server Error` with logging
-- Input validation via Zod schemas
-- Error boundary component on frontend
-
----
-
-## 📝 Development Workflow
-
-### Local Development
-```bash
-# Terminal 1: Backend (Express + Prisma)
-npm run dev
-
-# Terminal 2: Database (if running locally)
-docker run -e POSTGRES_PASSWORD=password postgres:15
-
-# Terminal 3: Sync database schema
-npx prisma studio  # Open Prisma GUI at http://localhost:5555
-```
-
-### Database Migrations
-```bash
-# Create a new migration
-npx prisma migrate dev --name migration_name
-
-# Push schema changes (Vercel build)
-npx prisma db push
-
-# View database GUI
-npx prisma studio
-```
-
-### Git Workflow
-- **Branch:** `vercel` is the production branch
-- **Main branch:** Contains alternate implementations
-- **Commits:** Descriptive messages with feature/phase numbers (Phase 3.5, etc.)
-
----
-
-## 🐛 Known Limitations & Future Work
-
-- **Google Cloud ADK** – Limited support due to API key acquisition challenges
-- **Reply Threading** – Basic reply-to tracking; full thread reconstruction in progress
-- **Real-time Updates** – Webhook events processed via cron; WebSocket support pending
-- **Advanced Analytics** – Campaign performance metrics available via email tracking data
-
----
-
-## 📄 License
-
-This project includes a LICENSE file. See [LICENSE](https://github.com/Pyrex611/Midas/blob/vercel/LICENSE) for details.
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Commit your changes with clear messages
-4. Push to your fork
-5. Open a pull request
-
----
-
-## 📞 Support & Contact
-
-For issues, questions, or feature requests:
-- Open a GitHub issue: [Midas Issues](https://github.com/Pyrex611/Midas/issues)
-- Contact the author: [Pyrex611](https://github.com/Pyrex611)
-
----
-
-**Last Updated:** February 2026 | **Phase:** 3.5+ (Reply Analysis & Automation)
-</file>
-
 <file path="scripts/baseline-migrations.js">
 // scripts/baseline-migrations.js
 //
@@ -3064,6 +2532,7 @@ console.log(`\nDone. Applied ${applied}, skipped ${skipped} (already handled). N
 import express from 'express';
 import cors from 'cors';
 import { env } from './config/env';
+import { logger } from './config/logger';
 import { requireAuth } from './middleware/auth.middleware';
 import { requireAdmin } from './middleware/requireAdmin.middleware';
 import { requestTimeoutGuard } from './middleware/requestTimeoutGuard.middleware';
@@ -3091,15 +2560,10 @@ const allowedOrigins = (env.CORS_ORIGIN || '')
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow non-browser requests (e.g. server-to-server, webhooks, curl, VPS crons)
     if (!origin) return callback(null, true);
 
     const cleanOrigin = origin.trim().replace(/\/$/, '');
 
-    // Allow: explicitly configured origins, this project's own Vercel preview
-    // deployments (scoped by prefix — NOT every *.vercel.app site, which
-    // would let any unrelated Vercel-hosted page make credentialed requests
-    // against this API), and localhost for local dev.
     const isOwnVercelPreview =
       /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(cleanOrigin) &&
       cleanOrigin.includes(`${env.CORS_VERCEL_PROJECT_PREFIX}-`);
@@ -3117,28 +2581,41 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
 
-// Body parsing with support for JSON and URL-encoded forms (required for Mailgun webhooks)
+// Request Logger: Logs every incoming request and its completion status & latency
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`[HTTP] ${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms`);
+  });
+  next();
+});
+
+// Immediate Liveness Probe (Zero upstream dependencies, resolves before guards)
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Body parsing with support for JSON and URL-encoded forms
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Turns a hung upstream dependency (database, AI provider, Mailgun, etc.)
-// into a fast, clear 503 instead of every page silently hanging until
-// Vercel's own ~300s hard limit kills the function with no useful signal.
+// Timeout guard backstop (15s default)
 app.use(requestTimeoutGuard(15000));
 
 // Public Webhook Receivers (Mailgun & Clerk)
 app.use('/api/webhooks', webhookRoutes);
 
-// Automated VPS/Vercel Cron Triggers (Guarded by Bearer CRON_SECRET)
+// Automated Cron Triggers (Guarded by Bearer CRON_SECRET)
 app.use('/api/cron', cronRoutes);
 
-// Public, non-sensitive feature flags (e.g. "is real email verification available")
+// Public Feature Flags
 app.use('/api/config', configRoutes);
 
-// Public one-click/manual unsubscribe (recipients are never logged into Midas)
+// Public One-Click Unsubscribe
 app.use('/api/unsubscribe', unsubscribeRoutes);
 
-// Protected Core Application Routes (Guarded by Clerk RS256 JWKS requireAuth)
+// Protected Core Application Routes
 app.use('/api/leads', requireAuth, leadRoutes);
 app.use('/api/campaigns', requireAuth, campaignRoutes);
 app.use('/api/domains', requireAuth, domainRoutes);
@@ -3148,9 +2625,6 @@ app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
-
-// Live Health Endpoint
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 export default app;
 </file>
@@ -3162,40 +2636,6 @@ import crypto from 'crypto';
 
 dotenv.config();
 
-// NOTE: DATABASE_URL is intentionally NOT rewritten here. It previously was
-// (stripping "-pooler" and pgbouncer/connection params) to suit the old
-// PrismaNeonHttp adapter, which wanted Neon's direct, non-pooled endpoint.
-// That adapter is gone (see server/lib/prisma.ts for why — it had no
-// timeout control and was the root cause of a site-wide hang incident).
-// The standard pooled connection now in use (via @prisma/adapter-pg) wants
-// the OPPOSITE transform (it wants "-pooler" present, plus connect/idle
-// timeouts as Pool options), and server/lib/prisma.ts is the single place
-// that builds that connection string — don't duplicate or fight that logic
-// here.
-//
-// Separately, prisma.config.ts (CLI-only — migrate/generate, never loaded
-// by this running app) reads its own DIRECT_URL (or falls back to
-// DATABASE_URL) directly from process.env. Set DIRECT_URL to Neon's
-// non-pooled connection string if you see `prisma migrate deploy`/`dev`
-// fail with prepared-statement or advisory-lock errors under the pooled
-// endpoint.
-
-// SECURITY + AVAILABILITY NOTE on CRON_SECRET / ENCRYPTION_KEY:
-// These previously had a hardcoded fallback value baked into source (a real
-// vulnerability — a static secret anyone reading the repo could use). The
-// fix for that must NOT be "require it globally or crash the whole app" —
-// that trades one outage-class bug for another: a single missing/short env
-// var would then take down every unrelated API route, not just the feature
-// that actually needs it (this happened in practice — see cronAuth
-// middleware's comment for the concrete incident). So: no hardcoded
-// default, ever, but no global fatal requirement either. Each var is
-// validated ONLY at its actual point of use:
-//   - CRON_SECRET: checked in server/middleware/cronAuth.middleware.ts —
-//     if unset, cron endpoints alone return 500, nothing else is affected.
-//   - ENCRYPTION_KEY: currently unused anywhere in the codebase; validate
-//     it at whichever call site first actually starts using it, not here.
-// In development only, a random ephemeral CRON_SECRET is generated at boot
-// (logged clearly) purely so `npm run dev` works without any setup.
 if (process.env.NODE_ENV !== 'production' && !process.env.CRON_SECRET) {
   process.env.CRON_SECRET = crypto.randomBytes(32).toString('hex');
   console.warn(
@@ -3209,21 +2649,11 @@ const envSchema = z.object({
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string().url(),
   CORS_ORIGIN: z.string().default('http://localhost:5173,https://midas-aem.vercel.app'),
-  // Only vercel.app preview URLs starting with this prefix are trusted for
-  // credentialed CORS requests (e.g. "midas-aem" matches
-  // "midas-aem-git-feature-yourteam.vercel.app"). Prevents any unrelated
-  // *.vercel.app deployment from making authenticated cross-origin calls.
   CORS_VERCEL_PROJECT_PREFIX: z.string().default('midas-aem'),
   MAX_FILE_SIZE_MB: z.string().default('10'),
-
-  // No hardcoded default, and NOT hard-required here — see note above.
-  // Used by server/lib/encryption.ts (validated lazily there, at the point
-  // of actual use) to encrypt/decrypt each tenant's stored Mailgun API key
-  // — see domain.service.ts's "bring your own Mailgun key" flow. A 64-char
-  // hex string (32 bytes): generate with `openssl rand -hex 32`.
   ENCRYPTION_KEY: z.string().optional(),
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
-  EMAIL_FROM: z.string().default('noreply@outreach.local'),
+  EMAIL_FROM: z.string().default('midas-aem.vercel.app'),
 
   // This deployment's own public URL, with no trailing slash — used to
   // build the Mailgun inbound-Route webhook target
@@ -3236,6 +2666,7 @@ const envSchema = z.object({
 
   // Clerk Authentication Keys
   CLERK_SECRET_KEY: z.string().optional(),
+  CLERK_PUBLISHABLE_KEY: z.string().optional(),
   VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
   CLERK_WEBHOOK_SECRET: z.string().optional(),
 
@@ -5211,53 +4642,16 @@ export function tryDecrypt(payload: string | null | undefined): string | null {
 <file path="server/lib/prisma.ts">
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 import { logger } from '../config/logger';
 
-/**
- * DEFINITIVE FIX, PART 2 — the incident this file's previous version
- * describes (PrismaNeonHttp's unbounded fetch causing the site-wide 300s
- * hang) was correctly diagnosed and correctly fixed for Prisma 6.x, using
- * `new PrismaClient({ datasourceUrl: ... })` with a pooled connection
- * string plus connect/pool timeout query params.
- *
- * That fix silently broke when this project upgraded to Prisma 7
- * (`@prisma/client` / `prisma` are both pinned to ^7.9.1 in package.json,
- * and `@prisma/adapter-pg` + `pg` are already installed there too — the
- * pieces for the real fix were already present, just not wired up here).
- * Prisma 7.0.0 REMOVED the `datasourceUrl` and `datasources` constructor
- * options entirely — `new PrismaClient({ datasourceUrl })` now throws
- * `PrismaClientConstructorValidationError: Using engine type "client"
- * requires either "adapter" or "accelerateUrl"` the instant this module
- * loads. Every controller/service in this codebase imports the default
- * export of this exact file, so that error takes down the entire API.
- *
- * The fix: pass a `@prisma/adapter-pg` driver adapter instead. This is the
- * officially-supported v7 replacement for a direct TCP Postgres
- * connection and keeps every property of the original fix — real,
- * well-defined TCP-level connect/idle timeouts (now set as Pool options,
- * since node-postgres does not read Prisma's old
- * connect_timeout/pool_timeout/pgbouncer query-string params) — while
- * satisfying v7's adapter requirement.
- *
- * Requires `prisma/schema.prisma`'s datasource block to declare ONLY
- * `provider = "postgresql"` — Prisma 7 rejects a `url` property in the
- * schema file outright (this is the P1012 "datasource property `url` is
- * no longer supported" error); the connection string lives here and in
- * `prisma.config.ts` (CLI-only) instead.
- */
 function buildConnectionString(): string {
-  // This project's Neon-via-Vercel integration provides all four of these;
-  // DATABASE_URL_POOLED and DATABASE_URL are both expected to already be
-  // the pooled string, POSTGRES_URL is Vercel's own alias for the same —
-  // checked in this order for robustness in case any one of them is ever
-  // repointed. POSTGRES_URL_NON_POOLING (the direct string) is deliberately
-  // NOT a candidate here — that one belongs to prisma.config.ts's CLI-only
-  // connection, never to this runtime client.
   const raw =
     process.env.DATABASE_URL_POOLED ||
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     '';
+
   if (!raw) {
     throw new Error('DATABASE_URL is not set in environment variables');
   }
@@ -5266,52 +4660,57 @@ function buildConnectionString(): string {
   try {
     url = new URL(raw);
   } catch {
-    // Malformed URL — let Prisma's own connection attempt surface a clear error.
     return raw;
   }
 
-  // Use Neon's POOLED (PgBouncer) endpoint — the standard, serverless-
-  // friendly setup for a deployment shape with many short-lived connections
-  // from separate function invocations.
-  if (/\.neon\.tech$/i.test(url.hostname) && !url.hostname.includes('-pooler.')) {
-    url.hostname = url.hostname.replace(/(\.[a-z0-9-]+\.[a-z0-9-]+\.aws\.neon\.tech)$/i, '-pooler$1');
+  // Universal Neon Pooler Injection:
+  // If the host belongs to neon.tech and does not already include '-pooler',
+  // inject '-pooler' into the primary endpoint identifier.
+  if (url.hostname.includes('.neon.tech') && !url.hostname.includes('-pooler')) {
+    const parts = url.hostname.split('.');
+    parts[0] = `${parts[0]}-pooler`;
+    url.hostname = parts.join('.');
   }
 
-  // `connect_timeout` / `pool_timeout` / `pgbouncer` were Prisma's own
-  // Rust-query-engine URL params. The `pg` driver adapter used below talks
-  // to Postgres directly via node-postgres, which does not read these from
-  // the URL at all — silently ignoring them would give a false sense that
-  // a timeout is configured when it isn't. Real timeouts are set as
-  // explicit Pool options below instead. Neon's pooler (PgBouncer 1.22+)
-  // supports protocol-level prepared statements natively, so no
-  // `pgbouncer=true` compatibility flag is needed with node-postgres either.
+  // Clean obsolete query parameters not recognized by node-postgres
   url.searchParams.delete('connect_timeout');
   url.searchParams.delete('pool_timeout');
   url.searchParams.delete('pgbouncer');
+
+  // Enforce TLS/SSL verify-full for Neon to silence pg-connection-string warning
+  if (!url.searchParams.has('sslmode')) {
+    url.searchParams.set('sslmode', 'verify-full');
+  }
 
   return url.toString();
 }
 
 const prismaClientSingleton = () => {
   const connectionString = buildConnectionString();
-  logger.info(
-    '[DEBUG PRISMA] Initializing pooled Postgres connection via @prisma/adapter-pg ' +
-    '(10s connect timeout, 30s idle timeout)...'
-  );
+  logger.info('[PRISMA] Initializing pooled Postgres connection via pg.Pool + @prisma/adapter-pg');
 
-  const adapter = new PrismaPg({
+  const pool = new Pool({
     connectionString,
-    // The actual fix for the 300s-hang incident, carried over from the
-    // previous version of this file: an unreachable/slow database now
-    // fails in ~10s with a clear connection error instead of hanging
-    // until Vercel's hard 300s ceiling kills the function.
-    connectionTimeoutMillis: 10_000,
-    idleTimeoutMillis: 30_000,
-    // Cap pool size PER serverless instance — Neon's pooler enforces its
-    // own upstream connection ceiling across all concurrent invocations;
-    // an unbounded per-instance pool here would exhaust it under load.
-    max: 10,
+    ssl: {
+      rejectUnauthorized: false,
+    },
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 10_000,
+    max: 2,
   });
+
+  // Dynamic capability check for Vercel Fluid Compute database pool attachment
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vercelFunctions = require('@vercel/functions');
+    if (typeof vercelFunctions.attachDatabasePool === 'function') {
+      vercelFunctions.attachDatabasePool(pool);
+    }
+  } catch {
+    // Graceful fallback
+  }
+
+  const adapter = new PrismaPg(pool);
 
   return new PrismaClient({
     adapter,
@@ -5353,8 +4752,9 @@ export function buildUnsubscribeUrl(token: string): string {
 </file>
 
 <file path="server/middleware/auth.middleware.ts">
+import 'dotenv/config';
 import { Request, Response, NextFunction } from 'express';
-import { ClerkExpressRequireAuth } from '@clerk/clerk-sdk-node';
+import { ClerkExpressRequireAuth, clerkClient } from '@clerk/clerk-sdk-node';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 
@@ -5369,29 +4769,62 @@ export interface AuthRequest extends Request {
 
 type CachedUser = { id: string; email: string; isAdmin: boolean };
 
-// In-memory cache to map Clerk IDs to local PostgreSQL UUIDs for 0ms middleware lookups.
-// TTL'd (5 min) so an admin-flag change (or any other cached field) doesn't
-// stay stale indefinitely on a long-lived warm serverless instance.
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const userCache = new Map<string, { value: CachedUser; expiresAt: number }>();
 
-export const requireAuth = (req: any, res: Response, next: NextFunction) => {
-  ClerkExpressRequireAuth()(req, res, async (err: any) => {
+const cleanKey = (key?: string) => (key ? key.trim().replace(/^["']|["']$/g, '') : '');
+
+// 1. Resolve publishable key from CLERK_PUBLISHABLE_KEY or VITE_CLERK_PUBLISHABLE_KEY
+const resolvedPublishableKey = cleanKey(
+  process.env.CLERK_PUBLISHABLE_KEY ||
+  process.env.VITE_CLERK_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+);
+
+// 2. Synchronize to process.env.CLERK_PUBLISHABLE_KEY where @clerk/clerk-sdk-node expects it
+if (resolvedPublishableKey && !process.env.CLERK_PUBLISHABLE_KEY) {
+  process.env.CLERK_PUBLISHABLE_KEY = resolvedPublishableKey;
+}
+
+// 3. Resolve and sanitize secret key
+const resolvedSecretKey = cleanKey(process.env.CLERK_SECRET_KEY);
+if (resolvedSecretKey && !process.env.CLERK_SECRET_KEY) {
+  process.env.CLERK_SECRET_KEY = resolvedSecretKey;
+}
+
+// 4. Instantiate ClerkExpressRequireAuth with NO arguments.
+// @clerk/clerk-sdk-node reads CLERK_SECRET_KEY and CLERK_PUBLISHABLE_KEY directly from process.env.
+const clerkAuthHandler = ClerkExpressRequireAuth();
+
+export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+  if (!process.env.CLERK_SECRET_KEY) {
+    logger.error('[AUTH] CLERK_SECRET_KEY is missing from environment variables');
+    return res.status(500).json({ error: 'Authentication service not configured (missing secret key)' });
+  }
+
+  if (!process.env.CLERK_PUBLISHABLE_KEY) {
+    logger.error('[AUTH] CLERK_PUBLISHABLE_KEY / VITE_CLERK_PUBLISHABLE_KEY is missing from environment variables');
+    return res.status(500).json({ error: 'Authentication service not configured (missing publishable key)' });
+  }
+
+  clerkAuthHandler(req, res, async (err: any) => {
     if (err) {
-      logger.error({ err }, 'Clerk verification failed');
+      logger.error({ err: err?.message || err }, '[AUTH] Clerk token verification failed');
       return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
     try {
-      const clerkId = req.auth?.userId;
+      const authReq = req as AuthRequest;
+      const clerkId = authReq.auth?.userId;
+
       if (!clerkId) {
         return res.status(401).json({ error: 'Unauthorized: Missing User Identity' });
       }
 
-      // Check cache first for 0ms resolution
+      // Check cache for 0ms resolution
       const cached = userCache.get(clerkId);
       if (cached && cached.expiresAt > Date.now()) {
-        req.user = cached.value;
+        authReq.user = cached.value;
         return next();
       }
 
@@ -5401,8 +4834,28 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
       });
 
       if (!user) {
-        const email = req.auth.sessionClaims?.email || `user-${clerkId.substring(0, 8)}@clerk.local`;
-        const name = req.auth.sessionClaims?.fullName || email.split('@')[0];
+        let email = authReq.auth.sessionClaims?.email;
+        let name = authReq.auth.sessionClaims?.fullName;
+
+        // Fallback: If session JWT doesn't contain email claims, fetch directly from Clerk Backend API
+        if (!email) {
+          try {
+            const clerkUser = await clerkClient.users.getUser(clerkId);
+            email =
+              clerkUser.emailAddresses?.find((e: any) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ||
+              clerkUser.emailAddresses?.[0]?.emailAddress;
+            name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username;
+          } catch (fetchErr) {
+            logger.warn({ fetchErr }, '[AUTH] Could not fetch user profile from Clerk API, using fallback email');
+          }
+        }
+
+        if (!email) {
+          email = `user-${clerkId.substring(0, 8)}@clerk.local`;
+        }
+        if (!name) {
+          name = email.split('@')[0];
+        }
 
         user = await prisma.user.upsert({
           where: { email },
@@ -5419,10 +4872,10 @@ export const requireAuth = (req: any, res: Response, next: NextFunction) => {
       const resolvedUser: CachedUser = { id: user.id, email: user.email, isAdmin: user.isAdmin };
       userCache.set(clerkId, { value: resolvedUser, expiresAt: Date.now() + CACHE_TTL_MS });
 
-      req.user = resolvedUser;
+      authReq.user = resolvedUser;
       next();
     } catch (dbErr: any) {
-      logger.error({ dbErr }, 'Database session resolution failed');
+      logger.error({ dbErr: dbErr?.message || dbErr }, '[AUTH] Database session validation failed');
       res.status(500).json({ error: 'Database session validation failed' });
     }
   });
@@ -6179,10 +5632,9 @@ export default router;
 </file>
 
 <file path="server/routes/webhooks.routes.ts">
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { Webhook } from 'svix';
-import { waitUntil } from '@vercel/functions';
 import prisma from '../lib/prisma';
 import { webhooksService } from '../services/webhooks.service';
 import { logger } from '../config/logger';
@@ -6190,8 +5642,32 @@ import { logger } from '../config/logger';
 const router = Router();
 const upload = multer();
 
+/**
+ * Universal safe wrapper for Vercel's waitUntil.
+ * Dynamically resolves @vercel/functions at runtime if present.
+ * If running locally or without @vercel/functions installed, it executes
+ * the promise in the background gracefully without breaking TypeScript compilation.
+ */
+function safeWaitUntil(promise: Promise<any>): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vercel = require('@vercel/functions');
+    if (typeof vercel.waitUntil === 'function') {
+      vercel.waitUntil(promise);
+      return;
+    }
+  } catch {
+    // Not running on Vercel runtime or package not installed
+  }
+
+  // Fallback: run unawaited in background
+  promise.catch((err) => {
+    logger.error({ err: err?.message || err }, '[BACKGROUND TASK ERROR]');
+  });
+}
+
 // 1. Mailgun Deliverability Events Webhook (Delivered, Opened, Clicked, Bounced, Complained)
-router.post('/mailgun', async (req, res) => {
+router.post('/mailgun', async (req: Request, res: Response) => {
   try {
     const { signature } = req.body;
     if (!signature) return res.status(401).send('Missing signature');
@@ -6204,15 +5680,9 @@ router.post('/mailgun', async (req, res) => {
 
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    // Unawaited on purpose (Mailgun expects a fast 200) — but on Vercel, an
-    // unawaited promise that outlives the response is NOT guaranteed to
-    // keep running once serverless-http resolves; the platform can freeze
-    // the invocation right after the response flushes. waitUntil() is the
-    // documented fix: it keeps this specific invocation alive until the
-    // promise settles (bounded by the function's own maxDuration), instead
-    // of this work silently, intermittently getting cut off mid-flight.
-    waitUntil(
-      webhooksService.processDeliverabilityEvent(req.body).catch(err => {
+    // Mailgun requires an immediate 200 OK. We process deliverability in the background.
+    safeWaitUntil(
+      webhooksService.processDeliverabilityEvent(req.body).catch((err) => {
         logger.error({ err }, 'Deliverability event background processing error');
       })
     );
@@ -6225,7 +5695,7 @@ router.post('/mailgun', async (req, res) => {
 });
 
 // 2. Mailgun Inbound Parse Webhook (Inbound Prospect Replies)
-router.post('/mailgun/inbound', upload.none(), async (req, res) => {
+router.post('/mailgun/inbound', upload.none(), async (req: Request, res: Response) => {
   try {
     const { timestamp, token, signature } = req.body;
     if (!signature) return res.status(401).send('Missing signature');
@@ -6233,13 +5703,9 @@ router.post('/mailgun/inbound', upload.none(), async (req, res) => {
     const isValid = webhooksService.verifyMailgunSignature(timestamp, token, signature);
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    // Same reasoning as the deliverability handler above — this is the
-    // path that confirms the receiving-test code AND runs the (AI-backed,
-    // potentially several-seconds) auto-reply engine. Losing this
-    // intermittently to an early freeze is exactly the kind of bug that's
-    // maddening to reproduce: it would "usually" work.
-    waitUntil(
-      webhooksService.processInboundEmail(req.body).catch(err => {
+    // Asynchronously processes AI sentiment analysis and auto-replies
+    safeWaitUntil(
+      webhooksService.processInboundEmail(req.body).catch((err) => {
         logger.error({ err }, 'Inbound reply processing error');
       })
     );
@@ -6252,7 +5718,7 @@ router.post('/mailgun/inbound', upload.none(), async (req, res) => {
 });
 
 // 3. Clerk User Synchronization Webhook
-router.post('/clerk', async (req, res) => {
+router.post('/clerk', async (req: Request, res: Response) => {
   const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
   if (!webhookSecret) {
     logger.error('CLERK_WEBHOOK_SECRET is not configured');

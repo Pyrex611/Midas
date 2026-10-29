@@ -18,7 +18,6 @@ function buildConnectionString(): string {
   try {
     url = new URL(raw);
   } catch {
-    // If connection string contains unencoded special characters, pass raw to pg
     return raw;
   }
 
@@ -36,9 +35,9 @@ function buildConnectionString(): string {
   url.searchParams.delete('pool_timeout');
   url.searchParams.delete('pgbouncer');
 
-  // Enforce TLS/SSL for Neon and cloud Postgres instances
+  // Enforce TLS/SSL verify-full for Neon to silence pg-connection-string warning
   if (!url.searchParams.has('sslmode')) {
-    url.searchParams.set('sslmode', 'require');
+    url.searchParams.set('sslmode', 'verify-full');
   }
 
   return url.toString();
@@ -48,20 +47,17 @@ const prismaClientSingleton = () => {
   const connectionString = buildConnectionString();
   logger.info('[PRISMA] Initializing pooled Postgres connection via pg.Pool + @prisma/adapter-pg');
 
-  // Explicit pg.Pool construction ensures connection timeouts and SSL are enforced
   const pool = new Pool({
     connectionString,
     ssl: {
       rejectUnauthorized: false,
     },
-    // Serverless-optimized settings: 5s connection timeout, max 2 connections per instance
     connectionTimeoutMillis: 5_000,
     idleTimeoutMillis: 10_000,
     max: 2,
   });
 
-  // Dynamic capability check for Vercel Fluid Compute database pool attachment.
-  // Using dynamic lookup prevents compile-time TS2305 errors when @vercel/functions is pinned to v1.x.
+  // Dynamic capability check for Vercel Fluid Compute database pool attachment
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const vercelFunctions = require('@vercel/functions');
@@ -69,7 +65,7 @@ const prismaClientSingleton = () => {
       vercelFunctions.attachDatabasePool(pool);
     }
   } catch {
-    // Graceful fallback when running in local development or older @vercel/functions versions
+    // Graceful fallback
   }
 
   const adapter = new PrismaPg(pool);

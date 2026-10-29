@@ -15,3 +15,5 @@ backend/node_modules/
 .env.fresh
 
 repomix-output.xml
+README.md
+package-lock.json
