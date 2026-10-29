@@ -5,6 +5,7 @@ import {
   verifyMasterPassphrase,
   generateOperatorToken,
 } from '../lib/operatorAuth';
+import { aiService } from '../services/ai.service';
 import { logger } from '../config/logger';
 
 /**
@@ -33,6 +34,63 @@ export const unlockAdminAccess = async (req: Request, res: Response) => {
     expiresAt,
     message: 'Operator clearance granted for 60 minutes of active use.',
   });
+};
+
+/**
+ * GET /api/admin/services-health
+ * Real-time diagnostic inspection across Database, AI Engine, Mailgun, and CronLocks.
+ */
+export const getSystemServicesHealth = async (_req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const [dbResult, aiResult, cronLocks, domainsSummary] = await Promise.all([
+      // 1. Neon Database Health & Latency Probe
+      (async () => {
+        const start = Date.now();
+        try {
+          await prisma.$queryRaw`SELECT 1`;
+          return { status: 'HEALTHY', latencyMs: Date.now() - start };
+        } catch (err: any) {
+          return { status: 'ERROR', error: err?.message || String(err) };
+        }
+      })(),
+
+      // 2. AI Engine Probe
+      aiService.testActiveProvider(),
+
+      // 3. CronLock Inspection
+      prisma.cronLock.findMany(),
+
+      // 4. Domains Overview
+      prisma.domain.groupBy({
+        by: ['status'],
+        _count: { id: true },
+      }),
+    ]);
+
+    res.json({
+      database: dbResult,
+      aiEngine: aiResult,
+      cronLocks,
+      domainsSummary,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) { next(error); }
+};
+
+/**
+ * POST /api/admin/locks/:name/clear
+ * Clears a stuck cron lock manually.
+ */
+export const clearCronLock = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name } = req.params;
+    await prisma.cronLock.update({
+      where: { name },
+      data: { lockedAt: null },
+    });
+    logger.info({ lockName: name }, 'Operator cleared stuck CronLock');
+    res.json({ success: true, message: `CronLock "${name}" reset to available.` });
+  } catch (error) { next(error); }
 };
 
 export const listUsers = async (_req: AuthRequest, res: Response, next: NextFunction) => {
@@ -75,10 +133,6 @@ export const listAllDomains = async (_req: AuthRequest, res: Response, next: Nex
   } catch (error) { next(error); }
 };
 
-/**
- * POST /api/admin/domains/:id/pause
- * Action Protected: requires step-up confirmation passphrase.
- */
 export const pauseDomain = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
@@ -101,10 +155,6 @@ export const pauseDomain = async (req: AuthRequest, res: Response, next: NextFun
   } catch (error) { next(error); }
 };
 
-/**
- * POST /api/admin/domains/:id/unpause
- * Action Protected: requires step-up confirmation passphrase.
- */
 export const unpauseDomain = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;

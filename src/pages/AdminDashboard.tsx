@@ -11,6 +11,10 @@ export const AdminDashboard: React.FC = () => {
   const [verifyingPassphrase, setVerifyingPassphrase] = useState(false);
   const [sessionRemainingMinutes, setSessionRemainingMinutes] = useState(60);
 
+  // Live Services Observability State
+  const [servicesHealth, setServicesHealth] = useState<any>(null);
+  const [probingServices, setProbingServices] = useState(false);
+
   // Action Protection Modal State
   const [actionTargetDomain, setActionTargetDomain] = useState<{ id: string; name: string; type: 'pause' | 'unpause' } | null>(null);
   const [actionConfirmPassphrase, setActionConfirmPassphrase] = useState('');
@@ -38,6 +42,18 @@ export const AdminDashboard: React.FC = () => {
     lastActivityRef.current = Date.now();
   }, []);
 
+  const fetchServicesHealth = async () => {
+    setProbingServices(true);
+    try {
+      const res = await adminAPI.getServicesHealth();
+      setServicesHealth(res.data);
+    } catch {
+      // Handled in UI
+    } finally {
+      setProbingServices(false);
+    }
+  };
+
   const fetchAll = async () => {
     setLoading(true);
     setError(null);
@@ -50,6 +66,7 @@ export const AdminDashboard: React.FC = () => {
       setStats(statsRes.data);
       setUsers(usersRes.data || []);
       setDomains(domainsRes.data || []);
+      await fetchServicesHealth();
     } catch (err: any) {
       const msg = getErrorMessage(err, 'Failed to load operator metrics');
       setError(msg);
@@ -62,7 +79,6 @@ export const AdminDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    // 1. Check if user is already an elevated database admin
     userAPI.getProfile()
       .then(res => {
         if (res.data?.user?.isAdmin) {
@@ -71,7 +87,6 @@ export const AdminDashboard: React.FC = () => {
           return;
         }
 
-        // 2. Otherwise, check existing operator token in sessionStorage
         const token = sessionStorage.getItem('midas_operator_token');
         const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
 
@@ -82,13 +97,11 @@ export const AdminDashboard: React.FC = () => {
       })
       .catch(() => {});
 
-    // Activity event listeners
     window.addEventListener('mousemove', recordActivity);
     window.addEventListener('keydown', recordActivity);
     window.addEventListener('scroll', recordActivity);
     window.addEventListener('click', recordActivity);
 
-    // Inactivity check every 30 seconds
     inactivityTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
       const remaining = Math.max(0, 60 - Math.floor(elapsed / (60 * 1000)));
@@ -130,6 +143,16 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleClearLock = async (lockName: string) => {
+    try {
+      await adminAPI.clearLock(lockName);
+      toast.success(`Cleared lock for "${lockName}"`, 'Lock Released');
+      await fetchServicesHealth();
+    } catch {
+      toast.error('Could not clear cron lock', 'Error');
+    }
+  };
+
   const handleExecuteProtectedAction = async () => {
     if (!actionTargetDomain || !actionConfirmPassphrase.trim()) return;
 
@@ -137,7 +160,7 @@ export const AdminDashboard: React.FC = () => {
     try {
       if (actionTargetDomain.type === 'pause') {
         await adminAPI.pauseDomain(actionTargetDomain.id, actionConfirmPassphrase.trim());
-        toast.warning(`Circuit breaker armed: ${actionTargetDomain.name} is paused`, 'Action Executed');
+        toast.warning(`Circuit breaker armed: ${actionTargetDomain.name} paused`, 'Action Executed');
       } else {
         await adminAPI.unpauseDomain(actionTargetDomain.id, actionConfirmPassphrase.trim());
         toast.success(`Domain ${actionTargetDomain.name} reactivated`, 'Circuit Cleared');
@@ -152,7 +175,7 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // 1. LOCKED OPERATOR CLEARANCE GATEWAY
+  // 1. LOCKED CLEARANCE GATEWAY
   if (!isUnlocked) {
     return (
       <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-zinc-50">
@@ -200,13 +223,14 @@ export const AdminDashboard: React.FC = () => {
     );
   }
 
-  // 2. UNLOCKED OPERATOR DASHBOARD
+  // 2. UNLOCKED OPERATOR WAR ROOM
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
+      {/* Top Banner */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">Platform Deliverability Command</h1>
-          <p className="text-xs text-zinc-500 mt-1">Cross-tenant operator visibility with step-up action protection.</p>
+          <p className="text-xs text-zinc-500 mt-1">Cross-tenant operator visibility, live infrastructure telemetry, and circuit breaker controls.</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -225,6 +249,98 @@ export const AdminDashboard: React.FC = () => {
 
       {loading && <div className="py-20 text-center text-xs text-zinc-400">Loading operator metrics...</div>}
       {error && <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">{error}</div>}
+
+      {/* 
+        INFRASTRUCTURE & SERVICES OBSERVABILITY HUB:
+        Live status gauges for AI Engine, PostgreSQL, and Distributed CronLocks.
+      */}
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-black text-zinc-900 tracking-tight">Core Infrastructure Telemetry</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">Live operational status across database compute, AI provider endpoints, and worker locks.</p>
+          </div>
+          <button
+            onClick={fetchServicesHealth}
+            disabled={probingServices}
+            className="px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 rounded-xl text-xs font-bold transition-colors disabled:opacity-50"
+          >
+            {probingServices ? 'Probing Services...' : '⚡ Probe All Services'}
+          </button>
+        </div>
+
+        {servicesHealth && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-zinc-100 text-xs">
+            {/* 1. Database Health */}
+            <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Database Engine</span>
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                  servicesHealth.database?.status === 'HEALTHY' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                }`}>
+                  {servicesHealth.database?.status || 'UNKNOWN'}
+                </span>
+              </div>
+              <p className="font-bold text-zinc-900">Neon Serverless PostgreSQL</p>
+              <p className="text-[11px] text-zinc-500">
+                Ping Latency: <strong className="text-zinc-800 font-mono">{servicesHealth.database?.latencyMs ?? '—'} ms</strong>
+              </p>
+            </div>
+
+            {/* 2. AI Engine Health */}
+            <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">AI Synthesis Engine</span>
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                  servicesHealth.aiEngine?.status === 'HEALTHY' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                }`}>
+                  {servicesHealth.aiEngine?.status || 'DEGRADED'}
+                </span>
+              </div>
+              <p className="font-bold text-zinc-900">
+                Provider: <span className="uppercase text-blue-600 font-mono">{servicesHealth.aiEngine?.configuredProvider || 'mock'}</span>
+              </p>
+              <p className="text-[11px] text-zinc-500">
+                {servicesHealth.aiEngine?.latencyMs
+                  ? `Response Latency: ${servicesHealth.aiEngine.latencyMs} ms`
+                  : servicesHealth.aiEngine?.errorDetail
+                  ? `Rejection: ${servicesHealth.aiEngine.errorDetail.substring(0, 45)}...`
+                  : 'Operating on built-in Mock provider'}
+              </p>
+            </div>
+
+            {/* 3. Distributed CronLocks */}
+            <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2">
+              <span className="text-[10px] font-bold uppercase text-zinc-400">Worker CronLocks</span>
+              <div className="space-y-1">
+                {(servicesHealth.cronLocks || []).map((lock: any) => {
+                  const isLocked = Boolean(lock.lockedAt);
+                  return (
+                    <div key={lock.name} className="flex items-center justify-between text-[11px]">
+                      <span className="font-mono font-bold text-zinc-800">{lock.name}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                          isLocked ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700'
+                        }`}>
+                          {isLocked ? 'LOCKED' : 'FREE'}
+                        </span>
+                        {isLocked && (
+                          <button
+                            onClick={() => handleClearLock(lock.name)}
+                            className="text-[9px] text-rose-600 font-bold hover:underline"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Aggregate Metric Tiles */}
       {stats && (
@@ -245,7 +361,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Cross-Tenant Domains Table */}
+      {/* Cross-Tenant Domains Table with Action Protection */}
       <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
         <div>
           <h2 className="text-base font-black text-zinc-900 tracking-tight">Cross-Tenant Sending Domains</h2>
@@ -349,7 +465,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Action Protection Step-Up Confirmation Modal */}
+      {/* Action Protection Modal */}
       {actionTargetDomain && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm" onClick={() => setActionTargetDomain(null)} />

@@ -6,16 +6,20 @@ import {
   unpauseDomain,
   getPlatformStats,
   unlockAdminAccess,
+  getSystemServicesHealth,
+  clearCronLock,
 } from '../controllers/admin.controller';
 import { requireAdmin } from '../middleware/requireAdmin.middleware';
 
 const router = Router();
 
-// 1. UNLOCK GATEWAY (Accessible to any authenticated user who submits the master passphrase)
+// Unlock Gateway (Accessible with valid master passphrase)
 router.post('/unlock', unlockAdminAccess);
 
-// 2. PROTECTED OPERATOR ENDPOINTS (Guarded by requireAdmin: requires DB isAdmin OR active x-operator-token)
+// Protected Operator Endpoints
 router.get('/stats', requireAdmin, getPlatformStats);
+router.get('/services-health', requireAdmin, getSystemServicesHealth);
+router.post('/locks/:name/clear', requireAdmin, clearCronLock);
 router.get('/users', requireAdmin, listUsers);
 router.get('/domains', requireAdmin, listAllDomains);
 router.post('/domains/:id/pause', requireAdmin, pauseDomain);

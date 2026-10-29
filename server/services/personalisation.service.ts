@@ -1,5 +1,5 @@
 export class PersonalisationService {
-  // Blacklist of literal placeholder strings often found in dirty CSVs or test data
+  // Blacklist of literal placeholder strings often found in dirty CSVs or test records
   private static readonly BOGUS_NAME_TOKENS = new Set([
     'name', 'first name', 'firstname', 'last name', 'lastname', 'contact', 'lead',
     'prospect', 'user', 'test', 'unknown', 'n/a', 'null', 'none', 'there', 'customer', 'client'
@@ -44,6 +44,10 @@ export class PersonalisationService {
     return result;
   }
 
+  /**
+   * Strictly interpolates {{variable}} or {{variable|fallback}} mustache tokens.
+   * Bare words like "name", "company", or "team" in the body text are NEVER modified.
+   */
   personalise(
     lead: any,
     subject: string,
@@ -57,11 +61,12 @@ export class PersonalisationService {
       customOptOutText?: string | null;
     }
   ): { subject: string; body: string } {
+    // 1. Resolve Spintax first: {Option A|Option B}
     let pSubject = this.resolveSpintax(subject);
     let pBody = this.resolveSpintax(body);
 
-    // 1. Sanitize Prospect Name (Filter bogus "name" values)
-    const rawFullName = this.cleanString(lead.name);
+    // 2. Extract and sanitize prospect values
+    const rawFullName = this.cleanString(lead?.name);
     let validName: string | null = null;
     let validFirstName: string | null = null;
     let validLastName: string | null = null;
@@ -75,64 +80,66 @@ export class PersonalisationService {
       }
     }
 
-    // 2. Sanitize Company Name (Filter bogus "company" values)
-    const rawCompany = this.cleanString(lead.company);
+    const rawCompany = this.cleanString(lead?.company);
     let validCompany: string | null = null;
     if (rawCompany && !PersonalisationService.BOGUS_COMPANY_TOKENS.has(rawCompany.toLowerCase())) {
       validCompany = this.toTitleCase(rawCompany);
     }
 
-    // 3. Sanitize Job Title / Position
-    const rawPosition = this.cleanString(lead.position);
+    const rawPosition = this.cleanString(lead?.position);
     let validPosition: string | null = null;
     if (rawPosition && !/^(n\/a|null|undefined|none|test)$/i.test(rawPosition)) {
       validPosition = this.toTitleCase(rawPosition);
     }
 
-    // 4. Sanitize Sender Name
     const rawSender = this.cleanString(senderName);
     let validSenderName = 'The Team';
     if (rawSender && !PersonalisationService.BOGUS_SENDER_TOKENS.has(rawSender.toLowerCase())) {
       validSenderName = this.toTitleCase(rawSender);
     }
 
-    // Helper: Smart replacement with fallback
-    const replaceToken = (text: string, token: string, value: string | null, fallback: string) => {
-      // Handles pipe syntax: {{token|fallback}}
-      const pipeRegex = new RegExp(`\\{\\{${token}\\|([^}]+)\\}\\}`, 'gi');
-      text = text.replace(pipeRegex, (_, userFallback) => value || userFallback.trim());
+    // 3. Strict Mustache Token Replacer:
+    // Matches ONLY: {{token}} or {{token|fallback}}
+    // Leaves all other un-braced words untouched.
+    const replaceMustacheTokens = (
+      text: string,
+      tokenName: string,
+      resolvedValue: string | null,
+      systemFallback: string
+    ): string => {
+      // Handles pipe syntax: {{token|customFallback}}
+      const pipeRegex = new RegExp(`\\{\\{${tokenName}\\|([^}]+)\\}\\}`, 'gi');
+      text = text.replace(pipeRegex, (_, userFallback) => {
+        return resolvedValue && resolvedValue.trim() ? resolvedValue : userFallback.trim();
+      });
 
       // Handles standard syntax: {{token}}
-      const standardRegex = new RegExp(`\\{\\{${token}\\}\\}`, 'gi');
-      text = text.replace(standardRegex, value || fallback);
+      const standardRegex = new RegExp(`\\{\\{${tokenName}\\}\\}`, 'gi');
+      text = text.replace(standardRegex, () => {
+        return resolvedValue && resolvedValue.trim() ? resolvedValue : systemFallback;
+      });
+
       return text;
     };
 
-    // Interpolate Name
-    pSubject = replaceToken(pSubject, 'name', validName, 'there');
-    pBody = replaceToken(pBody, 'name', validFirstName || validName, 'there');
-    pSubject = replaceToken(pSubject, 'firstName', validFirstName, 'there');
-    pBody = replaceToken(pBody, 'firstName', validFirstName, 'there');
-    pSubject = replaceToken(pSubject, 'lastName', validLastName, '');
-    pBody = replaceToken(pBody, 'lastName', validLastName, '');
+    // Apply strict mustache token replacements
+    pSubject = replaceMustacheTokens(pSubject, 'name', validName, 'there');
+    pBody = replaceMustacheTokens(pBody, 'name', validFirstName || validName, 'there');
 
-    // Interpolate Company with natural grammar fallback
-    // e.g. "regarding {{company}}" -> if company is invalid, becomes "regarding your team"
-    if (validCompany) {
-      pSubject = replaceToken(pSubject, 'company', validCompany, 'your team');
-      pBody = replaceToken(pBody, 'company', validCompany, 'your team');
-    } else {
-      pSubject = pSubject.replace(/\bregarding\s+\{\{company\}\}/gi, 'for you');
-      pBody = pBody.replace(/\blooks\s+like\s+\{\{company\}\}\s+is\b/gi, 'looks like your team is');
-      pSubject = replaceToken(pSubject, 'company', null, 'your team');
-      pBody = replaceToken(pBody, 'company', null, 'your team');
-    }
+    pSubject = replaceMustacheTokens(pSubject, 'firstName', validFirstName, 'there');
+    pBody = replaceMustacheTokens(pBody, 'firstName', validFirstName, 'there');
 
-    // Interpolate Role & Sender
-    pSubject = replaceToken(pSubject, 'position', validPosition, 'your role');
-    pBody = replaceToken(pBody, 'position', validPosition, 'your role');
-    pSubject = replaceToken(pSubject, 'senderName', validSenderName, 'The Team');
-    pBody = replaceToken(pBody, 'senderName', validSenderName, 'The Team');
+    pSubject = replaceMustacheTokens(pSubject, 'lastName', validLastName, '');
+    pBody = replaceMustacheTokens(pBody, 'lastName', validLastName, '');
+
+    pSubject = replaceMustacheTokens(pSubject, 'company', validCompany, 'your team');
+    pBody = replaceMustacheTokens(pBody, 'company', validCompany, 'your team');
+
+    pSubject = replaceMustacheTokens(pSubject, 'position', validPosition, 'your role');
+    pBody = replaceMustacheTokens(pBody, 'position', validPosition, 'your role');
+
+    pSubject = replaceMustacheTokens(pSubject, 'senderName', validSenderName, 'The Team');
+    pBody = replaceMustacheTokens(pBody, 'senderName', validSenderName, 'The Team');
 
     // Reference story interpolation
     if (!reference) {
@@ -142,11 +149,11 @@ export class PersonalisationService {
       pSubject = pSubject.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
     }
 
-    // Clean any remaining un-matched template tags
+    // 4. Clean any remaining unrecognized {{mustache}} tokens so raw tags never leak
     pSubject = pSubject.replace(/\{\{[^}]+\}\}/g, '').trim();
     pBody = pBody.replace(/\{\{[^}]+\}\}/g, '').trim();
 
-    // CAN-SPAM Legal Compliance Footer
+    // 5. CAN-SPAM Legal & Postal Compliance Footer
     const footerLines: string[] = [];
     if (unsubscribeUrl) {
       const optOutLabel = complianceOptions?.customOptOutText?.trim() || "Don't want to receive these emails? Unsubscribe here";
