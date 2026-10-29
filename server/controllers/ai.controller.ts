@@ -23,3 +23,16 @@ export const optimizeContext = async (req: AuthRequest, res: Response, next: Nex
     next(error);
   }
 };
+
+/**
+ * GET /api/ai/diagnostics
+ * Tests the configured primary AI provider and returns latency or the exact rejection error.
+ */
+export const getAIDiagnostics = async (_req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const diagnosticResult = await aiService.testActiveProvider();
+    res.json(diagnosticResult);
+  } catch (error) {
+    next(error);
+  }
+};

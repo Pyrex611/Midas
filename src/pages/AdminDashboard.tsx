@@ -31,6 +31,7 @@ export const AdminDashboard: React.FC = () => {
     sessionStorage.removeItem('midas_operator_token');
     sessionStorage.removeItem('midas_operator_expires_at');
     setIsUnlocked(false);
+    window.dispatchEvent(new Event('operator_auth_changed'));
     toast.warning('Operator session locked due to 60 minutes of inactivity', 'Session Expired');
   }, [toast]);
 
@@ -62,7 +63,6 @@ export const AdminDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    // Check existing valid session in sessionStorage
     const token = sessionStorage.getItem('midas_operator_token');
     const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
 
@@ -71,13 +71,11 @@ export const AdminDashboard: React.FC = () => {
       fetchAll();
     }
 
-    // Register debounced activity listeners
     window.addEventListener('mousemove', recordActivity);
     window.addEventListener('keydown', recordActivity);
     window.addEventListener('scroll', recordActivity);
     window.addEventListener('click', recordActivity);
 
-    // Inactivity check every 30 seconds
     inactivityTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
       const remaining = Math.max(0, 60 - Math.floor(elapsed / (60 * 1000)));
@@ -109,10 +107,11 @@ export const AdminDashboard: React.FC = () => {
       lastActivityRef.current = Date.now();
       setIsUnlocked(true);
       setPassphraseInput('');
+      window.dispatchEvent(new Event('operator_auth_changed'));
       toast.success('Operator clearance authorized for 60 minutes', 'Session Active');
       await fetchAll();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Passphrase rejected'), 'Access Denied');
+      toast.error(getErrorMessage(err, 'Passphrase rejected. Default is midas_operator_2026'), 'Access Denied');
     } finally {
       setVerifyingPassphrase(false);
     }
@@ -172,7 +171,7 @@ export const AdminDashboard: React.FC = () => {
                 className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-mono focus:outline-none focus:border-blue-500"
                 autoFocus
               />
-              <p className="text-[10px] text-zinc-400 mt-1">Configured in OPERATOR_PASSPHRASE env var.</p>
+              <p className="text-[10px] text-zinc-400 mt-1">Default passphrase: <code className="bg-zinc-100 px-1 py-0.5 rounded font-mono font-bold">midas_operator_2026</code></p>
             </div>
 
             <button
@@ -188,10 +187,9 @@ export const AdminDashboard: React.FC = () => {
     );
   }
 
-  // 2. UNLOCKED DASHBOARD SCREEN
+  // 2. UNLOCKED OPERATOR DASHBOARD
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* Top Banner with Inactivity Timer and Manual Lock */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">Platform Deliverability Command</h1>
@@ -215,7 +213,7 @@ export const AdminDashboard: React.FC = () => {
       {loading && <div className="py-20 text-center text-xs text-zinc-400">Loading operator metrics...</div>}
       {error && <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">{error}</div>}
 
-      {/* Metric Tiles */}
+      {/* Aggregate Platform Metric Tiles */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
@@ -338,7 +336,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Step-Up Action Protection Modal */}
+      {/* Action Protection Step-Up Confirmation Modal */}
       {actionTargetDomain && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm" onClick={() => setActionTargetDomain(null)} />

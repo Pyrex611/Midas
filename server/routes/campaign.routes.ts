@@ -32,6 +32,11 @@ import {
   createInvite,
   updateCampaignStrategy,
   gradeCampaignDraft,
+  pauseCampaign,
+  resumeCampaign,
+  getCampaignHealth,
+  dispatchCampaignNow,
+  reconcileQueueEndpoint,
 } from '../controllers/campaign.controller';
 import { requireCampaignRole } from '../middleware/campaignAccess.middleware';
 
@@ -49,6 +54,13 @@ router.put('/:id/auto-reply', requireCampaignRole('EDITOR'), updateAutoReply);
 router.put('/:id/active-hours', requireCampaignRole('EDITOR'), updateActiveHours);
 router.put('/:id/send-hour', requireCampaignRole('EDITOR'), updateSendHour);
 router.put('/:id/strategy', requireCampaignRole('EDITOR'), updateCampaignStrategy);
+
+// Campaign Lifecycle Actions (Pause, Resume, Health Diagnostics, Dispatch Now, Reconcile)
+router.post('/:id/pause', requireCampaignRole('EDITOR'), pauseCampaign);
+router.post('/:id/resume', requireCampaignRole('EDITOR'), resumeCampaign);
+router.post('/:id/reconcile-queue', requireCampaignRole('EDITOR'), reconcileQueueEndpoint);
+router.get('/:id/health', requireCampaignRole('VIEWER'), getCampaignHealth);
+router.post('/:id/dispatch-now', requireCampaignRole('EDITOR'), dispatchCampaignNow);
 
 // Follow-up Steps
 router.get('/:id/followup-steps', requireCampaignRole('VIEWER'), getFollowUpSteps);

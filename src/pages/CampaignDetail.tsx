@@ -6,6 +6,7 @@ import { SequenceCanvas } from '../components/campaigns/SequenceCanvas';
 import { SpintaxSimulator } from '../components/campaigns/SpintaxSimulator';
 import { DeliverabilityGrader } from '../components/campaigns/DeliverabilityGrader';
 import { LeadDrawer } from '../components/leads/LeadDrawer';
+import { UploadArea } from '../components/UploadArea';
 import { RenameCampaignModal } from '../components/RenameCampaignModal';
 import { DeleteCampaignModal } from '../components/DeleteCampaignModal';
 import { EditStrategyModal } from '../components/EditStrategyModal';
@@ -17,6 +18,16 @@ const TIMEZONES = [
   'Europe/London', 'Europe/Berlin', 'Africa/Lagos', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney',
 ];
 
+interface HealthAlert {
+  severity: 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+  actionLabel?: string;
+  actionType?: 'RESUME' | 'ACTIVATE' | 'ASSIGN_SENDERS' | 'NAVIGATE_DOMAINS' | 'DISPATCH_NOW' | 'ADJUST_HOURS' | 'RECONCILE_QUEUE';
+}
+
+type DrilldownCategory = 'ALL' | 'CONTACTED' | 'OPENED' | 'CLICKED' | 'REPLIED' | 'BOUNCED' | 'UNSUBSCRIBED';
+
 export const CampaignDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -24,7 +35,19 @@ export const CampaignDetail: React.FC = () => {
 
   const [campaign, setCampaign] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'flow' | 'leads' | 'drafts' | 'automation' | 'settings'>('flow');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'flow' | 'leads' | 'drafts' | 'automation' | 'settings'>('dashboard');
+
+  // Interactive Lead Drilldown Modal / Drawer State
+  const [drilldownCategory, setDrilldownCategory] = useState<DrilldownCategory | null>(null);
+  const [drilldownSearch, setDrilldownSearch] = useState('');
+
+  // Push-Notification Health Alert Banner State
+  const [healthAlerts, setHealthAlerts] = useState<HealthAlert[]>([]);
+  const [isDispatchingNow, setIsDispatchingNow] = useState(false);
+  const [isReconciling, setIsReconciling] = useState(false);
+
+  // In-Campaign Direct Upload Drawer
+  const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(false);
 
   // Header Dropdown & Modals
   const [menuOpen, setMenuOpen] = useState(false);
@@ -63,7 +86,6 @@ export const CampaignDetail: React.FC = () => {
   const [savingSteps, setSavingSteps] = useState(false);
   const [generatingDraftFor, setGeneratingDraftFor] = useState<number | null>(null);
 
-  // RBAC Permission derivation
   const role: 'OWNER' | 'EDITOR' | 'VIEWER' = campaign?.role || 'VIEWER';
   const canEdit = role === 'OWNER' || role === 'EDITOR';
   const canDelete = role === 'OWNER';
@@ -72,7 +94,10 @@ export const CampaignDetail: React.FC = () => {
     if (!id) return;
     setLoading(true);
     try {
-      const res = await campaignAPI.get(id);
+      const [res, healthRes] = await Promise.all([
+        campaignAPI.get(id),
+        campaignAPI.getHealth(id).catch(() => ({ data: { alerts: [] } })),
+      ]);
       setCampaign(res.data);
       setAutoReplyEnabled(res.data.autoReplyEnabled || false);
       setSendHourUTC(res.data.sendHourUTC ?? 9);
@@ -80,7 +105,8 @@ export const CampaignDetail: React.FC = () => {
       setActiveEndHour(res.data.activeEndHour ?? '');
       setTimezone(res.data.timezone || 'UTC');
       setFollowUpSteps((res.data.followUpSteps || []).sort((a: any, b: any) => a.stepNumber - b.stepNumber));
-    } catch (err: any) {
+      setHealthAlerts(healthRes.data?.alerts || []);
+    } catch {
       toast.error('Failed to load campaign data', 'Network Error');
     } finally {
       setLoading(false);
@@ -111,6 +137,78 @@ export const CampaignDetail: React.FC = () => {
     setMenuOpen(false);
   };
 
+  const handleReconcileQueue = async () => {
+    if (!id) return;
+    setIsReconciling(true);
+    try {
+      const res = await campaignAPI.reconcileQueue(id);
+      toast.success(res.data?.message || 'Queue reconciled', 'Queue Staged');
+      await fetchCampaign();
+    } catch {
+      toast.error('Could not reconcile queue', 'Error');
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  const handleTogglePauseResume = async () => {
+    if (!id || !campaign) return;
+    setMenuOpen(false);
+    try {
+      if (campaign.status === 'PAUSED') {
+        await campaignAPI.resume(id);
+        toast.success('Campaign outreach resumed and queue reconciled', 'Active');
+      } else {
+        await campaignAPI.pause(id);
+        toast.warning('Campaign outreach paused', 'Halted');
+      }
+      await fetchCampaign();
+    } catch {
+      toast.error('Could not update campaign status', 'Error');
+    }
+  };
+
+  const handleDispatchNow = async () => {
+    if (!id) return;
+    setIsDispatchingNow(true);
+    try {
+      const res = await campaignAPI.dispatchNow(id);
+      const sent = res.data?.summary?.sent || 0;
+      toast.success(`Dispatched send sweep: ${sent} email(s) sent`, 'Queue Processed');
+      await fetchCampaign();
+    } catch {
+      toast.error('Could not trigger queue sweep', 'Error');
+    } finally {
+      setIsDispatchingNow(false);
+    }
+  };
+
+  const handleAlertAction = (actionType?: string) => {
+    switch (actionType) {
+      case 'RESUME':
+      case 'ACTIVATE':
+        handleTogglePauseResume();
+        break;
+      case 'RECONCILE_QUEUE':
+        handleReconcileQueue();
+        break;
+      case 'ASSIGN_SENDERS':
+        setActiveTab('settings');
+        break;
+      case 'NAVIGATE_DOMAINS':
+        navigate('/domains');
+        break;
+      case 'DISPATCH_NOW':
+        handleDispatchNow();
+        break;
+      case 'ADJUST_HOURS':
+        setActiveTab('automation');
+        break;
+      default:
+        break;
+    }
+  };
+
   const handleDeleteCampaign = async () => {
     if (!id) return;
     try {
@@ -122,7 +220,6 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  // Sender Rotation Toggle
   const toggleSender = async (senderId: string, checked: boolean) => {
     setUpdatingSender(true);
     try {
@@ -139,6 +236,7 @@ export const CampaignDetail: React.FC = () => {
         });
         toast.info('Mailbox unlinked from rotation', 'Sender Removed');
       }
+      await fetchCampaign();
     } catch {
       toast.error('Could not update sender link', 'Error');
     } finally {
@@ -146,7 +244,6 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  // Draft Management
   const handleOpenDraftDrawer = (draft?: any) => {
     if (draft) {
       setEditingDraft(draft);
@@ -198,7 +295,7 @@ export const CampaignDetail: React.FC = () => {
       toast.success('AI synthesized a fresh tonal draft variation', 'Synthesized');
       await fetchCampaign();
     } catch {
-      toast.error('Could not generate AI draft variation', 'AI Error');
+      toast.error('Could not generate AI draft variation. Check AI provider settings.', 'AI Error');
     } finally {
       setGeneratingDraft(false);
     }
@@ -217,7 +314,6 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  // Automation Handlers
   const handleToggleAutoReply = async (checked: boolean) => {
     setAutoReplyEnabled(checked);
     setSavingAutoReply(true);
@@ -279,9 +375,66 @@ export const CampaignDetail: React.FC = () => {
   if (loading) return <div className="py-24 text-center text-xs text-zinc-400">Loading campaign workflow...</div>;
   if (!campaign) return <div className="py-24 text-center text-rose-500">Campaign not found.</div>;
 
+  const analytics = campaign.analytics || {
+    totalLeads: campaign.leads?.length || 0,
+    contactedCount: 0,
+    queuedCount: campaign.queuedCount || 0,
+    sentCount: 0,
+    openRate: 0,
+    clickRate: 0,
+    replyRate: 0,
+    bounceRate: 0,
+    unsubscribedCount: 0,
+  };
+
+  // Compute Unsubscribe Rate safely
+  const unsubscribeRate = analytics.sentCount > 0
+    ? Number(((analytics.unsubscribedCount / analytics.sentCount) * 100).toFixed(1))
+    : 0;
+
+  // Filter leads based on clicked category card
+  const getFilteredLeadsForCategory = () => {
+    const list = campaign.leads || [];
+    const emails = campaign.emails || [];
+
+    switch (drilldownCategory) {
+      case 'CONTACTED':
+        return list.filter((l: any) => l.outreachStatus === 'SENT' || l.status === 'CONTACTED' || l.status === 'REPLIED');
+      case 'OPENED': {
+        const openedLeadIds = new Set(emails.filter((e: any) => e.openedAt && !e.isIncoming).map((e: any) => e.leadId));
+        return list.filter((l: any) => openedLeadIds.has(l.id));
+      }
+      case 'CLICKED': {
+        const clickedLeadIds = new Set(emails.filter((e: any) => e.clickedAt && !e.isIncoming).map((e: any) => e.leadId));
+        return list.filter((l: any) => clickedLeadIds.has(l.id));
+      }
+      case 'REPLIED': {
+        const repliedLeadIds = new Set(emails.filter((e: any) => e.isIncoming).map((e: any) => e.leadId));
+        return list.filter((l: any) => l.status === 'REPLIED' || repliedLeadIds.has(l.id));
+      }
+      case 'BOUNCED':
+        return list.filter((l: any) => l.status === 'BOUNCED' || l.outreachStatus === 'BOUNCED');
+      case 'UNSUBSCRIBED':
+        return list.filter((l: any) => l.status === 'UNSUBSCRIBED');
+      case 'ALL':
+      default:
+        return list;
+    }
+  };
+
+  const filteredDrilldownLeads = getFilteredLeadsForCategory().filter((l: any) => {
+    if (!drilldownSearch.trim()) return true;
+    const q = drilldownSearch.toLowerCase();
+    return (
+      (l.name || '').toLowerCase().includes(q) ||
+      (l.email || '').toLowerCase().includes(q) ||
+      (l.company || '').toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* Top Header */}
+      {/* Top Header Bar */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <Link to="/campaigns" className="text-xs font-bold text-zinc-400 hover:text-zinc-700 flex items-center gap-1 mb-1">
@@ -289,7 +442,13 @@ export const CampaignDetail: React.FC = () => {
           </Link>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-black text-zinc-900 tracking-tight">{campaign.name}</h1>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700">
+            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+              campaign.status === 'ACTIVE'
+                ? 'bg-emerald-50 text-emerald-700'
+                : campaign.status === 'PAUSED'
+                ? 'bg-amber-50 text-amber-700'
+                : 'bg-zinc-100 text-zinc-600'
+            }`}>
               {campaign.status}
             </span>
             {role === 'VIEWER' && (
@@ -307,10 +466,19 @@ export const CampaignDetail: React.FC = () => {
 
           {canEdit && (
             <button
+              onClick={() => setIsUploadDrawerOpen(true)}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs flex items-center gap-1.5"
+            >
+              <span>+ Upload Leads</span>
+            </button>
+          )}
+
+          {canEdit && (
+            <button
               onClick={() => setShowInviteModal(true)}
               className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs flex items-center gap-1.5"
             >
-              <span>👥 Invite Collaborator</span>
+              <span>👥 Invite</span>
             </button>
           )}
 
@@ -319,7 +487,7 @@ export const CampaignDetail: React.FC = () => {
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
                 className="p-2 rounded-xl border border-zinc-200 hover:bg-zinc-100 text-zinc-600 transition-colors"
-                title="Campaign Settings"
+                title="Campaign Actions"
               >
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
@@ -327,23 +495,38 @@ export const CampaignDetail: React.FC = () => {
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-zinc-200 py-1 z-30 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-zinc-200 py-1.5 z-30 animate-in fade-in zoom-in-95 duration-100">
+                  <button
+                    onClick={handleTogglePauseResume}
+                    className="block w-full text-left px-4 py-2 text-xs font-bold text-zinc-800 hover:bg-zinc-50 border-b border-zinc-100"
+                  >
+                    {campaign.status === 'PAUSED' ? '▶ Resume Campaign' : '⏸ Pause Campaign'}
+                  </button>
+
+                  <button
+                    onClick={handleReconcileQueue}
+                    disabled={isReconciling}
+                    className="block w-full text-left px-4 py-2 text-xs font-medium text-blue-600 hover:bg-zinc-50"
+                  >
+                    {isReconciling ? 'Reconciling...' : '⚡ Reconcile & Queue Leads'}
+                  </button>
+
                   <button
                     onClick={() => { setShowRenameModal(true); setMenuOpen(false); }}
-                    className="block w-full text-left px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                    className="block w-full text-left px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                   >
                     Rename Campaign
                   </button>
                   <button
                     onClick={() => { setShowStrategyModal(true); setMenuOpen(false); }}
-                    className="block w-full text-left px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                    className="block w-full text-left px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                   >
                     Refine SDR Strategy
                   </button>
                   {canDelete && (
                     <button
                       onClick={() => { setShowDeleteModal(true); setMenuOpen(false); }}
-                      className="block w-full text-left px-4 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                      className="block w-full text-left px-4 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50"
                     >
                       Delete Campaign
                     </button>
@@ -355,16 +538,66 @@ export const CampaignDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* Modals */}
-      <RenameCampaignModal isOpen={showRenameModal} onClose={() => setShowRenameModal(false)} campaign={campaign} onSuccess={handleUpdate} />
-      <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDeleteCampaign} campaignName={campaign.name} />
-      <EditStrategyModal isOpen={showStrategyModal} onClose={() => setShowStrategyModal(false)} campaign={campaign} onSuccess={handleUpdate} />
-      <InviteCollaboratorModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} campaignId={campaign.id} onSuccess={handleUpdate} />
+      {/* Push-Notification Health Alert Banner */}
+      {healthAlerts.length > 0 && (
+        <div className="space-y-2">
+          {healthAlerts.map((alert, idx) => {
+            const isError = alert.severity === 'error';
+            const isWarning = alert.severity === 'warning';
 
-      {/* Tabs */}
+            return (
+              <div
+                key={idx}
+                className={`p-4 rounded-2xl border shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-150 ${
+                  isError
+                    ? 'bg-rose-50 border-rose-200 text-rose-950'
+                    : isWarning
+                    ? 'bg-amber-50 border-amber-200 text-amber-950'
+                    : 'bg-blue-50 border-blue-200 text-blue-950'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 font-bold ${
+                    isError ? 'bg-rose-200 text-rose-800' : isWarning ? 'bg-amber-200 text-amber-800' : 'bg-blue-200 text-blue-800'
+                  }`}>
+                    {isError ? '!' : isWarning ? '⏸' : 'i'}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">{alert.title}</p>
+                    <p className="text-[11px] opacity-80 mt-0.5">{alert.message}</p>
+                  </div>
+                </div>
+
+                {alert.actionLabel && (
+                  <button
+                    onClick={() => handleAlertAction(alert.actionType)}
+                    disabled={isDispatchingNow || isReconciling}
+                    className={`px-4 py-1.5 rounded-xl text-xs font-bold shadow-xs transition-colors whitespace-nowrap self-end sm:self-center ${
+                      isError
+                        ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                        : isWarning
+                        ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    {isDispatchingNow && alert.actionType === 'DISPATCH_NOW'
+                      ? 'Sweeping Queue...'
+                      : isReconciling && alert.actionType === 'RECONCILE_QUEUE'
+                      ? 'Queueing Leads...'
+                      : alert.actionLabel}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Navigation Tabs (Dashboard / Analytics is Default on load) */}
       <div className="border-b border-zinc-200">
         <nav className="flex space-x-8">
           {[
+            ['dashboard', 'Overview & Analytics'],
             ['flow', 'Sequence Flow'],
             ['leads', `Leads (${campaign.leads?.length || 0})`],
             ['drafts', `Copywriting (${campaign.drafts?.length || 0})`],
@@ -383,6 +616,152 @@ export const CampaignDetail: React.FC = () => {
           ))}
         </nav>
       </div>
+
+      {/* 
+        TAB 0: OVERVIEW & ANALYTICS DASHBOARD (DEFAULT ON LOAD)
+        Features 7 Interactive Funnel Cards including Bounce Rate and Unsubscribe Rate.
+        Clicking any card opens the Lead Category Drilldown Drawer!
+      */}
+      {activeTab === 'dashboard' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            {/* Card 1: Total Leads */}
+            <div
+              onClick={() => setDrilldownCategory('ALL')}
+              className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-blue-600">Total Leads</span>
+                <span className="text-zinc-300 group-hover:text-blue-500 text-xs">↗</span>
+              </div>
+              <p className="text-xl font-black text-zinc-900 mt-1">{analytics.totalLeads}</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">In sequence</p>
+            </div>
+
+            {/* Card 2: Contacted */}
+            <div
+              onClick={() => setDrilldownCategory('CONTACTED')}
+              className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-blue-600">Contacted</span>
+                <span className="text-zinc-300 group-hover:text-blue-500 text-xs">↗</span>
+              </div>
+              <p className="text-xl font-black text-zinc-800 mt-1">{analytics.contactedCount}</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">Sent outreach</p>
+            </div>
+
+            {/* Card 3: Opened */}
+            <div
+              onClick={() => setDrilldownCategory('OPENED')}
+              className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-blue-600">Opened</span>
+                <span className="text-zinc-300 group-hover:text-blue-500 text-xs">↗</span>
+              </div>
+              <p className="text-xl font-black text-blue-600 mt-1">{analytics.openRate}%</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.openedCount} unique</p>
+            </div>
+
+            {/* Card 4: Clicked */}
+            <div
+              onClick={() => setDrilldownCategory('CLICKED')}
+              className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-blue-600">Clicked</span>
+                <span className="text-zinc-300 group-hover:text-blue-500 text-xs">↗</span>
+              </div>
+              <p className="text-xl font-black text-purple-600 mt-1">{analytics.clickRate}%</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.clickedCount} clicks</p>
+            </div>
+
+            {/* Card 5: Replied */}
+            <div
+              onClick={() => setDrilldownCategory('REPLIED')}
+              className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-blue-600">Replied</span>
+                <span className="text-zinc-300 group-hover:text-blue-500 text-xs">↗</span>
+              </div>
+              <p className="text-xl font-black text-emerald-600 mt-1">{analytics.replyRate}%</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.replyCount} replies</p>
+            </div>
+
+            {/* Card 6: Bounced */}
+            <div
+              onClick={() => setDrilldownCategory('BOUNCED')}
+              className="p-4 bg-white border border-zinc-200 hover:border-rose-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-rose-600">Bounce Rate</span>
+                <span className="text-zinc-300 group-hover:text-rose-500 text-xs">↗</span>
+              </div>
+              <p className={`text-xl font-black mt-1 ${analytics.bounceRate > 5 ? 'text-rose-600' : 'text-zinc-900'}`}>
+                {analytics.bounceRate}%
+              </p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.bounceCount} bounces</p>
+            </div>
+
+            {/* Card 7: Unsubscribed */}
+            <div
+              onClick={() => setDrilldownCategory('UNSUBSCRIBED')}
+              className="p-4 bg-white border border-zinc-200 hover:border-amber-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-amber-600">Unsubscribe</span>
+                <span className="text-zinc-300 group-hover:text-amber-500 text-xs">↗</span>
+              </div>
+              <p className="text-xl font-black text-amber-600 mt-1">{unsubscribeRate}%</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.unsubscribedCount} opt-outs</p>
+            </div>
+          </div>
+
+          {/* Sequence Operational Status Card */}
+          <div className="p-6 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-900">Sequence Operational Status</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">Queue status, active mailboxes, and deliverability health.</p>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleReconcileQueue}
+                  disabled={isReconciling}
+                  className="px-3.5 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 rounded-xl text-xs font-bold transition-colors"
+                >
+                  {isReconciling ? 'Syncing...' : '⚡ Reconcile Queue'}
+                </button>
+                <button
+                  onClick={handleDispatchNow}
+                  disabled={isDispatchingNow || campaign.queuedCount === 0}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs disabled:opacity-50"
+                >
+                  {isDispatchingNow ? 'Sweeping...' : 'Trigger Send Sweep'}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-2 border-t border-zinc-100">
+              <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Queue & Status</span>
+                <p className="font-bold text-zinc-800 mt-1">{campaign.queuedCount || 0} Emails Waiting ({campaign.status})</p>
+              </div>
+              <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Sending Mailboxes</span>
+                <p className="font-bold text-zinc-800 mt-1">{campaign.senderLinks?.length || 0} Assigned in Rotation</p>
+              </div>
+              <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Deliverability Health</span>
+                <p className="font-bold text-zinc-800 mt-1">{analytics.bounceRate}% Bounce Rate ({analytics.unsubscribedCount} Unsubs)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: VISUAL SEQUENCE FLOW */}
       {activeTab === 'flow' && (
@@ -420,39 +799,63 @@ export const CampaignDetail: React.FC = () => {
 
       {/* TAB 2: LEADS LIST */}
       {activeTab === 'leads' && (
-        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-xs">
-          {(!campaign.leads || campaign.leads.length === 0) ? (
-            <div className="py-20 text-center text-xs text-zinc-400">No leads attached to this sequence.</div>
-          ) : (
-            <table className="min-w-full divide-y divide-zinc-100 text-left text-xs">
-              <thead className="bg-zinc-50/75 text-zinc-500 font-bold uppercase tracking-wider">
-                <tr>
-                  <th className="py-3 px-4">Name</th>
-                  <th className="py-3 px-4">Email</th>
-                  <th className="py-3 px-4">Company</th>
-                  <th className="py-3 px-4">Outreach Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
-                {campaign.leads.map((l: any) => (
-                  <tr
-                    key={l.id}
-                    onClick={() => { setPreviewLead(l); setIsLeadDrawerOpen(true); }}
-                    className="hover:bg-zinc-50 cursor-pointer transition-colors"
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Prospects in this Sequence</span>
+            {canEdit && (
+              <button
+                onClick={() => setIsUploadDrawerOpen(true)}
+                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs"
+              >
+                + Upload Leads to Campaign
+              </button>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-xs">
+            {(!campaign.leads || campaign.leads.length === 0) ? (
+              <div className="py-20 text-center text-xs text-zinc-400 space-y-2">
+                <p>No leads attached to this sequence yet.</p>
+                {canEdit && (
+                  <button
+                    onClick={() => setIsUploadDrawerOpen(true)}
+                    className="text-blue-600 font-bold hover:underline"
                   >
-                    <td className="py-3 px-4 font-bold text-zinc-900">{l.name}</td>
-                    <td className="py-3 px-4 font-mono text-zinc-500">{l.email}</td>
-                    <td className="py-3 px-4 text-zinc-600">{l.company || '—'}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-zinc-100 text-zinc-700">
-                        {l.outreachStatus || l.status}
-                      </span>
-                    </td>
+                    Upload and map your first lead list
+                  </button>
+                )}
+              </div>
+            ) : (
+              <table className="min-w-full divide-y divide-zinc-100 text-left text-xs">
+                <thead className="bg-zinc-50/75 text-zinc-500 font-bold uppercase tracking-wider">
+                  <tr>
+                    <th className="py-3 px-4">Name</th>
+                    <th className="py-3 px-4">Email</th>
+                    <th className="py-3 px-4">Company</th>
+                    <th className="py-3 px-4">Outreach Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+                  {campaign.leads.map((l: any) => (
+                    <tr
+                      key={l.id}
+                      onClick={() => { setPreviewLead(l); setIsLeadDrawerOpen(true); }}
+                      className="hover:bg-zinc-50 cursor-pointer transition-colors"
+                    >
+                      <td className="py-3 px-4 font-bold text-zinc-900">{l.name}</td>
+                      <td className="py-3 px-4 font-mono text-zinc-500">{l.email}</td>
+                      <td className="py-3 px-4 text-zinc-600">{l.company || '—'}</td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-zinc-100 text-zinc-700">
+                          {l.outreachStatus || l.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 
@@ -502,7 +905,6 @@ export const CampaignDetail: React.FC = () => {
                 <h4 className="text-sm font-bold text-zinc-900">{draft.subject}</h4>
                 <p className="text-xs text-zinc-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
 
-                {/* PROPERLY NESTED DELIVERABILITY GRADER & SPINTAX TESTER */}
                 <div className="space-y-3 pt-3 border-t border-zinc-100">
                   <DeliverabilityGrader
                     campaignId={campaign.id}
@@ -530,7 +932,7 @@ export const CampaignDetail: React.FC = () => {
             <div className="max-w-xl">
               <h3 className="text-sm font-bold text-zinc-900">Autonomous AI Auto-Reply</h3>
               <p className="text-xs text-zinc-500 mt-1">
-                When enabled, incoming replies from leads are analyzed and answered by AI immediately upon receipt, with zero manual operator intervention. Leave disabled for manual review in Unified Inbox.
+                When enabled, incoming replies from leads are analyzed and answered by AI immediately upon receipt.
               </p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -691,7 +1093,69 @@ export const CampaignDetail: React.FC = () => {
         </div>
       )}
 
-      {/* Slide-Over Lead Inspector */}
+      {/* 
+        LEAD CATEGORY DRILLDOWN DRAWER:
+        Opened when any of the 7 analytics cards are clicked!
+      */}
+      <Sheet
+        isOpen={Boolean(drilldownCategory)}
+        onClose={() => { setDrilldownCategory(null); setDrilldownSearch(''); }}
+        title={`Prospects: ${drilldownCategory} (${filteredDrilldownLeads.length})`}
+        description="Inspect and search leads in this specific funnel conversion segment."
+        width="xl"
+      >
+        <div className="space-y-4">
+          <input
+            type="text"
+            value={drilldownSearch}
+            onChange={(e) => setDrilldownSearch(e.target.value)}
+            placeholder="Search leads by name, email, or company..."
+            className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs focus:outline-none focus:border-blue-500"
+          />
+
+          {filteredDrilldownLeads.length === 0 ? (
+            <p className="py-12 text-center text-xs text-zinc-400">No leads in this category.</p>
+          ) : (
+            <div className="space-y-2 max-h-[65vh] overflow-y-auto">
+              {filteredDrilldownLeads.map((l: any) => (
+                <div
+                  key={l.id}
+                  onClick={() => { setPreviewLead(l); setIsLeadDrawerOpen(true); }}
+                  className="p-3 bg-zinc-50 hover:bg-blue-50/60 border border-zinc-200 rounded-xl cursor-pointer transition-colors flex items-center justify-between text-xs"
+                >
+                  <div>
+                    <p className="font-bold text-zinc-900">{l.name}</p>
+                    <p className="text-[11px] text-zinc-400 font-mono">{l.email}</p>
+                    <p className="text-[10px] text-zinc-500">{l.company || 'No Company'} · {l.position || 'No Title'}</p>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white border border-zinc-200 text-zinc-700">
+                    {l.outreachStatus || l.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Sheet>
+
+      {/* In-Campaign Lead Upload Drawer */}
+      <Sheet
+        isOpen={isUploadDrawerOpen}
+        onClose={() => setIsUploadDrawerOpen(false)}
+        title={`Import Leads into "${campaign.name}"`}
+        description="Ingest, verify, and match fields directly. Ingested leads are queued for outreach immediately."
+        width="2xl"
+      >
+        <UploadArea
+          campaignId={campaign.id}
+          onJobComplete={() => {
+            fetchCampaign();
+            setIsUploadDrawerOpen(false);
+          }}
+        />
+      </Sheet>
+
+      {/* Lead Inspector Drawer */}
       <LeadDrawer
         isOpen={isLeadDrawerOpen}
         onClose={() => setIsLeadDrawerOpen(false)}
@@ -700,7 +1164,7 @@ export const CampaignDetail: React.FC = () => {
         onUpdate={fetchCampaign}
       />
 
-      {/* Slide-Over Draft Editor */}
+      {/* Draft Editor Drawer */}
       <Sheet
         isOpen={isDraftDrawerOpen}
         onClose={() => setIsDraftDrawerOpen(false)}
@@ -738,6 +1202,12 @@ export const CampaignDetail: React.FC = () => {
           </div>
         </div>
       </Sheet>
+
+      {/* Modals */}
+      <RenameCampaignModal isOpen={showRenameModal} onClose={() => setShowRenameModal(false)} campaign={campaign} onSuccess={handleUpdate} />
+      <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDeleteCampaign} campaignName={campaign.name} />
+      <EditStrategyModal isOpen={showStrategyModal} onClose={() => setShowStrategyModal(false)} campaign={campaign} onSuccess={handleUpdate} />
+      <InviteCollaboratorModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} campaignId={campaign.id} onSuccess={handleUpdate} />
     </div>
   );
 };

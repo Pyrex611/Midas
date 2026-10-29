@@ -1,4 +1,33 @@
 export class PersonalisationService {
+  // Blacklist of literal placeholder strings often found in dirty CSVs or test data
+  private static readonly BOGUS_NAME_TOKENS = new Set([
+    'name', 'first name', 'firstname', 'last name', 'lastname', 'contact', 'lead',
+    'prospect', 'user', 'test', 'unknown', 'n/a', 'null', 'none', 'there', 'customer', 'client'
+  ]);
+
+  private static readonly BOGUS_COMPANY_TOKENS = new Set([
+    'company', 'company name', 'business', 'organization', 'org', 'account',
+    'employer', 'firm', 'test', 'unknown', 'n/a', 'null', 'none', 'your company', 'the company'
+  ]);
+
+  private static readonly BOGUS_SENDER_TOKENS = new Set([
+    'sendername', 'sender_name', 'sender', 'your name', 'my name', 'team', 'sales'
+  ]);
+
+  private cleanString(val: any): string | null {
+    if (!val || typeof val !== 'string') return null;
+    const trimmed = val.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private toTitleCase(str: string): string {
+    return str
+      .toLowerCase()
+      .split(/\s+/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+
   private resolveSpintax(text: string): string {
     const spintaxRegex = /\{([^{}]+)\}/g;
     let result = text;
@@ -31,37 +60,81 @@ export class PersonalisationService {
     let pSubject = this.resolveSpintax(subject);
     let pBody = this.resolveSpintax(body);
 
-    const firstName = lead.name ? lead.name.split(' ')[0] : '';
-    const lastName = lead.name && lead.name.split(' ').length > 1 ? lead.name.split(' ').slice(1).join(' ') : '';
+    // 1. Sanitize Prospect Name (Filter bogus "name" values)
+    const rawFullName = this.cleanString(lead.name);
+    let validName: string | null = null;
+    let validFirstName: string | null = null;
+    let validLastName: string | null = null;
 
-    // Smart Variable Fallbacks: {{variable|fallback}}
-    const replaceWithFallback = (text: string, varName: string, value: string | null | undefined, defaultFallback = '') => {
-      const regexWithPipe = new RegExp(`\\{\\{${varName}\\|([^}]+)\\}\\}`, 'gi');
-      text = text.replace(regexWithPipe, (_, fallback) => (value && value.trim() ? value : fallback.trim()));
+    if (rawFullName && !PersonalisationService.BOGUS_NAME_TOKENS.has(rawFullName.toLowerCase())) {
+      validName = this.toTitleCase(rawFullName);
+      const parts = validName.split(' ');
+      validFirstName = parts[0] || null;
+      if (parts.length > 1) {
+        validLastName = parts.slice(1).join(' ');
+      }
+    }
 
-      const standardRegex = new RegExp(`\\{\\{${varName}\\}\\}`, 'gi');
-      text = text.replace(standardRegex, value && value.trim() ? value : defaultFallback);
+    // 2. Sanitize Company Name (Filter bogus "company" values)
+    const rawCompany = this.cleanString(lead.company);
+    let validCompany: string | null = null;
+    if (rawCompany && !PersonalisationService.BOGUS_COMPANY_TOKENS.has(rawCompany.toLowerCase())) {
+      validCompany = this.toTitleCase(rawCompany);
+    }
+
+    // 3. Sanitize Job Title / Position
+    const rawPosition = this.cleanString(lead.position);
+    let validPosition: string | null = null;
+    if (rawPosition && !/^(n\/a|null|undefined|none|test)$/i.test(rawPosition)) {
+      validPosition = this.toTitleCase(rawPosition);
+    }
+
+    // 4. Sanitize Sender Name
+    const rawSender = this.cleanString(senderName);
+    let validSenderName = 'The Team';
+    if (rawSender && !PersonalisationService.BOGUS_SENDER_TOKENS.has(rawSender.toLowerCase())) {
+      validSenderName = this.toTitleCase(rawSender);
+    }
+
+    // Helper: Smart replacement with fallback
+    const replaceToken = (text: string, token: string, value: string | null, fallback: string) => {
+      // Handles pipe syntax: {{token|fallback}}
+      const pipeRegex = new RegExp(`\\{\\{${token}\\|([^}]+)\\}\\}`, 'gi');
+      text = text.replace(pipeRegex, (_, userFallback) => value || userFallback.trim());
+
+      // Handles standard syntax: {{token}}
+      const standardRegex = new RegExp(`\\{\\{${token}\\}\\}`, 'gi');
+      text = text.replace(standardRegex, value || fallback);
       return text;
     };
 
-    pSubject = replaceWithFallback(pSubject, 'name', lead.name, 'there');
-    pBody = replaceWithFallback(pBody, 'name', lead.name, 'there');
+    // Interpolate Name
+    pSubject = replaceToken(pSubject, 'name', validName, 'there');
+    pBody = replaceToken(pBody, 'name', validFirstName || validName, 'there');
+    pSubject = replaceToken(pSubject, 'firstName', validFirstName, 'there');
+    pBody = replaceToken(pBody, 'firstName', validFirstName, 'there');
+    pSubject = replaceToken(pSubject, 'lastName', validLastName, '');
+    pBody = replaceToken(pBody, 'lastName', validLastName, '');
 
-    pSubject = replaceWithFallback(pSubject, 'firstName', firstName, 'there');
-    pBody = replaceWithFallback(pBody, 'firstName', firstName, 'there');
+    // Interpolate Company with natural grammar fallback
+    // e.g. "regarding {{company}}" -> if company is invalid, becomes "regarding your team"
+    if (validCompany) {
+      pSubject = replaceToken(pSubject, 'company', validCompany, 'your team');
+      pBody = replaceToken(pBody, 'company', validCompany, 'your team');
+    } else {
+      pSubject = pSubject.replace(/\bregarding\s+\{\{company\}\}/gi, 'for you');
+      pBody = pBody.replace(/\blooks\s+like\s+\{\{company\}\}\s+is\b/gi, 'looks like your team is');
+      pSubject = replaceToken(pSubject, 'company', null, 'your team');
+      pBody = replaceToken(pBody, 'company', null, 'your team');
+    }
 
-    pSubject = replaceWithFallback(pSubject, 'lastName', lastName, '');
-    pBody = replaceWithFallback(pBody, 'lastName', lastName, '');
+    // Interpolate Role & Sender
+    pSubject = replaceToken(pSubject, 'position', validPosition, 'your role');
+    pBody = replaceToken(pBody, 'position', validPosition, 'your role');
+    pSubject = replaceToken(pSubject, 'senderName', validSenderName, 'The Team');
+    pBody = replaceToken(pBody, 'senderName', validSenderName, 'The Team');
 
-    pSubject = replaceWithFallback(pSubject, 'company', lead.company, 'your company');
-    pBody = replaceWithFallback(pBody, 'company', lead.company, 'your company');
-
-    pSubject = replaceWithFallback(pSubject, 'position', lead.position, 'your role');
-    pBody = replaceWithFallback(pBody, 'position', lead.position, 'your role');
-
-    pSubject = replaceWithFallback(pSubject, 'senderName', senderName, 'Team');
-    pBody = replaceWithFallback(pBody, 'senderName', senderName, 'Team');
-
+    // Reference story interpolation
     if (!reference) {
       pBody = pBody.split('\n').filter(line => !line.includes('{{reference_company}}')).join('\n');
     } else {
@@ -69,12 +142,12 @@ export class PersonalisationService {
       pSubject = pSubject.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
     }
 
+    // Clean any remaining un-matched template tags
     pSubject = pSubject.replace(/\{\{[^}]+\}\}/g, '').trim();
     pBody = pBody.replace(/\{\{[^}]+\}\}/g, '').trim();
 
-    // CAN-SPAM, CASL & GDPR Compliant Footer
+    // CAN-SPAM Legal Compliance Footer
     const footerLines: string[] = [];
-
     if (unsubscribeUrl) {
       const optOutLabel = complianceOptions?.customOptOutText?.trim() || "Don't want to receive these emails? Unsubscribe here";
       footerLines.push(`${optOutLabel}: ${unsubscribeUrl}`);

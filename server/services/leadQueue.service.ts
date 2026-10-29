@@ -1,7 +1,26 @@
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import { verificationService } from './verification';
+import { reconcileCampaignQueue } from '../controllers/campaign.controller';
+
+interface ParsedLeadRow {
+  name: string;
+  email: string;
+  company: string | null;
+  position: string | null;
+}
+
+interface ColumnMappingConfig {
+  email: string;
+  nameMode?: 'single' | 'split';
+  nameCol?: string;
+  firstNameCol?: string;
+  lastNameCol?: string;
+  companyCol?: string;
+  positionCol?: string;
+}
 
 export class LeadQueueService {
 
@@ -12,32 +31,86 @@ export class LeadQueueService {
     return blocklist.some(b => {
       const cleanPattern = b.pattern.trim().toLowerCase().replace(/^\*@?/, '').replace(/^@/, '');
       if (!cleanPattern) return false;
-      return cleanEmail === cleanPattern || emailDomain === cleanPattern || cleanEmail.endsWith('@' + cleanPattern) || cleanEmail.endsWith('.' + cleanPattern);
+      return (
+        cleanEmail === cleanPattern ||
+        emailDomain === cleanPattern ||
+        cleanEmail.endsWith('@' + cleanPattern) ||
+        cleanEmail.endsWith('.' + cleanPattern)
+      );
     });
   }
 
-  private parseRow(row: any): { name: string; email: string; company: string | null; position: string | null } | null {
-    const keys = Object.keys(row);
-    const emailKey = keys.find(k => /email/i.test(k));
-    const nameKey = keys.find(k => /^(full ?name|name|contact ?name)$/i.test(k));
-    const firstNameKey = keys.find(k => /first ?name/i.test(k));
-    const lastNameKey = keys.find(k => /last ?name/i.test(k));
-    const companyKey = keys.find(k => /company|organization|account/i.test(k));
-    const positionKey = keys.find(k => /title|position|role/i.test(k));
+  private parseRowWithMapping(row: any, mapping?: ColumnMappingConfig | null): ParsedLeadRow | null {
+    if (!row || typeof row !== 'object') return null;
 
-    const email = emailKey ? String(row[emailKey] || '').trim().toLowerCase() : '';
-    let name = nameKey ? String(row[nameKey] || '').trim() : '';
-    if (!name && firstNameKey) {
-      const first = String(row[firstNameKey] || '').trim();
-      const last = lastNameKey ? String(row[lastNameKey] || '').trim() : '';
-      name = `${first} ${last}`.trim();
+    const normalizedRow: Record<string, string> = {};
+    for (const [k, v] of Object.entries(row)) {
+      const cleanKey = k.replace(/^\uFEFF/, '').trim();
+      normalizedRow[cleanKey] = v !== null && v !== undefined ? String(v).trim() : '';
     }
 
-    const company = companyKey ? String(row[companyKey] || '').trim() : null;
-    const position = positionKey ? String(row[positionKey] || '').trim() : null;
+    let email = '';
+    let name = '';
+    let company: string | null = null;
+    let position: string | null = null;
 
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+    if (mapping?.email && normalizedRow[mapping.email]) {
+      email = normalizedRow[mapping.email].toLowerCase();
+    } else {
+      const emailKey = Object.keys(normalizedRow).find(k =>
+        /^(work_?email|corporate_?email|business_?email|primary_?email|contact_?email|email_?address|email)$/i.test(k) ||
+        (/email/i.test(k) && !/domain|status|valid/i.test(k))
+      );
+      if (emailKey) email = normalizedRow[emailKey].toLowerCase();
+    }
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return null;
+    }
+
+    if (mapping?.nameMode === 'split' && (mapping.firstNameCol || mapping.lastNameCol)) {
+      const first = mapping.firstNameCol ? normalizedRow[mapping.firstNameCol] || '' : '';
+      const last = mapping.lastNameCol ? normalizedRow[mapping.lastNameCol] || '' : '';
+      name = `${first} ${last}`.trim();
+    } else if (mapping?.nameCol && normalizedRow[mapping.nameCol]) {
+      name = normalizedRow[mapping.nameCol];
+    } else {
+      const fullNameKey = Object.keys(normalizedRow).find(k =>
+        /^(full_?name|contact_?name|lead_?name|prospect_?name|name)$/i.test(k) && !/company|domain/i.test(k)
+      );
+      if (fullNameKey && normalizedRow[fullNameKey]) {
+        name = normalizedRow[fullNameKey];
+      } else {
+        const firstKey = Object.keys(normalizedRow).find(k => /^(first_?name|first|fname|given_?name)$/i.test(k));
+        const lastKey = Object.keys(normalizedRow).find(k => /^(last_?name|last|lname|surname|family_?name)$/i.test(k));
+        const first = firstKey ? normalizedRow[firstKey] || '' : '';
+        const last = lastKey ? normalizedRow[lastKey] || '' : '';
+        name = `${first} ${last}`.trim();
+      }
+    }
+
     if (!name) name = email.split('@')[0];
+
+    if (mapping?.companyCol && normalizedRow[mapping.companyCol]) {
+      company = normalizedRow[mapping.companyCol];
+    } else {
+      const companyKey = Object.keys(normalizedRow).find(k =>
+        /^(company_?name|company|organization|account_?name|account|employer|firm)$/i.test(k)
+      );
+      if (companyKey) company = normalizedRow[companyKey] || null;
+    }
+
+    if (mapping?.positionCol && normalizedRow[mapping.positionCol]) {
+      position = normalizedRow[mapping.positionCol];
+    } else {
+      const positionKey = Object.keys(normalizedRow).find(k =>
+        /^(job_?title|title|position|role|designation|headline)$/i.test(k)
+      );
+      if (positionKey) position = normalizedRow[positionKey] || null;
+    }
+
+    if (company && /^(n\/a|none|null|undefined|-)$/i.test(company)) company = null;
+    if (position && /^(n\/a|none|null|undefined|-)$/i.test(position)) position = null;
 
     return { name, email, company, position };
   }
@@ -52,7 +125,6 @@ export class LeadQueueService {
         AND updated_at < NOW() - INTERVAL '15 minutes'
       `;
 
-      // Atomic claim of pending upload jobs
       let jobIds: string[] = [];
       try {
         jobIds = await prisma.$transaction(async (tx) => {
@@ -75,7 +147,7 @@ export class LeadQueueService {
           return ids;
         }, { maxWait: 5000, timeout: 8000 });
       } catch (txErr: any) {
-        logger.warn({ err: txErr?.message }, 'Upload job claim transaction timed out — will retry on next tick');
+        logger.warn({ err: txErr?.message }, 'Upload job claim transaction timed out');
         return { jobsProcessed: 0 };
       }
 
@@ -88,18 +160,34 @@ export class LeadQueueService {
         try {
           if (job.status === 'PROCESSING') {
             const response = await fetch(job.blobUrl);
-            const csvText = await response.text();
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
 
-            const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
-            const rawLeads: any[] = parsed.data;
+            let rawLeads: any[] = [];
+            const isExcel = job.filename.endsWith('.xlsx') || job.filename.endsWith('.xls');
+
+            if (isExcel) {
+              const workbook = XLSX.read(buffer, { type: 'buffer' });
+              const sheetName = workbook.SheetNames[0];
+              rawLeads = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+            } else {
+              const csvText = buffer.toString('utf8');
+              const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+              rawLeads = parsed.data as any[];
+            }
+
+            let mappingConfig: ColumnMappingConfig | null = null;
+            if (job.columnMapping) {
+              try { mappingConfig = JSON.parse(job.columnMapping); } catch { mappingConfig = null; }
+            }
 
             const blocklist = await prisma.blocklist.findMany({ where: { userId: job.userId } });
 
-            const validRows: { name: string; email: string; company: string | null; position: string | null }[] = [];
+            const validRows: ParsedLeadRow[] = [];
             let blockedCount = 0;
 
             for (const row of rawLeads) {
-              const parsedRow = this.parseRow(row);
+              const parsedRow = this.parseRowWithMapping(row, mappingConfig);
               if (!parsedRow) continue;
 
               if (this.isEmailBlocked(parsedRow.email, blocklist)) {
@@ -123,7 +211,8 @@ export class LeadQueueService {
                 job.id,
                 job.userId,
                 validRows.map(r => ({ ...r, verificationStatus: 'UNVERIFIED' })),
-                { totalRows: rawLeads.length, blockedLeads: blockedCount, catchAllLeads: 0, invalidLeads: 0 }
+                { totalRows: rawLeads.length, blockedLeads: blockedCount, catchAllLeads: 0, invalidLeads: 0 },
+                job.campaignId
               );
               jobsProcessed++;
               continue;
@@ -146,20 +235,19 @@ export class LeadQueueService {
             logger.info(`Job ${job.id} sent to ${verificationService.providerName} for verification.`);
           }
           else if (job.status === 'VERIFYING' && job.verificationId) {
-            const rawRows: { name: string; email: string; company: string | null; position: string | null }[] =
-              JSON.parse(job.pendingRows || '[]');
+            const rawRows: ParsedLeadRow[] = JSON.parse(job.pendingRows || '[]');
             const emails = rawRows.map(r => r.email);
 
             const { isComplete, results } = await verificationService.getBulkJobResults(job.verificationId, emails);
 
             if (!isComplete) {
-              logger.debug(`Job ${job.id} still verifying with ${verificationService.providerName}...`);
+              logger.debug(`Job ${job.id} still verifying...`);
               continue;
             }
 
             let catchAllCount = 0;
             let invalidCount = 0;
-            const leadsToInsert: { name: string; email: string; company: string | null; position: string | null; verificationStatus: string }[] = [];
+            const leadsToInsert: (ParsedLeadRow & { verificationStatus: string })[] = [];
 
             for (const row of rawRows) {
               const vResult = results.find(r => r.email === row.email);
@@ -173,15 +261,22 @@ export class LeadQueueService {
               }
             }
 
-            await this.insertLeads(job.id, job.userId, leadsToInsert, {
-              totalRows: job.totalRows,
-              blockedLeads: job.blockedLeads,
-              catchAllLeads: catchAllCount,
-              invalidLeads: invalidCount,
-            });
+            await this.insertLeads(
+              job.id,
+              job.userId,
+              leadsToInsert,
+              {
+                totalRows: job.totalRows,
+                blockedLeads: job.blockedLeads,
+                catchAllLeads: catchAllCount,
+                invalidLeads: invalidCount,
+              },
+              job.campaignId
+            );
             jobsProcessed++;
           }
         } catch (jobError: any) {
+          logger.error({ err: jobError.message, jobId: job.id }, 'Upload job processing failure');
           await prisma.uploadJob.update({
             where: { id: job.id },
             data: { status: 'FAILED', error: jobError.message },
@@ -197,15 +292,21 @@ export class LeadQueueService {
   private async insertLeads(
     jobId: string,
     userId: string,
-    leads: { name: string; email: string; company: string | null; position: string | null; verificationStatus: string }[],
-    counts: { totalRows: number; blockedLeads: number; catchAllLeads: number; invalidLeads: number }
+    leads: (ParsedLeadRow & { verificationStatus: string })[],
+    counts: { totalRows: number; blockedLeads: number; catchAllLeads: number; invalidLeads: number },
+    campaignId?: string | null
   ) {
     const CHUNK_SIZE = 500;
     let insertedCount = 0;
     let duplicatesCount = 0;
 
     for (let i = 0; i < leads.length; i += CHUNK_SIZE) {
-      const chunk = leads.slice(i, i + CHUNK_SIZE).map(l => ({ ...l, userId }));
+      const chunk = leads.slice(i, i + CHUNK_SIZE).map(l => ({
+        ...l,
+        userId,
+        campaignId: campaignId || null,
+        outreachStatus: campaignId ? 'PENDING' : null,
+      }));
       const insertResult = await prisma.lead.createMany({ data: chunk, skipDuplicates: true });
       insertedCount += insertResult.count;
       duplicatesCount += (chunk.length - insertResult.count);
@@ -225,6 +326,14 @@ export class LeadQueueService {
         error: null,
       },
     });
+
+    // If assigned to a campaign, run queue reconciliation immediately
+    if (campaignId) {
+      reconcileCampaignQueue(campaignId, userId).catch(err => {
+        logger.error({ err, campaignId }, 'Failed to reconcile queue after lead ingestion');
+      });
+    }
+
     logger.info(`Job ${jobId} completed. Inserted ${insertedCount} leads.`);
   }
 }

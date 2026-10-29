@@ -64,16 +64,19 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const [cmdOpen, setCmdOpen] = useState(false);
   const [activeDomainsCount, setActiveDomainsCount] = useState(0);
 
+  const checkClearanceState = () => {
+    const token = sessionStorage.getItem('midas_operator_token');
+    const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
+    setHasOperatorClearance(Boolean(token && expiresAt > Date.now()));
+  };
+
   useEffect(() => {
     userAPI
       .getProfile()
       .then((res) => setIsAdmin(!!res.data?.user?.isAdmin))
       .catch(() => setIsAdmin(false));
 
-    // Check operator token clearance in sessionStorage
-    const token = sessionStorage.getItem('midas_operator_token');
-    const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
-    setHasOperatorClearance(Boolean(token && expiresAt > Date.now()));
+    checkClearanceState();
 
     domainAPI
       .getAll()
@@ -84,7 +87,20 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       .catch(() => {});
   }, [location.pathname]);
 
-  // Persist sidebar collapsed state
+  // Reactive listener: automatically reveals Admin Command in Sidebar upon unlock
+  useEffect(() => {
+    const handleAuthChange = () => {
+      checkClearanceState();
+    };
+
+    window.addEventListener('operator_auth_changed', handleAuthChange);
+    window.addEventListener('storage', handleAuthChange);
+    return () => {
+      window.removeEventListener('operator_auth_changed', handleAuthChange);
+      window.removeEventListener('storage', handleAuthChange);
+    };
+  }, []);
+
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
       const next = !prev;
@@ -93,12 +109,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     });
   };
 
-  // Close mobile drawer on route change
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [location.pathname]);
 
-  // Lock body scroll when mobile menu is active
   useEffect(() => {
     if (mobileMenuOpen) {
       document.body.style.overflow = 'hidden';
@@ -110,7 +124,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     };
   }, [mobileMenuOpen]);
 
-  // Global keydown for Cmd+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -128,17 +141,15 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     { label: 'Unified Inbox', path: '/inbox', icon: <Icons.Inbox /> },
     { label: 'All Leads', path: '/leads', icon: <Icons.Leads /> },
     { label: 'Sending Domains', path: '/domains', icon: <Icons.Domains /> },
-    // Visible if DB admin OR verified operator session
     ...(isAdmin || hasOperatorClearance
       ? [{ label: 'Admin Command', path: '/admin', icon: <Icons.Admin /> }]
       : []),
   ];
 
-  // Dynamic Breadcrumb Label derivation
   const getBreadcrumbs = () => {
     const p = location.pathname;
     if (p === '/') return 'Overview';
-    if (p.startsWith('/campaigns/')) return 'Campaigns / Flow Studio';
+    if (p.startsWith('/campaigns/')) return 'Campaigns / Sequence Studio';
     if (p === '/campaigns') return 'Campaigns';
     if (p === '/inbox') return 'Unified Inbox';
     if (p === '/leads') return 'Leads Hub';
@@ -150,11 +161,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   return (
     <div className="min-h-screen bg-zinc-50 flex flex-col md:flex-row">
-      {/* 
-        1. DESKTOP STICKY PERSISTENT SIDEBAR (md:flex)
-        - Anchored strictly to viewport height (`h-screen sticky top-0`)
-        - Settings & Profile permanently locked at the bottom
-      */}
+      {/* Desktop Persistent Sticky Sidebar */}
       <aside
         className={`hidden md:flex flex-col h-screen sticky top-0 border-r border-zinc-200 bg-white transition-all duration-200 z-30 select-none ${
           collapsed ? 'w-20' : 'w-64'
@@ -211,7 +218,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           })}
         </nav>
 
-        {/* Locked Bottom Container */}
+        {/* Anchored Footer (Permanently Visible) */}
         <div className="flex-shrink-0 p-3 border-t border-zinc-100 bg-white space-y-2">
           {!collapsed && (
             <div className="p-3 bg-zinc-900 text-white rounded-xl shadow-xs border border-zinc-800">
@@ -239,19 +246,14 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
       </aside>
 
-      {/* 
-        2. MOBILE RESPONSIVE SLIDE-OUT DRAWER (< md)
-        Fully restores mobile access with an animated overlay.
-      */}
+      {/* Mobile Responsive Slide-Out Drawer */}
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 md:hidden flex">
-          {/* Backdrop */}
           <div
             className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm transition-opacity"
             onClick={() => setMobileMenuOpen(false)}
           />
 
-          {/* Slide-out Menu Panel */}
           <div className="relative w-72 max-w-[80vw] h-[100dvh] bg-white shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-left duration-200">
             <div>
               <div className="h-16 px-6 border-b border-zinc-100 flex items-center justify-between">
@@ -307,13 +309,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
       )}
 
-      {/* 
-        3. MAIN VIEWPORT & TOP HEADER BAR
-      */}
+      {/* Main Viewport & Header Bar */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-16 bg-white/80 backdrop-blur-md border-b border-zinc-200/80 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20">
           <div className="flex items-center gap-3">
-            {/* Mobile Hamburger Button */}
             <button
               onClick={() => setMobileMenuOpen(true)}
               className="p-2 -ml-2 text-zinc-500 hover:text-zinc-800 rounded-lg md:hidden"
@@ -322,12 +321,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               <Icons.Menu />
             </button>
 
-            {/* Dynamic Breadcrumb Header */}
             <span className="text-xs font-black uppercase tracking-wider text-zinc-400 hidden sm:inline-block">
               {getBreadcrumbs()}
             </span>
 
-            {/* Quick Actions / Cmd+K Button */}
             <button
               onClick={() => setCmdOpen(true)}
               className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200/80 border border-zinc-200 text-xs text-zinc-500 transition-colors ml-1"
@@ -350,7 +347,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
 
-      {/* Command Palette Modal */}
       <CommandPalette
         isOpen={cmdOpen}
         onClose={() => setCmdOpen(false)}

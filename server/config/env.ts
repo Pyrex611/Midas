@@ -23,13 +23,6 @@ const envSchema = z.object({
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('midas-aem.vercel.app'),
 
-  // This deployment's own public URL, with no trailing slash — used to
-  // build the Mailgun inbound-Route webhook target
-  // (`${APP_URL}/api/webhooks/mailgun/inbound`) when domain.service.ts
-  // provisions a domain's Route automatically. Optional: falls back to
-  // the default Vercel deployment URL at the call site (see
-  // domain.service.ts::appUrl()) with a warning log, so this only needs
-  // to be set once you have a stable production/custom domain.
   APP_URL: z.string().url().optional(),
 
   // Clerk Authentication Keys
@@ -41,41 +34,26 @@ const envSchema = z.object({
   // Mailgun Deliverability Infrastructure
   MAILGUN_API_KEY: z.string().optional(),
   MAILGUN_WEBHOOK_KEY: z.string().optional(),
-  // 'us' (default, api.mailgun.net) or 'eu' (api.eu.mailgun.net) — Mailgun
-  // accounts are region-locked at signup and the wrong base URL fails silently.
   MAILGUN_REGION: z.enum(['us', 'eu']).default('us'),
 
-  // Automation & Cron Infrastructure. No hardcoded default (a known static
-  // secret is a real vulnerability) and NOT hard-required at this global
-  // level (a missing value here must only disable cron endpoints, not the
-  // whole app) — enforced instead in server/middleware/cronAuth.middleware.ts.
   CRON_SECRET: z.string().optional(),
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
 
-  // --- Optional Upstash QStash signature verification (see docs/QSTASH_SETUP.md) ---
-  // Both optional and safe to leave unset: cronAuth.middleware.ts falls back
-  // to the CRON_SECRET bearer check, and the @upstash/qstash import used to
-  // check these is loaded lazily/defensively so a missing dependency or
-  // unset keys never affect any other route.
   QSTASH_CURRENT_SIGNING_KEY: z.string().optional(),
   QSTASH_NEXT_SIGNING_KEY: z.string().optional(),
 
-  // --- Modular email verification (see server/services/verification) ---
-  // 'mock' (default — no real vendor call, used until a provider key exists),
-  // 'bounceban' | 'neverbounce' | 'zerobounce'. Adding a new vendor only
-  // requires a new provider file + an entry in this enum + its own API key var.
   VERIFICATION_PROVIDER: z.enum(['mock', 'bounceban', 'neverbounce', 'zerobounce']).default('mock'),
   BOUNCEBAN_API_KEY: z.string().optional(),
   NEVERBOUNCE_API_KEY: z.string().optional(),
   ZEROBOUNCE_API_KEY: z.string().optional(),
 
-  // AI Provider Credentials
+  // AI Provider Credentials (Repaired production defaults)
   AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).default('mock'),
   PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter']).optional(),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL: z.string().default('gpt-4-turbo-preview'),
+  OPENAI_MODEL: z.string().default('gpt-4o-mini'),
   GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default('gemini-2.5-flash-lite'),
+  GEMINI_MODEL: z.string().default('gemini-1.5-flash'), // Repaired from non-existent gemini-2.5-flash-lite
   DEEPSEEK_API_KEY: z.string().optional(),
   DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
   OPENROUTER_API_KEY: z.string().optional(),
@@ -95,9 +73,6 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 
-// Post-parse, scoped warnings (never fatal) for vars that are optional at
-// the schema level but should really be set before relying on the feature
-// that needs them.
 if (env.NODE_ENV === 'production' && (!process.env.CRON_SECRET || process.env.CRON_SECRET.length < 32)) {
   console.warn(
     '[env] CRON_SECRET is unset or shorter than 32 chars — /api/cron/* endpoints will refuse ' +

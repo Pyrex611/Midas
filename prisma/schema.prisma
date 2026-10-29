@@ -199,6 +199,8 @@ model UploadJob {
   verificationId String?  
   verifyEmails   Boolean  @default(false) @map("verify_emails")
   pendingRows    String?  @db.Text
+  columnMapping  String?  @db.Text @map("column_mapping")
+  campaignId     String?  @map("campaign_id")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
   @@index([userId])
@@ -365,7 +367,6 @@ model UserSettings {
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   sendLimit        Int?     @map("send_limit")
   sendPeriod       String?  @map("send_period")
-  // Legal & Postal Compliance (CAN-SPAM / CASL Mandates)
   companyName      String?  @map("company_name")
   physicalAddress  String?  @map("physical_address")
   customOptOutText String?  @map("custom_opt_out_text")

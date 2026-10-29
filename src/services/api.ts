@@ -8,14 +8,12 @@ const api = axios.create({
 
 axios.defaults.withCredentials = true;
 
-// Token injection interceptor: attaches both Clerk user token and Operator session token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('midas_auth_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
 
-  // Operator clearance token for Platform Admin operations
   const operatorToken = sessionStorage.getItem('midas_operator_token');
   if (operatorToken) {
     config.headers['x-operator-token'] = operatorToken;
@@ -58,10 +56,16 @@ export const configAPI = {
 };
 
 export const leadAPI = {
-  upload: (file: File, verifyEmails: boolean = false) => {
+  upload: (file: File, verifyEmails: boolean = false, columnMapping?: string, campaignId?: string) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('verifyEmails', String(verifyEmails));
+    if (columnMapping) {
+      formData.append('columnMapping', columnMapping);
+    }
+    if (campaignId) {
+      formData.append('campaignId', campaignId);
+    }
     return api.post('/leads/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -94,6 +98,11 @@ export const campaignAPI = {
 
   getAll: () => api.get('/campaigns'),
   get: (id: string) => api.get(`/campaigns/${id}`),
+  getHealth: (id: string) => api.get(`/campaigns/${id}/health`),
+  pause: (id: string) => api.post(`/campaigns/${id}/pause`),
+  resume: (id: string) => api.post(`/campaigns/${id}/resume`),
+  reconcileQueue: (id: string) => api.post(`/campaigns/${id}/reconcile-queue`),
+  dispatchNow: (id: string) => api.post(`/campaigns/${id}/dispatch-now`),
 
   addLeads: (campaignId: string, leadIds: string[]) =>
     api.post(`/campaigns/${campaignId}/leads`, { leadIds }),
@@ -194,6 +203,7 @@ export const adminAPI = {
 
 export const aiAPI = {
   optimizeContext: (context: string) => api.post('/ai/optimize-context', { context }),
+  diagnostics: () => api.get('/ai/diagnostics'),
 };
 
 export const diagnosticsAPI = {

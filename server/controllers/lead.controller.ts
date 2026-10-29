@@ -20,9 +20,9 @@ export const uploadLeads = [
 
       const blobUrl = await blobService.uploadFile(safeName, req.file.buffer);
 
-      // multer puts non-file text fields on req.body alongside the file.
-      // Coerce string 'true'/'false' from multipart/form-data into a boolean.
       const verifyEmails = req.body.verifyEmails === 'true' || req.body.verifyEmails === true;
+      const columnMapping = typeof req.body.columnMapping === 'string' ? req.body.columnMapping : null;
+      const campaignId = typeof req.body.campaignId === 'string' && req.body.campaignId.trim() ? req.body.campaignId.trim() : null;
 
       const job = await prisma.uploadJob.create({
         data: {
@@ -31,11 +31,11 @@ export const uploadLeads = [
           blobUrl,
           status: 'PENDING',
           verifyEmails,
+          columnMapping,
+          campaignId,
         }
       });
 
-      // Trigger background processing asynchronously. Safe to call
-      // concurrently with the scheduled/external cron (see leadQueue.service.ts).
       leadQueueService.processPendingUploads().catch(err => {
         logger.error({ err }, 'Background lead upload worker error');
       });
@@ -81,8 +81,6 @@ export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFu
 export const deleteBlocklist = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    // Scope by userId — previously any authenticated user could delete any
-    // other user's blocklist entry by guessing/enumerating its id.
     const result = await prisma.blocklist.deleteMany({ where: { id, userId: req.user!.id } });
     if (result.count === 0) return res.status(404).json({ error: 'Blocklist entry not found' });
     res.json({ success: true });
@@ -103,10 +101,6 @@ export const getLeads = async (req: AuthRequest, res: Response, next: NextFuncti
     let where: any = { userId };
 
     if (campaignIdStr && campaignIdStr !== 'all') {
-      // A lead's userId is always its uploader (the account owner), but a
-      // campaign collaborator (EDITOR/VIEWER, not the owner) legitimately
-      // needs to see that campaign's leads too — check membership instead of
-      // hard-requiring userId to match when a specific campaign is requested.
       const campaign = await prisma.campaign.findUnique({
         where: { id: campaignIdStr },
         include: { members: { where: { userId }, select: { role: true } } },
@@ -162,8 +156,6 @@ const LEAD_UPDATABLE_FIELDS = ['name', 'email', 'company', 'position', 'status',
 export const updateLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    // Whitelist — `data: req.body` previously allowed setting any column,
-    // including userId/campaignId/verificationStatus.
     const data: Record<string, any> = {};
     for (const field of LEAD_UPDATABLE_FIELDS) {
       if (req.body[field] !== undefined) data[field] = req.body[field];
