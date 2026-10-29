@@ -3,7 +3,6 @@ import cors from 'cors';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import { requireAuth } from './middleware/auth.middleware';
-import { requireAdmin } from './middleware/requireAdmin.middleware';
 import { requestTimeoutGuard } from './middleware/requestTimeoutGuard.middleware';
 import cronRoutes from './routes/cron.routes';
 import leadRoutes from './routes/lead.routes';
@@ -47,7 +46,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-operator-token', 'x-action-passphrase'],
 }));
 
 app.use((req, res, next) => {
@@ -84,6 +83,8 @@ app.use('/api/ai', requireAuth, aiRoutes);
 app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
-app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
+
+// Admin Routes (requireAuth guards against unauthenticated callers; requireAdmin is applied inside adminRoutes)
+app.use('/api/admin', requireAuth, adminRoutes);
 
 export default app;

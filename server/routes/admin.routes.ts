@@ -7,17 +7,18 @@ import {
   getPlatformStats,
   unlockAdminAccess,
 } from '../controllers/admin.controller';
+import { requireAdmin } from '../middleware/requireAdmin.middleware';
 
 const router = Router();
 
-// Publicly reachable unlock gateway (requires master passphrase)
+// 1. UNLOCK GATEWAY (Accessible to any authenticated user who submits the master passphrase)
 router.post('/unlock', unlockAdminAccess);
 
-// Operator-protected routes
-router.get('/stats', getPlatformStats);
-router.get('/users', listUsers);
-router.get('/domains', listAllDomains);
-router.post('/domains/:id/pause', pauseDomain);
-router.post('/domains/:id/unpause', unpauseDomain);
+// 2. PROTECTED OPERATOR ENDPOINTS (Guarded by requireAdmin: requires DB isAdmin OR active x-operator-token)
+router.get('/stats', requireAdmin, getPlatformStats);
+router.get('/users', requireAdmin, listUsers);
+router.get('/domains', requireAdmin, listAllDomains);
+router.post('/domains/:id/pause', requireAdmin, pauseDomain);
+router.post('/domains/:id/unpause', requireAdmin, unpauseDomain);
 
 export default router;

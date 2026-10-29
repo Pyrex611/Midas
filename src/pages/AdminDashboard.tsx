@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { adminAPI, getErrorMessage } from '../services/api';
+import { adminAPI, userAPI, getErrorMessage } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
 export const AdminDashboard: React.FC = () => {
@@ -26,7 +26,6 @@ export const AdminDashboard: React.FC = () => {
   const lastActivityRef = useRef<number>(Date.now());
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Inactivity auto-lock listener (60-minute sliding window)
   const lockSession = useCallback(() => {
     sessionStorage.removeItem('midas_operator_token');
     sessionStorage.removeItem('midas_operator_expires_at');
@@ -63,19 +62,33 @@ export const AdminDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    const token = sessionStorage.getItem('midas_operator_token');
-    const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
+    // 1. Check if user is already an elevated database admin
+    userAPI.getProfile()
+      .then(res => {
+        if (res.data?.user?.isAdmin) {
+          setIsUnlocked(true);
+          fetchAll();
+          return;
+        }
 
-    if (token && expiresAt > Date.now()) {
-      setIsUnlocked(true);
-      fetchAll();
-    }
+        // 2. Otherwise, check existing operator token in sessionStorage
+        const token = sessionStorage.getItem('midas_operator_token');
+        const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
 
+        if (token && expiresAt > Date.now()) {
+          setIsUnlocked(true);
+          fetchAll();
+        }
+      })
+      .catch(() => {});
+
+    // Activity event listeners
     window.addEventListener('mousemove', recordActivity);
     window.addEventListener('keydown', recordActivity);
     window.addEventListener('scroll', recordActivity);
     window.addEventListener('click', recordActivity);
 
+    // Inactivity check every 30 seconds
     inactivityTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
       const remaining = Math.max(0, 60 - Math.floor(elapsed / (60 * 1000)));
@@ -139,7 +152,7 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // 1. LOCKED GATEWAY SCREEN
+  // 1. LOCKED OPERATOR CLEARANCE GATEWAY
   if (!isUnlocked) {
     return (
       <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-zinc-50">
@@ -171,7 +184,7 @@ export const AdminDashboard: React.FC = () => {
                 className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-mono focus:outline-none focus:border-blue-500"
                 autoFocus
               />
-              <p className="text-[10px] text-zinc-400 mt-1">Default passphrase: <code className="bg-zinc-100 px-1 py-0.5 rounded font-mono font-bold">midas_operator_2026</code></p>
+              <p className="text-[10px] text-zinc-400 mt-1">Default passphrase: <code className="bg-zinc-100 px-1 py-0.5 rounded font-mono font-bold text-zinc-700">midas_operator_2026</code></p>
             </div>
 
             <button
@@ -213,7 +226,7 @@ export const AdminDashboard: React.FC = () => {
       {loading && <div className="py-20 text-center text-xs text-zinc-400">Loading operator metrics...</div>}
       {error && <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">{error}</div>}
 
-      {/* Aggregate Platform Metric Tiles */}
+      {/* Aggregate Metric Tiles */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
@@ -232,7 +245,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Cross-Tenant Domains Table with Action Protection */}
+      {/* Cross-Tenant Domains Table */}
       <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
         <div>
           <h2 className="text-base font-black text-zinc-900 tracking-tight">Cross-Tenant Sending Domains</h2>
