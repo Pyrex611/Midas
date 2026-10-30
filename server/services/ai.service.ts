@@ -17,13 +17,6 @@ import { AIGatewayProvider } from './ai/providers/aigateway.provider';
 
 export type { ReplyAnalysis, InboundClassification, InboundIntentCategory } from './ai/types';
 
-export interface UserAIConfig {
-  provider: string;
-  model?: string;
-  apiKey?: string;
-  gatewayUrl?: string;
-}
-
 export class AIService {
   private defaultPrimaryProvider: AIProvider;
   private defaultFallbackProvider: AIProvider | null = null;
@@ -60,8 +53,8 @@ export class AIService {
         );
       case 'aigateway':
         return new AIGatewayProvider(
-          overrides?.gatewayUrl || process.env.AI_GATEWAY_URL || 'https://api.vercel.ai/v1',
-          overrides?.apiKey || process.env.AI_GATEWAY_KEY || '',
+          overrides?.gatewayUrl || process.env.AI_GATEWAY_URL || 'https://ai-gateway.vercel.sh/v1',
+          overrides?.apiKey || process.env.AI_GATEWAY_API_KEY || process.env.AI_GATEWAY_KEY || process.env.VERCEL_OIDC_TOKEN || '',
           overrides?.model || process.env.AI_GATEWAY_MODEL || 'openai/gpt-4o-mini'
         );
       case 'openai':
@@ -80,10 +73,6 @@ export class AIService {
     }
   }
 
-  /**
-   * Resolves active AI configuration for a specific user.
-   * Checks database UserSettings first; falls back to server env vars.
-   */
   public async resolveUserProvider(userId?: string): Promise<AIProvider> {
     if (!userId) return this.defaultPrimaryProvider;
 
@@ -97,11 +86,17 @@ export class AIService {
       }
 
       const decryptedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
+      let gatewayUrl = settings.aiGatewayUrl || undefined;
+
+      // Auto-migrate legacy api.vercel.ai to canonical ai-gateway.vercel.sh
+      if (gatewayUrl && gatewayUrl.includes('api.vercel.ai')) {
+        gatewayUrl = gatewayUrl.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
+      }
 
       return this.createProviderInstance(settings.aiProvider, {
         model: settings.aiModel || undefined,
         apiKey: decryptedKey,
-        gatewayUrl: settings.aiGatewayUrl || undefined,
+        gatewayUrl,
       });
     } catch {
       return this.defaultPrimaryProvider;
@@ -167,9 +162,7 @@ export class AIService {
             const candidate = cleanedRaw.substring(start, i + 1);
             try {
               return JSON.parse(candidate);
-            } catch {
-              // continue scanning
-            }
+            } catch {}
           }
         }
       }
@@ -332,22 +325,43 @@ Reply text: """${replyText}"""`;
 
   /**
    * Directly test any user-specified combination of provider, model, key, and gateway URL.
+   * Resolves stored DB credentials or environment variables if plain key is not entered in the form.
    */
   async testCustomConfiguration(config: {
     provider: string;
     model?: string;
     apiKey?: string;
     gatewayUrl?: string;
+    userId?: string;
   }): Promise<{
     status: 'HEALTHY' | 'ERROR';
     latencyMs?: number;
     responsePreview?: string;
     errorDetail?: string;
   }> {
+    let resolvedKey = config.apiKey?.trim();
+
+    // If key not passed in request body, resolve from UserSettings in DB
+    if (!resolvedKey && config.userId) {
+      try {
+        const settings = await prisma.userSettings.findUnique({
+          where: { userId: config.userId },
+        });
+        if (settings?.aiApiKeyEncrypted) {
+          resolvedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
+        }
+      } catch {}
+    }
+
+    let gatewayUrl = config.gatewayUrl?.trim();
+    if (gatewayUrl && gatewayUrl.includes('api.vercel.ai')) {
+      gatewayUrl = gatewayUrl.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
+    }
+
     const testProvider = this.createProviderInstance(config.provider, {
-      model: config.model,
-      apiKey: config.apiKey,
-      gatewayUrl: config.gatewayUrl,
+      model: config.model?.trim(),
+      apiKey: resolvedKey,
+      gatewayUrl,
     });
 
     const start = Date.now();

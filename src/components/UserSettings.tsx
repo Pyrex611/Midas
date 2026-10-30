@@ -3,15 +3,21 @@ import { userSettingsAPI, aiAPI } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
 const MODEL_PRESETS: Record<string, string[]> = {
-  gemini: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
+  aigateway: [
+    'openai/gpt-4o-mini',
+    'anthropic/claude-3-5-sonnet',
+    'meta-llama/llama-3.3-70b-instruct',
+    'google/gemini-1.5-flash',
+    'deepseek/deepseek-chat',
+  ],
   openrouter: [
     'deepseek/deepseek-chat',
     'anthropic/claude-3.5-sonnet',
     'meta-llama/llama-3.3-70b-instruct',
     'google/gemini-2.0-flash-exp:free',
-    'mistralai/mistral-large-2407',
+    'openai/gpt-4o-mini',
   ],
-  aigateway: ['openai/gpt-4o-mini', 'anthropic/claude-3-5-sonnet', 'meta-llama/llama-3.3-70b-instruct'],
+  gemini: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
   openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
   ollama: ['llama3.2:1b', 'llama3.1:8b', 'mistral'],
@@ -31,11 +37,11 @@ export const UserSettings: React.FC = () => {
   const [customOptOutText, setCustomOptOutText] = useState('');
 
   // AI Engine Studio State
-  const [aiProvider, setAiProvider] = useState('gemini');
-  const [aiModel, setAiModel] = useState('gemini-1.5-flash');
+  const [aiProvider, setAiProvider] = useState('aigateway');
+  const [aiModel, setAiModel] = useState('openai/gpt-4o-mini');
   const [aiApiKey, setAiApiKey] = useState('');
   const [hasAiApiKey, setHasAiApiKey] = useState(false);
-  const [aiGatewayUrl, setAiGatewayUrl] = useState('https://api.vercel.ai/v1');
+  const [aiGatewayUrl, setAiGatewayUrl] = useState('https://ai-gateway.vercel.sh/v1');
   const [testingAI, setTestingAI] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<any | null>(null);
 
@@ -51,10 +57,16 @@ export const UserSettings: React.FC = () => {
           setCompanyName(res.data.companyName ?? '');
           setPhysicalAddress(res.data.physicalAddress ?? '');
           setCustomOptOutText(res.data.customOptOutText ?? '');
-          setAiProvider(res.data.aiProvider || 'gemini');
-          setAiModel(res.data.aiModel || MODEL_PRESETS[res.data.aiProvider || 'gemini']?.[0] || '');
+          setAiProvider(res.data.aiProvider || 'aigateway');
+          setAiModel(res.data.aiModel || MODEL_PRESETS[res.data.aiProvider || 'aigateway']?.[0] || 'openai/gpt-4o-mini');
           setHasAiApiKey(Boolean(res.data.hasAiApiKey));
-          setAiGatewayUrl(res.data.aiGatewayUrl || 'https://api.vercel.ai/v1');
+
+          // Auto-migrate legacy api.vercel.ai to canonical ai-gateway.vercel.sh
+          let gateway = res.data.aiGatewayUrl || 'https://ai-gateway.vercel.sh/v1';
+          if (gateway.includes('api.vercel.ai')) {
+            gateway = gateway.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
+          }
+          setAiGatewayUrl(gateway);
         }
       })
       .catch(() => {
@@ -63,7 +75,6 @@ export const UserSettings: React.FC = () => {
       .finally(() => setLoading(false));
   }, []);
 
-  // When provider changes, select standard default model
   const handleProviderChange = (newProvider: string) => {
     setAiProvider(newProvider);
     const presets = MODEL_PRESETS[newProvider] || [];
@@ -74,12 +85,19 @@ export const UserSettings: React.FC = () => {
   const handleTestAI = async () => {
     setTestingAI(true);
     setAiTestResult(null);
+
+    let cleanGateway = aiGatewayUrl.trim();
+    if (cleanGateway.includes('api.vercel.ai')) {
+      cleanGateway = cleanGateway.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
+      setAiGatewayUrl(cleanGateway);
+    }
+
     try {
       const res = await aiAPI.testConfig({
         provider: aiProvider,
         model: aiModel,
         apiKey: aiApiKey.trim() || undefined,
-        gatewayUrl: aiProvider === 'aigateway' ? aiGatewayUrl.trim() : undefined,
+        gatewayUrl: aiProvider === 'aigateway' ? cleanGateway : undefined,
       });
       setAiTestResult(res.data);
       if (res.data.status === 'HEALTHY') {
@@ -87,7 +105,7 @@ export const UserSettings: React.FC = () => {
       } else {
         toast.error(res.data.errorDetail || 'Provider rejected request', 'AI Test Failed');
       }
-    } catch (err: any) {
+    } catch {
       toast.error('Could not connect to AI test service', 'Test Error');
     } finally {
       setTestingAI(false);
@@ -97,6 +115,13 @@ export const UserSettings: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+
+    let cleanGateway = aiGatewayUrl.trim();
+    if (cleanGateway.includes('api.vercel.ai')) {
+      cleanGateway = cleanGateway.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
+      setAiGatewayUrl(cleanGateway);
+    }
+
     try {
       await userSettingsAPI.update({
         sendLimit: Math.max(1, Number(sendLimit)),
@@ -107,10 +132,10 @@ export const UserSettings: React.FC = () => {
         aiProvider,
         aiModel: aiModel.trim() || null,
         aiApiKey: aiApiKey.trim() || undefined,
-        aiGatewayUrl: aiProvider === 'aigateway' ? aiGatewayUrl.trim() : null,
+        aiGatewayUrl: aiProvider === 'aigateway' ? cleanGateway : null,
       });
       toast.success('Workspace settings and AI configuration updated', 'Preferences Saved');
-      setAiApiKey(''); // clear plain input after encryption
+      setAiApiKey('');
       setHasAiApiKey(hasAiApiKey || Boolean(aiApiKey.trim()));
     } catch {
       toast.error('Failed to update workspace settings', 'Save Error');
@@ -125,9 +150,7 @@ export const UserSettings: React.FC = () => {
 
   return (
     <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-8">
-      {/* 
-        1. AI ENGINE STUDIO (MODULAR PROVIDER & MODEL SWITCHER)
-      */}
+      {/* 1. AI Engine Studio */}
       <div className="space-y-5">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
@@ -138,7 +161,7 @@ export const UserSettings: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Switch active LLM providers, select models, or route requests through Vercel AI Gateway.
+              Switch active LLM providers, customize models, or route requests through Vercel AI Gateway.
             </p>
           </div>
 
@@ -172,7 +195,6 @@ export const UserSettings: React.FC = () => {
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          {/* Provider Selector */}
           <div>
             <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
               Active AI Provider
@@ -182,16 +204,15 @@ export const UserSettings: React.FC = () => {
               onChange={(e) => handleProviderChange(e.target.value)}
               className="w-full px-3.5 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-900 focus:outline-none focus:border-blue-500"
             >
-              <option value="gemini">Google Gemini (Direct)</option>
+              <option value="aigateway">Vercel AI Gateway (Unified)</option>
               <option value="openrouter">OpenRouter (Any Model)</option>
-              <option value="aigateway">Vercel AI Gateway / Cloudflare</option>
+              <option value="gemini">Google Gemini (Direct)</option>
               <option value="openai">OpenAI (Direct)</option>
               <option value="deepseek">DeepSeek (Direct)</option>
               <option value="mock">Built-in Mock (Testing)</option>
             </select>
           </div>
 
-          {/* Model Selector / Custom String */}
           <div>
             <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
               Model Identifier
@@ -200,10 +221,9 @@ export const UserSettings: React.FC = () => {
               type="text"
               value={aiModel}
               onChange={(e) => setAiModel(e.target.value)}
-              placeholder="e.g. gemini-1.5-flash or deepseek/deepseek-chat"
+              placeholder="e.g. openai/gpt-4o-mini or deepseek/deepseek-chat"
               className="w-full px-3.5 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-mono font-bold text-blue-600 focus:outline-none focus:border-blue-500"
             />
-            {/* Quick Model Presets Bar */}
             <div className="flex flex-wrap gap-1 mt-1.5">
               {(MODEL_PRESETS[aiProvider] || []).map((preset) => (
                 <button
@@ -222,7 +242,6 @@ export const UserSettings: React.FC = () => {
             </div>
           </div>
 
-          {/* Optional Masked API Key */}
           <div>
             <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
               Custom API Key (Optional)
@@ -237,30 +256,32 @@ export const UserSettings: React.FC = () => {
             <p className="mt-1 text-[10px] text-zinc-400">Stored encrypted with AES-256-GCM.</p>
           </div>
 
-          {/* Vercel AI Gateway URL (shown if aigateway selected) */}
           {aiProvider === 'aigateway' && (
             <div className="sm:col-span-3">
               <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
-                AI Gateway Base URL
+                Vercel AI Gateway Base URL
               </label>
               <input
                 type="text"
                 value={aiGatewayUrl}
                 onChange={(e) => setAiGatewayUrl(e.target.value)}
-                placeholder="https://api.vercel.ai/v1 or https://gateway.ai.cloudflare.com/v1/..."
+                placeholder="https://ai-gateway.vercel.sh/v1"
                 className="w-full px-3.5 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
               />
+              <p className="mt-1 text-[10px] text-zinc-400">
+                Official canonical endpoint is <code className="bg-zinc-100 px-1 py-0.5 rounded font-mono font-bold text-zinc-700">https://ai-gateway.vercel.sh/v1</code>.
+              </p>
             </div>
           )}
         </div>
       </div>
 
-      {/* 2. DELIVERY THROTTLING */}
+      {/* 2. Delivery Throttling */}
       <div className="space-y-4 pt-6 border-t border-zinc-100">
         <div>
           <h3 className="text-base font-black text-zinc-900 tracking-tight">Global Delivery Throttling</h3>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Configure account-wide sending ceilings to enforce deliverability safety across all rotating mailboxes combined.
+            Configure account-wide sending ceilings across all rotating mailboxes combined.
           </p>
         </div>
 
@@ -295,7 +316,7 @@ export const UserSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. CAN-SPAM LEGAL & POSTAL COMPLIANCE */}
+      {/* 3. CAN-SPAM Legal & Postal Compliance */}
       <div className="space-y-4 pt-6 border-t border-zinc-100">
         <div>
           <div className="flex items-center gap-2">

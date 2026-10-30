@@ -9,11 +9,14 @@ export class OpenRouterProvider implements AIProvider {
   ) {}
 
   async isAvailable(): Promise<boolean> {
-    return Boolean(this.apiKey);
+    return Boolean(this.apiKey || process.env.OPENROUTER_API_KEY);
   }
 
   async complete(prompt: string, system?: string): Promise<string> {
-    if (!this.apiKey) throw new Error('OPENROUTER_API_KEY is not configured');
+    const key = this.apiKey || process.env.OPENROUTER_API_KEY;
+    if (!key) throw new Error('OPENROUTER_API_KEY is not configured');
+
+    const cleanModel = (this.model || 'deepseek/deepseek-chat').trim();
 
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
@@ -23,12 +26,12 @@ export class OpenRouterProvider implements AIProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey.trim()}`,
+        Authorization: `Bearer ${key.trim()}`,
         'HTTP-Referer': 'https://midas.outreach',
         'X-Title': 'Midas Engine',
       },
       body: JSON.stringify({
-        model: this.model,
+        model: cleanModel,
         messages,
         temperature: 0.7,
         max_tokens: 2500,
@@ -38,7 +41,12 @@ export class OpenRouterProvider implements AIProvider {
 
     const rawText = await response.text();
     if (!response.ok) {
-      throw new Error(`OpenRouter API error (${response.status}): ${rawText}`);
+      let parsedError = rawText;
+      try {
+        const errorJson = JSON.parse(rawText);
+        parsedError = errorJson.error?.message || errorJson.message || rawText;
+      } catch {}
+      throw new Error(`OpenRouter API error (${response.status}): ${parsedError}`);
     }
 
     const data = JSON.parse(rawText);

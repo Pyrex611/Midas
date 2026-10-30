@@ -64,9 +64,11 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default('deepseek/deepseek-chat'),
 
-  // Vercel / Unified AI Gateway
-  AI_GATEWAY_URL: z.string().default('https://api.vercel.ai/v1'),
+  // Canonical Vercel AI Gateway (ai-gateway.vercel.sh/v1)
+  AI_GATEWAY_URL: z.string().default('https://ai-gateway.vercel.sh/v1'),
+  AI_GATEWAY_API_KEY: z.string().optional(),
   AI_GATEWAY_KEY: z.string().optional(),
+  VERCEL_OIDC_TOKEN: z.string().optional(),
   AI_GATEWAY_MODEL: z.string().default('openai/gpt-4o-mini'),
   
   OLLAMA_URL: z.string().default('http://localhost:11434'),

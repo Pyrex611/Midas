@@ -9,11 +9,17 @@ export class DeepSeekProvider implements AIProvider {
   ) {}
 
   async isAvailable(): Promise<boolean> {
-    return Boolean(this.apiKey);
+    return Boolean(this.apiKey || process.env.DEEPSEEK_API_KEY);
   }
 
   async complete(prompt: string, system?: string): Promise<string> {
-    if (!this.apiKey) throw new Error('DEEPSEEK_API_KEY is not configured');
+    const key = this.apiKey || process.env.DEEPSEEK_API_KEY;
+    if (!key) throw new Error('DEEPSEEK_API_KEY is not configured');
+
+    let cleanModel = (this.model || 'deepseek-chat').trim();
+    if (cleanModel.startsWith('deepseek/')) {
+      cleanModel = cleanModel.replace('deepseek/', '');
+    }
 
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
@@ -23,10 +29,10 @@ export class DeepSeekProvider implements AIProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey.trim()}`,
+        Authorization: `Bearer ${key.trim()}`,
       },
       body: JSON.stringify({
-        model: this.model,
+        model: cleanModel,
         messages,
         temperature: 0.7,
         max_tokens: 1200,
@@ -36,7 +42,12 @@ export class DeepSeekProvider implements AIProvider {
 
     const rawText = await response.text();
     if (!response.ok) {
-      throw new Error(`DeepSeek API error (${response.status}): ${rawText}`);
+      let parsedError = rawText;
+      try {
+        const errorJson = JSON.parse(rawText);
+        parsedError = errorJson.error?.message || errorJson.message || rawText;
+      } catch {}
+      throw new Error(`DeepSeek API error (${response.status}): ${parsedError}`);
     }
 
     const data = JSON.parse(rawText);

@@ -33,10 +33,6 @@ export const getAIDiagnostics = async (req: AuthRequest, res: Response, next: Ne
   }
 };
 
-/**
- * POST /api/ai/test
- * Pre-flight test endpoint to test any provider, model, API key, and gateway URL in real-time.
- */
 export const testAIConfiguration = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { provider, model, apiKey, gatewayUrl } = req.body;
@@ -50,6 +46,7 @@ export const testAIConfiguration = async (req: AuthRequest, res: Response, next:
       model,
       apiKey,
       gatewayUrl,
+      userId: req.user?.id,
     });
 
     res.json(result);

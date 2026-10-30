@@ -9,14 +9,21 @@ export class GeminiProvider implements AIProvider {
   ) {}
 
   async isAvailable(): Promise<boolean> {
-    return Boolean(this.apiKey);
+    return Boolean(this.apiKey || process.env.GEMINI_API_KEY);
   }
 
   async complete(prompt: string, system?: string): Promise<string> {
-    if (!this.apiKey) throw new Error('GEMINI_API_KEY is not configured');
+    const key = this.apiKey || process.env.GEMINI_API_KEY;
+    if (!key) throw new Error('GEMINI_API_KEY is not configured');
+
+    // Clean model string: if user inputted "google/gemini-1.5-flash", strip "google/" for direct Gemini API
+    let cleanModel = (this.model || 'gemini-1.5-flash').trim();
+    if (cleanModel.startsWith('google/')) {
+      cleanModel = cleanModel.replace('google/', '');
+    }
 
     const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey.trim()}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${key.trim()}`;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -30,7 +37,12 @@ export class GeminiProvider implements AIProvider {
 
     const rawText = await response.text();
     if (!response.ok) {
-      throw new Error(`Gemini API error (${response.status}): ${rawText}`);
+      let parsedError = rawText;
+      try {
+        const errorJson = JSON.parse(rawText);
+        parsedError = errorJson.error?.message || errorJson.message || rawText;
+      } catch {}
+      throw new Error(`Gemini API error (${response.status}): ${parsedError}`);
     }
 
     const data = JSON.parse(rawText);
