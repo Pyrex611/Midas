@@ -376,6 +376,7 @@ model UserSettings {
   aiModel           String?  @map("ai_model")
   aiApiKeyEncrypted String?  @db.Text @map("ai_api_key_encrypted")
   aiGatewayUrl      String?  @map("ai_gateway_url")
+  aiIntegrations    Json?    @map("ai_integrations")
 
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")

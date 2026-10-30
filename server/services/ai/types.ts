@@ -13,7 +13,7 @@ export interface InboundClassification {
   intent: InboundIntentCategory;
   sentiment: 'very positive' | 'positive' | 'neutral' | 'negative' | 'very negative';
   confidence: number;
-  extractedReturnDate?: string | null; // e.g. for OOO replies: "2026-11-15"
+  extractedReturnDate?: string | null;
   summary: string;
   recommendedAction: 'CONVERT_CALL' | 'SEND_COLLATERAL' | 'HANDLE_OBJECTION' | 'FREEZE_OOO' | 'UNSUBSCRIBE' | 'MANUAL_REVIEW';
 }
@@ -33,4 +33,18 @@ export interface AIProvider {
   readonly name: string;
   isAvailable(): Promise<boolean>;
   complete(prompt: string, system?: string): Promise<string>;
+}
+
+export interface ConfirmedProviderIntegration {
+  id: string; // provider identifier, e.g. "aigateway", "gemini", "openrouter"
+  provider: string;
+  displayName: string;
+  gatewayUrl?: string | null;
+  hasApiKey: boolean;
+  apiKeyEncrypted?: string | null;
+  models: string[];
+  activeModel: string;
+  lastTestedAt: string;
+  status: 'HEALTHY' | 'ERROR';
+  latencyMs?: number;
 }

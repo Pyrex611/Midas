@@ -208,6 +208,17 @@ export const aiAPI = {
   diagnostics: () => api.get('/ai/diagnostics'),
   testConfig: (data: { provider: string; model?: string; apiKey?: string; gatewayUrl?: string }) =>
     api.post('/ai/test', data),
+  getIntegrations: () => api.get('/ai/integrations'),
+  confirmProvider: (data: { provider: string; model: string; apiKey?: string; gatewayUrl?: string; setAsActive?: boolean }) =>
+    api.post('/ai/confirm', data),
+  addModel: (providerId: string, model: string) =>
+    api.post('/ai/add-model', { providerId, model }),
+  switchActive: (provider: string, model: string) =>
+    api.post('/ai/switch-active', { provider, model }),
+  deleteIntegration: (providerId: string) =>
+    api.delete(`/ai/integrations/${providerId}`),
+  deleteModel: (providerId: string, model: string) =>
+    api.delete(`/ai/integrations/${providerId}/models`, { params: { model } }),
 };
 
 export const diagnosticsAPI = {
