@@ -1,5 +1,4 @@
 export class PersonalisationService {
-  // Blacklist of literal placeholder strings found in dirty test data or raw header rows
   private static readonly BOGUS_NAME_TOKENS = new Set([
     'name', 'first name', 'firstname', 'last name', 'lastname', 'contact', 'lead',
     'prospect', 'user', 'test', 'unknown', 'n/a', 'null', 'none', 'there', 'customer', 'client'
@@ -28,8 +27,13 @@ export class PersonalisationService {
       .join(' ');
   }
 
+  /**
+   * Spintax Engine:
+   * Strictly matches {Choice A|Choice B|Choice C} requiring at least one pipe '|'.
+   * Never touches single variables like {company} or {{name}}.
+   */
   private resolveSpintax(text: string): string {
-    const spintaxRegex = /\{([^{}]+)\}/g;
+    const spintaxRegex = /\{([^{}]+?\|[^{}]+?)\}/g;
     let result = text;
     let iterations = 0;
     const maxIterations = 50;
@@ -45,9 +49,11 @@ export class PersonalisationService {
   }
 
   /**
-   * Strictly interpolates {{variable}} or {{variable|fallback}} mustache tokens.
-   * If a variable is missing or equals a bogus token ("name", "company"),
-   * it falls back to natural English grammar ("there", "your clinic", "your team").
+   * Enterprise Personalization Engine:
+   * 1. Interpolates variables FIRST (supports both {{var}} and {var}, plus {{var|fallback}} and {var|fallback}).
+   * 2. Sanitizes bogus tokens ("name", "company", "senderName").
+   * 3. Dynamically injects Ultra-Personalization tokens from lead.enrichedData.
+   * 4. Resolves Spintax SECOND ({Option A|Option B}).
    */
   personalise(
     lead: any,
@@ -62,11 +68,10 @@ export class PersonalisationService {
       customOptOutText?: string | null;
     }
   ): { subject: string; body: string } {
-    // 1. Resolve Spintax first: {Option A|Option B}
-    let pSubject = this.resolveSpintax(subject);
-    let pBody = this.resolveSpintax(body);
+    let pSubject = subject;
+    let pBody = body;
 
-    // 2. Sanitize Prospect Name
+    // 1. Resolve Lead Attributes
     const rawFullName = this.cleanString(lead?.name);
     let validName: string | null = null;
     let validFirstName: string | null = null;
@@ -81,82 +86,120 @@ export class PersonalisationService {
       }
     }
 
-    // 3. Sanitize Company Name
     const rawCompany = this.cleanString(lead?.company);
     let validCompany: string | null = null;
     if (rawCompany && !PersonalisationService.BOGUS_COMPANY_TOKENS.has(rawCompany.toLowerCase())) {
       validCompany = this.toTitleCase(rawCompany);
     }
 
-    // 4. Sanitize Position
     const rawPosition = this.cleanString(lead?.position);
     let validPosition: string | null = null;
     if (rawPosition && !/^(n\/a|null|undefined|none|test)$/i.test(rawPosition)) {
       validPosition = this.toTitleCase(rawPosition);
     }
 
-    // 5. Sanitize Sender Name
     const rawSender = this.cleanString(senderName);
     let validSenderName = 'The Team';
     if (rawSender && !PersonalisationService.BOGUS_SENDER_TOKENS.has(rawSender.toLowerCase())) {
       validSenderName = this.toTitleCase(rawSender);
     }
 
-    // Strict Mustache Replacer
-    const replaceMustacheTokens = (
-      text: string,
-      tokenName: string,
-      resolvedValue: string | null,
-      systemFallback: string
-    ): string => {
-      // Handles pipe syntax: {{token|customFallback}}
-      const pipeRegex = new RegExp(`\\{\\{${tokenName}\\|([^}]+)\\}\\}`, 'gi');
-      text = text.replace(pipeRegex, (_, userFallback) => {
-        return resolvedValue && resolvedValue.trim() ? resolvedValue : userFallback.trim();
-      });
-
-      // Handles standard syntax: {{token}}
-      const standardRegex = new RegExp(`\\{\\{${tokenName}\\}\\}`, 'gi');
-      text = text.replace(standardRegex, () => {
-        return resolvedValue && resolvedValue.trim() ? resolvedValue : systemFallback;
-      });
-
-      return text;
+    // 2. Build Master Variable Context Map (Case-Insensitive)
+    const variableMap: Record<string, string | null> = {
+      name: validName,
+      fullname: validName,
+      firstname: validFirstName,
+      fname: validFirstName,
+      lastname: validLastName,
+      lname: validLastName,
+      company: validCompany,
+      companyname: validCompany,
+      position: validPosition,
+      title: validPosition,
+      jobtitle: validPosition,
+      role: validPosition,
+      sendername: validSenderName,
+      sender: validSenderName,
+      reference_company: reference ? 'a recent partner' : null,
     };
 
-    // Apply strict mustache token replacements
-    pSubject = replaceMustacheTokens(pSubject, 'name', validName, 'there');
-    pBody = replaceMustacheTokens(pBody, 'name', validFirstName || validName, 'there');
-
-    pSubject = replaceMustacheTokens(pSubject, 'firstName', validFirstName, 'there');
-    pBody = replaceMustacheTokens(pBody, 'firstName', validFirstName, 'there');
-
-    pSubject = replaceMustacheTokens(pSubject, 'lastName', validLastName, '');
-    pBody = replaceMustacheTokens(pBody, 'lastName', validLastName, '');
-
-    // Company fallback: use "your clinic" or "your team"
-    pSubject = replaceMustacheTokens(pSubject, 'company', validCompany, 'your team');
-    pBody = replaceMustacheTokens(pBody, 'company', validCompany, 'your clinic');
-
-    pSubject = replaceMustacheTokens(pSubject, 'position', validPosition, 'your role');
-    pBody = replaceMustacheTokens(pBody, 'position', validPosition, 'your role');
-
-    pSubject = replaceMustacheTokens(pSubject, 'senderName', validSenderName, 'The Team');
-    pBody = replaceMustacheTokens(pBody, 'senderName', validSenderName, 'The Team');
-
-    // Reference story interpolation
-    if (!reference) {
-      pBody = pBody.split('\n').filter(line => !line.includes('{{reference_company}}')).join('\n');
-    } else {
-      pBody = pBody.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
-      pSubject = pSubject.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
+    // Inject dynamic Ultra-Personalization tokens from lead.enrichedData
+    if (lead?.enrichedData && typeof lead.enrichedData === 'object') {
+      for (const [k, v] of Object.entries(lead.enrichedData)) {
+        if (typeof v === 'string' && v.trim()) {
+          variableMap[k.toLowerCase().replace(/[^a-z0-9_]/g, '')] = v.trim();
+        }
+      }
     }
 
-    // Clean any remaining unrecognized mustache tags
-    pSubject = pSubject.replace(/\{\{[^}]+\}\}/g, '').trim();
-    pBody = pBody.replace(/\{\{[^}]+\}\}/g, '').trim();
+    // Default Fallbacks Map
+    const defaultFallbacks: Record<string, string> = {
+      name: 'there',
+      fullname: 'there',
+      firstname: 'there',
+      fname: 'there',
+      lastname: '',
+      lname: '',
+      company: 'your clinic',
+      companyname: 'your clinic',
+      position: 'your role',
+      title: 'your role',
+      jobtitle: 'your role',
+      role: 'your role',
+      sendername: 'The Team',
+      sender: 'The Team',
+      reference_company: 'a recent partner',
+    };
 
-    // CAN-SPAM Compliance Footer
+    /**
+     * Variable Replacer Function:
+     * Matches both double braces {{token}} and single braces {token},
+     * as well as custom fallbacks {{token|fallback}} and {token|fallback}.
+     */
+    const replaceVariables = (text: string): string => {
+      // Regex captures:
+      // Group 1: variable name
+      // Group 2: optional user fallback
+      const tokenRegex = /\{{1,2}\s*([a-zA-Z0-9_]+)(?:\|([^}]+))?\s*\}{1,2}/g;
+
+      return text.replace(tokenRegex, (fullMatch, rawVarName, userFallback) => {
+        const key = rawVarName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+
+        // If the token is not recognized and has no pipe, check if it's a known variable
+        if (key in variableMap) {
+          const resolvedVal = variableMap[key];
+          if (resolvedVal && resolvedVal.trim()) {
+            return resolvedVal.trim();
+          }
+          if (userFallback && userFallback.trim()) {
+            return userFallback.trim();
+          }
+          return defaultFallbacks[key] || '';
+        }
+
+        // Leave un-matched tokens with pipe for Spintax
+        if (fullMatch.includes('|')) {
+          return fullMatch;
+        }
+
+        return '';
+      });
+    };
+
+    // STEP A: Interpolate Variables FIRST
+    pSubject = replaceVariables(pSubject);
+    pBody = replaceVariables(pBody);
+
+    // STEP B: Clean Reference Lines if no reference provided
+    if (!reference) {
+      pBody = pBody.split('\n').filter(line => !line.includes('a recent partner')).join('\n');
+    }
+
+    // STEP C: Resolve Spintax SECOND ({Option A|Option B})
+    pSubject = this.resolveSpintax(pSubject);
+    pBody = this.resolveSpintax(pBody);
+
+    // STEP D: CAN-SPAM Legal & Postal Compliance Footer
     const footerLines: string[] = [];
     if (unsubscribeUrl) {
       const optOutLabel = complianceOptions?.customOptOutText?.trim() || "Don't want to receive these emails? Unsubscribe here";
@@ -172,7 +215,7 @@ export class PersonalisationService {
       pBody = `${pBody}\n\n---\n${footerLines.join('\n')}`;
     }
 
-    return { subject: pSubject, body: pBody };
+    return { subject: pSubject.trim(), body: pBody.trim() };
   }
 }
 

@@ -172,8 +172,8 @@ export const reconcileQueueEndpoint = async (req: CampaignRequest, res: Response
 
 /**
  * POST /api/campaigns/:id/repersonalize-queue
- * Refreshes all queued emails with fresh templates from the Campaign Copy Reserves,
- * wipes out stale/corrupt text, and personalizes using real lead attributes.
+ * Refreshes all queued emails using the latest active draft templates from the copy reserves,
+ * completely replacing stale or literal placeholder copy with personalized variables.
  */
 export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
@@ -183,12 +183,12 @@ export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Resp
       where: { id: campaignId },
       include: {
         drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' } },
+        senderLinks: { include: { sender: true } },
       },
     });
 
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    // Pick active initial draft from reserves
     const activeInitialDrafts = campaign.drafts.filter(d => d.useCase === 'initial');
     const latestInitialDraft = activeInitialDrafts[0] || campaign.drafts[0];
 
@@ -205,21 +205,23 @@ export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Resp
       return res.json({ success: true, updatedCount: 0, message: 'No pending emails in queue to refresh.' });
     }
 
+    const activeSender = campaign.senderLinks.map(l => l.sender).find(s => s.status === 'active');
+    const senderName = activeSender?.displayName || activeSender?.localPart || campaign.senderName || 'The Team';
+
     let updatedCount = 0;
     for (let i = 0; i < pendingList.length; i++) {
       const item = pendingList[i];
-      // Rotate or assign across active initial draft reserves
       const targetDraft = activeInitialDrafts.length > 1
         ? activeInitialDrafts[i % activeInitialDrafts.length]
         : latestInitialDraft;
 
-      // Re-personalize using the clean template from reserves
+      // Personalize clean draft template with sanitized lead data
       const { subject, body } = personalisationService.personalise(
         item.lead,
         targetDraft.subject,
         targetDraft.body,
         campaign.reference,
-        campaign.senderName
+        senderName
       );
 
       await prisma.pendingEmail.update({

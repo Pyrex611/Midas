@@ -27,7 +27,6 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
   onGenerateDraft,
   generatingDraftFor,
 }) => {
-  // Find initial outreach drafts
   const initialDrafts = drafts.filter(d => d.useCase === 'initial' && d.isActive);
 
   return (
@@ -59,7 +58,6 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
 
       {/* Dynamic Subsequent Steps */}
       {steps.map((step, index) => {
-        // Find attached drafts for this specific step
         const stepDrafts = drafts.filter(d => d.useCase === 'followup' && d.stepNumber === step.stepNumber && d.isActive);
         const hasDraft = stepDrafts.length > 0;
 
@@ -99,7 +97,6 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
                 )}
               </div>
 
-              {/* Display snippet of attached copy if present */}
               {hasDraft && (
                 <div className="p-3 bg-zinc-50 border border-zinc-100 rounded-xl text-xs space-y-0.5">
                   <p className="text-[10px] font-bold text-zinc-400 uppercase">Attached Copy Subject</p>

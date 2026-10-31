@@ -777,22 +777,22 @@ export const CampaignDetail: React.FC = () => {
       {activeTab === 'flow' && (
         <div className="space-y-8">
           <SequenceCanvas
-						steps={followUpSteps}
-						drafts={campaign.drafts || []}
-						canEdit={canEdit}
-						onAddStep={() => {
-							const nextNum = (followUpSteps[followUpSteps.length - 1]?.stepNumber || 0) + 1;
-							setFollowUpSteps([...followUpSteps, { stepNumber: nextNum, delayDays: 3 }]);
-						}}
-						onUpdateDelay={(idx, days) => {
-							const next = [...followUpSteps];
-							next[idx] = { ...next[idx], delayDays: days };
-							setFollowUpSteps(next);
-						}}
-						onRemoveStep={(idx) => setFollowUpSteps(followUpSteps.filter((_, i) => i !== idx))}
-						onGenerateDraft={handleGenerateStepDraft}
-						generatingDraftFor={generatingDraftFor}
-					/>
+            steps={followUpSteps}
+            drafts={campaign.drafts || []}
+            canEdit={canEdit}
+            onAddStep={() => {
+              const nextNum = (followUpSteps[followUpSteps.length - 1]?.stepNumber || 0) + 1;
+              setFollowUpSteps([...followUpSteps, { stepNumber: nextNum, delayDays: 3 }]);
+            }}
+            onUpdateDelay={(idx, days) => {
+              const next = [...followUpSteps];
+              next[idx] = { ...next[idx], delayDays: days };
+              setFollowUpSteps(next);
+            }}
+            onRemoveStep={(idx) => setFollowUpSteps(followUpSteps.filter((_, i) => i !== idx))}
+            onGenerateDraft={handleGenerateStepDraft}
+            generatingDraftFor={generatingDraftFor}
+          />
 
           {canEdit && (
             <div className="flex justify-end">

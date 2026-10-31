@@ -13,7 +13,10 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
 
     const [lead, campaign, emails, scheduled] = await Promise.all([
       prisma.lead.findUnique({ where: { id: leadId } }),
-      prisma.campaign.findUnique({ where: { id: campaignId } }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
+        include: { senderLinks: { include: { sender: true } } },
+      }),
       prisma.outboundEmail.findMany({
         where: { campaignId, leadId },
         orderBy: { sentAt: 'asc' },
@@ -24,6 +27,9 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
         orderBy: { scheduledAt: 'asc' },
       }),
     ]);
+
+    const activeSender = campaign?.senderLinks.map(l => l.sender).find(s => s.status === 'active');
+    const senderName = activeSender?.displayName || activeSender?.localPart || campaign?.senderName || 'The Team';
 
     const parsedEmails = emails.map(email => ({
       ...email,
@@ -36,7 +42,7 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
         item.subject,
         item.body,
         campaign?.reference,
-        campaign?.senderName
+        senderName
       );
 
       return {
@@ -83,7 +89,7 @@ export const updateScheduledEmail = async (req: CampaignRequest, res: Response, 
 
 export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
-    const { pendingId } = req.params;
+    const { pendingId, campaignId } = req.params;
     const userId = req.user!.id;
 
     const pending = await prisma.pendingEmail.findUnique({
@@ -190,7 +196,10 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
 
     const [lead, campaign, draft] = await Promise.all([
       prisma.lead.findUnique({ where: { id: leadId } }),
-      prisma.campaign.findUnique({ where: { id: campaignId } }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
+        include: { senderLinks: { include: { sender: true } } },
+      }),
       prisma.draft.findUnique({ where: { id: draftId } }),
     ]);
 
@@ -198,12 +207,15 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
       return res.status(404).json({ error: 'Lead, Campaign, or Draft not found' });
     }
 
+    const activeSender = campaign.senderLinks.map(l => l.sender).find(s => s.status === 'active');
+    const senderName = activeSender?.displayName || activeSender?.localPart || campaign.senderName || 'The Team';
+
     const { subject, body } = personalisationService.personalise(
       lead,
       draft.subject,
       draft.body,
       campaign.reference,
-      campaign.senderName
+      senderName
     );
 
     res.json({ leadId, campaignId, draftId, subject, body });
