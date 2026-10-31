@@ -37,6 +37,9 @@ import {
   getCampaignHealth,
   dispatchCampaignNow,
   reconcileQueueEndpoint,
+  repersonalizeCampaignQueue,
+  updateScheduledEmail,
+  sendScheduledEmailNow,
 } from '../controllers/campaign.controller';
 import { requireCampaignRole } from '../middleware/campaignAccess.middleware';
 
@@ -55,10 +58,11 @@ router.put('/:id/active-hours', requireCampaignRole('EDITOR'), updateActiveHours
 router.put('/:id/send-hour', requireCampaignRole('EDITOR'), updateSendHour);
 router.put('/:id/strategy', requireCampaignRole('EDITOR'), updateCampaignStrategy);
 
-// Campaign Lifecycle Actions (Pause, Resume, Health Diagnostics, Dispatch Now, Reconcile)
+// Campaign Lifecycle Actions
 router.post('/:id/pause', requireCampaignRole('EDITOR'), pauseCampaign);
 router.post('/:id/resume', requireCampaignRole('EDITOR'), resumeCampaign);
 router.post('/:id/reconcile-queue', requireCampaignRole('EDITOR'), reconcileQueueEndpoint);
+router.post('/:id/repersonalize-queue', requireCampaignRole('EDITOR'), repersonalizeCampaignQueue);
 router.get('/:id/health', requireCampaignRole('VIEWER'), getCampaignHealth);
 router.post('/:id/dispatch-now', requireCampaignRole('EDITOR'), dispatchCampaignNow);
 
@@ -88,6 +92,10 @@ router.post('/:id/invites', requireCampaignRole('EDITOR'), createInvite);
 router.get('/:campaignId/leads/:leadId/thread', requireCampaignRole('VIEWER'), getLeadEmailThread);
 router.get('/:campaignId/leads/:leadId/preview/:draftId', requireCampaignRole('VIEWER'), previewLeadWithDraft);
 router.post('/:campaignId/leads/:leadId/send', requireCampaignRole('EDITOR'), sendLeadEmail);
+
+// Scheduled Message Inline Editing & Send-Now Override
+router.put('/:campaignId/scheduled/:pendingId', requireCampaignRole('EDITOR'), updateScheduledEmail);
+router.post('/:campaignId/scheduled/:pendingId/send-now', requireCampaignRole('EDITOR'), sendScheduledEmailNow);
 
 // AI Reply Drafting
 router.get('/:campaignId/leads/:leadId/reply-draft', requireCampaignRole('VIEWER'), getReplyDraft);

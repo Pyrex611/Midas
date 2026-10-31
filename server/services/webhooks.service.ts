@@ -113,7 +113,7 @@ export class WebhooksService {
         }
       }
 
-      let originalEmail = null;
+      let originalEmail: any = null;
       if (cleanInReplyTo) {
         originalEmail = await prisma.outboundEmail.findFirst({
           where: {
@@ -123,11 +123,10 @@ export class WebhooksService {
               { messageId: `<${cleanInReplyTo}>` }
             ]
           },
-          select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true }
+          select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true, draftId: true }
         });
       }
 
-      // Scoped tenant fallback
       if (!originalEmail && from && to) {
         const senderEmailMatch = from.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || from.trim().toLowerCase();
         const recipientAddress = to.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || to.trim().toLowerCase();
@@ -158,7 +157,8 @@ export class WebhooksService {
               leadId: matchedLead.id,
               campaignId: latestSent.campaignId,
               userId: latestSent.userId,
-              domainId: latestSent.domainId
+              domainId: latestSent.domainId,
+              draftId: latestSent.draftId,
             };
           }
         }
@@ -193,6 +193,14 @@ export class WebhooksService {
         data: { repliedAt: new Date() }
       });
 
+      // Atomically increment Draft.replyCount to track copy conversion
+      if (originalEmail.draftId) {
+        await prisma.draft.update({
+          where: { id: originalEmail.draftId },
+          data: { replyCount: { increment: 1 } },
+        }).catch(() => {});
+      }
+
       await prisma.lead.update({
         where: { id: originalEmail.leadId },
         data: {
@@ -201,7 +209,7 @@ export class WebhooksService {
         }
       });
 
-      // Route through Behavioral State-Graph Engine
+      // Route through State-Graph Engine
       if (originalEmail.campaignId) {
         sequenceAgentService.processInboundTransition(
           originalEmail.leadId,

@@ -11,11 +11,6 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import { CampaignRequest } from '../middleware/campaignAccess.middleware';
 import { ensureUnsubscribeToken, buildUnsubscribeUrl } from '../lib/unsubscribe';
 
-/**
- * Self-Healing Queue Reconciler:
- * Checks every lead in the campaign. Queues uncontacted leads for initial outreach
- * and checks if any scheduled follow-up steps are due for contacted leads.
- */
 export async function reconcileCampaignQueue(campaignId: string, userId: string): Promise<{ queuedCount: number; message: string }> {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
@@ -33,7 +28,6 @@ export async function reconcileCampaignQueue(campaignId: string, userId: string)
 
   if (!campaign) throw new Error('Campaign not found');
 
-  // 1. Ensure a usable initial draft exists (create baseline fallback if none exists)
   let initialDraft = campaign.drafts.find(d => d.useCase === 'initial') || campaign.drafts[0];
   if (!initialDraft) {
     initialDraft = await prisma.draft.create({
@@ -51,13 +45,11 @@ export async function reconcileCampaignQueue(campaignId: string, userId: string)
   let newlyQueued = 0;
 
   for (const lead of campaign.leads) {
-    // Never queue unsubscribed or bounced leads
     if (lead.status === 'UNSUBSCRIBED' || lead.status === 'BOUNCED') {
       await prisma.pendingEmail.deleteMany({ where: { leadId: lead.id, campaignId } });
       continue;
     }
 
-    // Has lead replied? If so, stop all campaign outreach
     const hasReplied = lead.sentEmails.some(e => e.isIncoming);
     if (hasReplied) {
       await prisma.pendingEmail.deleteMany({ where: { leadId: lead.id, campaignId } });
@@ -67,7 +59,6 @@ export async function reconcileCampaignQueue(campaignId: string, userId: string)
     const hasSentInitial = lead.sentEmails.some(e => !e.isIncoming);
     const hasActiveQueueItem = lead.pendingEmails.length > 0;
 
-    // CASE A: Lead has never received an email and has no queue item -> Queue initial outreach
     if (!hasSentInitial && !hasActiveQueueItem) {
       await prisma.pendingEmail.create({
         data: {
@@ -91,7 +82,6 @@ export async function reconcileCampaignQueue(campaignId: string, userId: string)
       newlyQueued++;
     }
 
-    // CASE B: Lead received initial email, has no active queue item, and has not replied -> Check follow-up steps
     if (hasSentInitial && !hasActiveQueueItem && campaign.followUpSteps.length > 0) {
       const initialOutbound = lead.sentEmails.find(e => !e.isIncoming);
       if (initialOutbound) {
@@ -129,7 +119,7 @@ export async function reconcileCampaignQueue(campaignId: string, userId: string)
             });
 
             newlyQueued++;
-            break; // Queue one step at a time
+            break;
           }
         }
       }
@@ -160,15 +150,13 @@ async function generateBackgroundTonalDrafts(
   for (const tone of secondaryTones) {
     try {
       await new Promise(resolve => setTimeout(resolve, requestDelayMs));
-      const draft = await aiService.generateDraft(
+      const draft = await aiService.generateDraft({
         tone,
-        'initial',
-        context,
+        useCase: 'initial',
+        campaignContext: context,
         reference,
-        undefined,
-        undefined,
-        undefined
-      );
+        userId,
+      });
 
       await prisma.draft.create({
         data: {
@@ -246,7 +234,13 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
 
     try {
       const generated = await Promise.race([
-        aiService.generateDraft('professional', 'initial', context, reference),
+        aiService.generateDraft({
+          tone: 'professional',
+          useCase: 'initial',
+          campaignContext: context,
+          reference,
+          userId,
+        }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('AI initial draft generation timed out')), 4000)
         ),
@@ -340,7 +334,6 @@ export const resumeCampaign = async (req: CampaignRequest, res: Response, next: 
       data: { status: 'ACTIVE' },
     });
 
-    // Automatically reconcile unqueued and follow-up leads on resume
     const reconciliation = await reconcileCampaignQueue(id, userId);
     logger.info({ campaignId: id, reconciliation }, 'Campaign resumed and reconciled');
 
@@ -354,6 +347,43 @@ export const reconcileQueueEndpoint = async (req: CampaignRequest, res: Response
     const userId = req.user!.id;
     const result = await reconcileCampaignQueue(id, userId);
     res.json(result);
+  } catch (error) { next(error); }
+};
+
+/**
+ * POST /api/campaigns/:id/repersonalize-queue
+ * Fixes historical emails queued with raw/corrupted variables by re-running the strict mustache engine.
+ */
+export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Response, next: NextFunction) => {
+  try {
+    const campaignId = req.params.id as string;
+    const pendingList = await prisma.pendingEmail.findMany({
+      where: { campaignId, status: 'PENDING' },
+      include: { lead: true, draft: true, campaign: true },
+    });
+
+    let updatedCount = 0;
+    for (const item of pendingList) {
+      const baseSubject = item.draft?.subject || item.subject;
+      const baseBody = item.draft?.body || item.body;
+
+      // Re-run through the strict personalization engine
+      const { subject, body } = personalisationService.personalise(
+        item.lead,
+        baseSubject,
+        baseBody,
+        item.campaign.reference,
+        item.campaign.senderName
+      );
+
+      await prisma.pendingEmail.update({
+        where: { id: item.id },
+        data: { subject, body },
+      });
+      updatedCount++;
+    }
+
+    res.json({ success: true, updatedCount, message: `Successfully re-personalized ${updatedCount} queued email(s).` });
   } catch (error) { next(error); }
 };
 
@@ -375,7 +405,7 @@ export const getCampaignHealth = async (req: CampaignRequest, res: Response, nex
       title: string;
       message: string;
       actionLabel?: string;
-      actionType?: 'RESUME' | 'ACTIVATE' | 'ASSIGN_SENDERS' | 'NAVIGATE_DOMAINS' | 'DISPATCH_NOW' | 'ADJUST_HOURS' | 'RECONCILE_QUEUE';
+      actionType?: 'RESUME' | 'ACTIVATE' | 'ASSIGN_SENDERS' | 'NAVIGATE_DOMAINS' | 'DISPATCH_NOW' | 'ADJUST_HOURS' | 'RECONCILE_QUEUE' | 'REPERSONALIZE';
     }> = [];
 
     if (campaign.status === 'PAUSED') {
@@ -433,7 +463,6 @@ export const getCampaignHealth = async (req: CampaignRequest, res: Response, nex
       where: { campaignId: id, status: 'PENDING' },
     });
 
-    // Unreconciled Leads Alert: Leads exist with outreachStatus PENDING but 0 in queue
     const unqueuedLeadsCount = await prisma.lead.count({
       where: {
         campaignId: id,
@@ -449,6 +478,29 @@ export const getCampaignHealth = async (req: CampaignRequest, res: Response, nex
         message: 'Leads are attached to this campaign but are missing active queue records.',
         actionLabel: 'Reconcile & Queue Leads Now',
         actionType: 'RECONCILE_QUEUE',
+      });
+    }
+
+    // Check for corrupt placeholders in pending emails
+    const rawPlaceholdersCount = await prisma.pendingEmail.count({
+      where: {
+        campaignId: id,
+        status: 'PENDING',
+        OR: [
+          { body: { contains: 'Hello name' } },
+          { body: { contains: 'regarding company' } },
+          { body: { contains: 'senderName' } },
+        ],
+      },
+    });
+
+    if (rawPlaceholdersCount > 0) {
+      alerts.push({
+        severity: 'warning',
+        title: `${rawPlaceholdersCount} Queued Email(s) Contain Legacy Placeholder Strings`,
+        message: 'These emails were generated before the variable engine fix. Click to update them with clean variables.',
+        actionLabel: 'Re-Personalize Queued Emails',
+        actionType: 'REPERSONALIZE',
       });
     }
 
@@ -477,7 +529,6 @@ export const dispatchCampaignNow = async (req: CampaignRequest, res: Response, n
   try {
     const id = req.params.id as string;
     const userId = req.user!.id;
-    // Auto-reconcile before sweeping
     await reconcileCampaignQueue(id, userId);
     const summary = await emailQueueService.processQueue();
     res.json({ success: true, summary });
@@ -571,6 +622,25 @@ export const getCampaignDetails = async (req: CampaignRequest, res: Response, ne
 
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
+    // Aggregate Draft Analytics
+    const draftsWithStats = await Promise.all(
+      campaign.drafts.map(async (d) => {
+        const [opens, clicks] = await Promise.all([
+          prisma.outboundEmail.count({ where: { draftId: d.id, openedAt: { not: null } } }),
+          prisma.outboundEmail.count({ where: { draftId: d.id, clickedAt: { not: null } } }),
+        ]);
+
+        return {
+          ...d,
+          openCount: opens,
+          clickCount: clicks,
+          openRate: d.sentCount > 0 ? Math.round((opens / d.sentCount) * 100) : 0,
+          clickRate: d.sentCount > 0 ? Math.round((clicks / d.sentCount) * 100) : 0,
+          replyRate: d.sentCount > 0 ? Math.round((d.replyCount / d.sentCount) * 100) : 0,
+        };
+      })
+    );
+
     const [queuedCount, sentCount, openedCount, clickedCount, replyCount, bounceCount, unsubscribedCount] = await Promise.all([
       prisma.pendingEmail.count({ where: { campaignId: id, status: 'PENDING' } }),
       prisma.outboundEmail.count({ where: { campaignId: id, isIncoming: false } }),
@@ -602,6 +672,7 @@ export const getCampaignDetails = async (req: CampaignRequest, res: Response, ne
 
     res.json({
       ...campaign,
+      drafts: draftsWithStats,
       queuedCount,
       analytics,
       role: req.campaignRole,
@@ -626,7 +697,6 @@ export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, ne
     });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    // Link leads
     await prisma.lead.updateMany({
       where: { id: { in: leadIds } },
       data: { campaignId: id, outreachStatus: 'PENDING' },
@@ -639,7 +709,6 @@ export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, ne
       });
     }
 
-    // Immediately reconcile queue so leads are guaranteed to be in PendingEmail
     const reconciliation = await reconcileCampaignQueue(id, userId);
 
     res.json({
@@ -753,25 +822,189 @@ export const updateCampaignStrategy = async (req: CampaignRequest, res: Response
   }
 };
 
+/**
+ * GET /api/campaigns/:campaignId/leads/:leadId/thread
+ * Returns sent and incoming emails PLUS scheduled PendingEmails with resolved variables.
+ */
 export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.campaignId as string;
     const leadId = req.params.leadId as string;
 
-    const emails = await prisma.outboundEmail.findMany({
-      where: { campaignId, leadId },
-      orderBy: { sentAt: 'asc' },
-    });
+    const [lead, campaign, emails, scheduled] = await Promise.all([
+      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.campaign.findUnique({ where: { id: campaignId } }),
+      prisma.outboundEmail.findMany({
+        where: { campaignId, leadId },
+        orderBy: { sentAt: 'asc' },
+      }),
+      prisma.pendingEmail.findMany({
+        where: { campaignId, leadId, status: { in: ['PENDING', 'PROCESSING'] } },
+        include: { draft: true },
+        orderBy: { scheduledAt: 'asc' },
+      }),
+    ]);
 
     const parsedEmails = emails.map(email => ({
       ...email,
       analysis: email.analysis ? (typeof email.analysis === 'string' ? JSON.parse(email.analysis) : email.analysis) : null,
     }));
 
-    res.json(parsedEmails);
+    // Personalize scheduled messages on the fly so UI displays resolved variables
+    const resolvedScheduled = scheduled.map(item => {
+      const { subject, body } = personalisationService.personalise(
+        lead,
+        item.subject,
+        item.body,
+        campaign?.reference,
+        campaign?.senderName
+      );
+
+      return {
+        id: item.id,
+        isScheduled: true,
+        priority: item.priority,
+        rawSubject: item.subject,
+        rawBody: item.body,
+        resolvedSubject: subject,
+        resolvedBody: body,
+        scheduledAt: item.scheduledAt,
+        status: item.status,
+      };
+    });
+
+    res.json({
+      emails: parsedEmails,
+      scheduled: resolvedScheduled,
+    });
   } catch (error) {
     next(error);
   }
+};
+
+/**
+ * PUT /api/campaigns/:campaignId/scheduled/:pendingId
+ * Updates raw subject and body of a scheduled PendingEmail.
+ */
+export const updateScheduledEmail = async (req: CampaignRequest, res: Response, next: NextFunction) => {
+  try {
+    const { pendingId } = req.params;
+    const { subject, body } = req.body;
+
+    if (!subject?.trim() || !body?.trim()) {
+      return res.status(400).json({ error: 'Subject and body are required' });
+    }
+
+    const updated = await prisma.pendingEmail.update({
+      where: { id: pendingId },
+      data: { subject: subject.trim(), body: body.trim() },
+    });
+
+    res.json(updated);
+  } catch (error) { next(error); }
+};
+
+/**
+ * POST /api/campaigns/:campaignId/scheduled/:pendingId/send-now
+ * Immediately dispatches a scheduled email, bypassing queue and campaign pause status.
+ */
+export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response, next: NextFunction) => {
+  try {
+    const { pendingId, campaignId } = req.params;
+    const userId = req.user!.id;
+
+    const pending = await prisma.pendingEmail.findUnique({
+      where: { id: pendingId },
+      include: {
+        lead: true,
+        campaign: {
+          include: {
+            senderLinks: { include: { sender: { include: { domain: true } } } },
+          },
+        },
+      },
+    });
+
+    if (!pending) return res.status(404).json({ error: 'Scheduled email not found' });
+    if (pending.lead.status === 'UNSUBSCRIBED') {
+      await prisma.pendingEmail.delete({ where: { id: pending.id } });
+      return res.status(400).json({ error: 'Lead has unsubscribed and cannot be emailed.' });
+    }
+
+    const activeSenders = pending.campaign.senderLinks
+      .map(l => l.sender)
+      .filter(s => s.status === 'active' && s.domain?.status === 'active');
+
+    if (activeSenders.length === 0) {
+      return res.status(400).json({ error: 'No active sending mailboxes attached to this campaign.' });
+    }
+
+    const sender = activeSenders[0];
+
+    const unsubscribeToken = await ensureUnsubscribeToken(pending.lead.id, pending.lead.unsubscribeToken);
+    const unsubscribeUrl = buildUnsubscribeUrl(unsubscribeToken);
+
+    const { subject, body } = personalisationService.personalise(
+      pending.lead,
+      pending.subject,
+      pending.body,
+      pending.campaign.reference,
+      sender.displayName || pending.campaign.senderName,
+      unsubscribeUrl
+    );
+
+    const outboundRecord = await prisma.outboundEmail.create({
+      data: {
+        userId,
+        domainId: sender.domainId,
+        leadId: pending.leadId,
+        campaignId: pending.campaignId,
+        draftId: pending.draftId,
+        subject,
+        body,
+        status: 'PROCESSING',
+      },
+    });
+
+    const result = await emailService.sendEmailNow(
+      { ...sender.domain, senderLocalPart: sender.localPart },
+      pending.lead.email,
+      subject,
+      body.replace(/\n/g, '<br>'),
+      body,
+      outboundRecord.id,
+      sender.displayName || pending.campaign.senderName,
+      pending.inReplyTo,
+      unsubscribeUrl,
+      { leadId: pending.leadId, campaignId: pending.campaignId }
+    );
+
+    if (!result.success) {
+      await prisma.outboundEmail.update({
+        where: { id: outboundRecord.id },
+        data: { status: 'FAILED', error: result.error },
+      });
+      throw new Error(result.error || 'Failed to dispatch email via Mailgun');
+    }
+
+    await prisma.outboundEmail.update({
+      where: { id: outboundRecord.id },
+      data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
+    });
+
+    await prisma.lead.update({
+      where: { id: pending.leadId },
+      data: { outreachStatus: 'SENT', status: 'CONTACTED' },
+    });
+
+    if (pending.draftId) {
+      await prisma.draft.update({ where: { id: pending.draftId }, data: { sentCount: { increment: 1 } } });
+    }
+
+    await prisma.pendingEmail.delete({ where: { id: pending.id } });
+
+    res.json({ success: true, message: 'Scheduled email dispatched immediately.' });
+  } catch (error) { next(error); }
 };
 
 export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -922,15 +1155,15 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
       } catch (e) {}
     }
 
-    const draftData = await aiService.generateDraft(
-      'professional',
-      'reply',
-      campaign?.context,
-      campaign?.reference,
-      undefined,
-      latestReply.body,
-      analysis.sentiment
-    );
+    const draftData = await aiService.generateDraft({
+      tone: 'professional',
+      useCase: 'reply',
+      campaignContext: campaign?.context,
+      reference: campaign?.reference,
+      originalEmail: latestReply.body,
+      sentiment: analysis.sentiment,
+      userId,
+    });
 
     await prisma.draft.deleteMany({
       where: { leadId, campaignId, isReplyDraft: true },
@@ -1192,12 +1425,14 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    const draftData = await aiService.generateDraft(
-      'professional',
-      'initial',
-      campaign.context,
-      campaign.reference
-    );
+    // Explicitly pass userId so user-configured AI Gateway / OpenRouter is used
+    const draftData = await aiService.generateDraft({
+      tone: 'professional',
+      useCase: 'initial',
+      campaignContext: campaign.context,
+      reference: campaign.reference,
+      userId: campaign.userId || req.user!.id,
+    });
 
     const draft = await prisma.draft.create({
       data: {
@@ -1223,16 +1458,15 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    const draftData = await aiService.generateDraft(
-      'professional',
-      'followup',
-      campaign.context,
-      campaign.reference,
-      undefined,
-      undefined,
-      undefined,
-      stepNum
-    );
+    // Explicitly pass userId
+    const draftData = await aiService.generateDraft({
+      tone: 'professional',
+      useCase: 'followup',
+      campaignContext: campaign.context,
+      reference: campaign.reference,
+      stepNumber: stepNum,
+      userId: campaign.userId || req.user!.id,
+    });
 
     const draft = await prisma.draft.create({
       data: {

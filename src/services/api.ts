@@ -102,6 +102,7 @@ export const campaignAPI = {
   pause: (id: string) => api.post(`/campaigns/${id}/pause`),
   resume: (id: string) => api.post(`/campaigns/${id}/resume`),
   reconcileQueue: (id: string) => api.post(`/campaigns/${id}/reconcile-queue`),
+  repersonalizeQueue: (id: string) => api.post(`/campaigns/${id}/repersonalize-queue`),
   dispatchNow: (id: string) => api.post(`/campaigns/${id}/dispatch-now`),
 
   addLeads: (campaignId: string, leadIds: string[]) =>
@@ -117,6 +118,12 @@ export const campaignAPI = {
 
   getLeadThread: (campaignId: string, leadId: string) =>
     api.get(`/campaigns/${campaignId}/leads/${leadId}/thread`),
+
+  updateScheduledEmail: (campaignId: string, pendingId: string, data: { subject: string; body: string }) =>
+    api.put(`/campaigns/${campaignId}/scheduled/${pendingId}`, data),
+
+  sendScheduledEmailNow: (campaignId: string, pendingId: string) =>
+    api.post(`/campaigns/${campaignId}/scheduled/${pendingId}/send-now`),
 
   previewLeadWithDraft: (campaignId: string, leadId: string, draftId: string) =>
     api.get(`/campaigns/${campaignId}/leads/${leadId}/preview/${draftId}`),

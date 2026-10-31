@@ -7,6 +7,7 @@ import {
   ReplyAnalysis,
   InboundClassification,
   InboundIntentCategory,
+  ConfirmedProviderIntegration,
 } from './ai/types';
 import { MockProvider } from './ai/providers/mock.provider';
 import { OpenAIProvider } from './ai/providers/openai.provider';
@@ -15,7 +16,19 @@ import { DeepSeekProvider } from './ai/providers/deepseek.provider';
 import { OpenRouterProvider } from './ai/providers/openrouter.provider';
 import { AIGatewayProvider } from './ai/providers/aigateway.provider';
 
-export type { ReplyAnalysis, InboundClassification, InboundIntentCategory } from './ai/types';
+export type { ReplyAnalysis, InboundClassification, InboundIntentCategory, ConfirmedProviderIntegration } from './ai/types';
+
+export interface GenerateDraftOptions {
+  tone?: string;
+  useCase?: 'initial' | 'followup' | 'reply';
+  campaignContext?: string | null;
+  reference?: string | null;
+  companyContext?: string | null;
+  originalEmail?: string;
+  sentiment?: string;
+  stepNumber?: number;
+  userId?: string;
+}
 
 export class AIService {
   private defaultPrimaryProvider: AIProvider;
@@ -81,20 +94,38 @@ export class AIService {
         where: { userId },
       });
 
-      if (!settings || !settings.aiProvider) {
+      if (!settings) {
         return this.defaultPrimaryProvider;
       }
 
-      const decryptedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
+      let providerName = settings.aiProvider;
+      let model = settings.aiModel || undefined;
+      let decryptedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
       let gatewayUrl = settings.aiGatewayUrl || undefined;
 
-      // Auto-migrate legacy api.vercel.ai to canonical ai-gateway.vercel.sh
+      if (settings.aiIntegrations && Array.isArray(settings.aiIntegrations)) {
+        const integrations = settings.aiIntegrations as unknown as ConfirmedProviderIntegration[];
+        const matched = integrations.find(i => i.provider === providerName || i.id === providerName);
+        if (matched) {
+          providerName = matched.provider;
+          model = settings.aiModel || matched.activeModel;
+          if (matched.apiKeyEncrypted) {
+            decryptedKey = tryDecrypt(matched.apiKeyEncrypted) || decryptedKey;
+          }
+          if (matched.gatewayUrl) {
+            gatewayUrl = matched.gatewayUrl;
+          }
+        }
+      }
+
+      if (!providerName) return this.defaultPrimaryProvider;
+
       if (gatewayUrl && gatewayUrl.includes('api.vercel.ai')) {
         gatewayUrl = gatewayUrl.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
       }
 
-      return this.createProviderInstance(settings.aiProvider, {
-        model: settings.aiModel || undefined,
+      return this.createProviderInstance(providerName, {
+        model,
         apiKey: decryptedKey,
         gatewayUrl,
       });
@@ -113,7 +144,6 @@ export class AIService {
         {
           provider: provider.name,
           error: primaryError?.message || String(primaryError),
-          stack: primaryError?.stack,
         },
         '[AI-ENGINE] Configured AI provider call failed'
       );
@@ -139,11 +169,12 @@ export class AIService {
   }
 
   private extractJSON(raw: string): any {
-    const cleanedRaw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    let cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
-    const match = cleanedRaw.match(/\{[\s\S]*\}/);
+    const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) {
-      throw new Error(`No JSON object found in response: ${cleanedRaw.substring(0, 300)}`);
+      throw new Error(`No JSON object found in response: ${cleaned.substring(0, 300)}`);
     }
 
     try {
@@ -151,22 +182,22 @@ export class AIService {
     } catch {
       let depth = 0;
       let start = -1;
-      for (let i = 0; i < cleanedRaw.length; i++) {
-        const ch = cleanedRaw[i];
+      for (let i = 0; i < cleaned.length; i++) {
+        const ch = cleaned[i];
         if (ch === '{') {
           if (depth === 0) start = i;
           depth++;
         } else if (ch === '}') {
           depth--;
           if (depth === 0 && start !== -1) {
-            const candidate = cleanedRaw.substring(start, i + 1);
+            const candidate = cleaned.substring(start, i + 1);
             try {
               return JSON.parse(candidate);
             } catch {}
           }
         }
       }
-      throw new Error(`Could not extract valid JSON from response: ${cleanedRaw.substring(0, 300)}`);
+      throw new Error(`Could not extract valid JSON from response: ${cleaned.substring(0, 300)}`);
     }
   }
 
@@ -175,8 +206,21 @@ export class AIService {
     return this.attemptComplete(prompt, system, provider);
   }
 
+  // TypeScript Function Overloads for generateDraft:
+  async generateDraft(options: GenerateDraftOptions): Promise<{ subject: string; body: string }>;
   async generateDraft(
-    tone: string = 'professional',
+    tone?: string,
+    useCase?: 'initial' | 'followup' | 'reply',
+    campaignContext?: string | null,
+    reference?: string | null,
+    companyContext?: string | null,
+    originalEmail?: string,
+    sentiment?: string,
+    stepNumber?: number,
+    userId?: string
+  ): Promise<{ subject: string; body: string }>;
+  async generateDraft(
+    optionsOrTone: GenerateDraftOptions | string = 'professional',
     useCase: 'initial' | 'followup' | 'reply' = 'initial',
     campaignContext?: string | null,
     reference?: string | null,
@@ -186,19 +230,40 @@ export class AIService {
     stepNumber?: number,
     userId?: string
   ): Promise<{ subject: string; body: string }> {
-    const provider = await this.resolveUserProvider(userId);
+    let opts: GenerateDraftOptions;
+
+    // Invert type guard to primitive string check: prevents TS2322
+    if (typeof optionsOrTone === 'string') {
+      opts = {
+        tone: optionsOrTone,
+        useCase,
+        campaignContext,
+        reference,
+        companyContext,
+        originalEmail,
+        sentiment,
+        stepNumber,
+        userId,
+      };
+    } else {
+      opts = optionsOrTone;
+    }
+
+    const provider = await this.resolveUserProvider(opts.userId);
     const variationSeed = Math.floor(Math.random() * 1000000);
+    const resolvedTone = opts.tone || 'professional';
     const params: PromptParams = {
-      useCase,
-      tone,
-      campaignContext,
-      reference,
-      companyContext,
+      useCase: opts.useCase || 'initial',
+      tone: resolvedTone,
+      campaignContext: opts.campaignContext,
+      reference: opts.reference,
+      companyContext: opts.companyContext,
       variationSeed,
-      originalEmail,
-      sentiment,
-      stepNumber,
+      originalEmail: opts.originalEmail,
+      sentiment: opts.sentiment,
+      stepNumber: opts.stepNumber,
     };
+
     const prompt = promptManager.buildPrompt(params);
     const system = 'You are an elite B2B sales copywriter. Output only valid JSON with "subject" and "body".';
 
@@ -323,10 +388,6 @@ Reply text: """${replyText}"""`;
     }
   }
 
-  /**
-   * Directly test any user-specified combination of provider, model, key, and gateway URL.
-   * Resolves stored DB credentials or environment variables if plain key is not entered in the form.
-   */
   async testCustomConfiguration(config: {
     provider: string;
     model?: string;
@@ -341,7 +402,6 @@ Reply text: """${replyText}"""`;
   }> {
     let resolvedKey = config.apiKey?.trim();
 
-    // If key not passed in request body, resolve from UserSettings in DB
     if (!resolvedKey && config.userId) {
       try {
         const settings = await prisma.userSettings.findUnique({

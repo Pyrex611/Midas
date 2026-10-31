@@ -23,7 +23,7 @@ interface HealthAlert {
   title: string;
   message: string;
   actionLabel?: string;
-  actionType?: 'RESUME' | 'ACTIVATE' | 'ASSIGN_SENDERS' | 'NAVIGATE_DOMAINS' | 'DISPATCH_NOW' | 'ADJUST_HOURS' | 'RECONCILE_QUEUE';
+  actionType?: 'RESUME' | 'ACTIVATE' | 'ASSIGN_SENDERS' | 'NAVIGATE_DOMAINS' | 'DISPATCH_NOW' | 'ADJUST_HOURS' | 'RECONCILE_QUEUE' | 'REPERSONALIZE';
 }
 
 type DrilldownCategory = 'ALL' | 'CONTACTED' | 'OPENED' | 'CLICKED' | 'REPLIED' | 'BOUNCED' | 'UNSUBSCRIBED';
@@ -45,6 +45,7 @@ export const CampaignDetail: React.FC = () => {
   const [healthAlerts, setHealthAlerts] = useState<HealthAlert[]>([]);
   const [isDispatchingNow, setIsDispatchingNow] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
+  const [isRepersonalizing, setIsRepersonalizing] = useState(false);
 
   // In-Campaign Direct Upload Drawer
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(false);
@@ -151,6 +152,20 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
+  const handleRepersonalizeQueue = async () => {
+    if (!id) return;
+    setIsRepersonalizing(true);
+    try {
+      const res = await campaignAPI.repersonalizeQueue(id);
+      toast.success(res.data?.message || 'Queued emails re-personalized', 'Re-Personalized');
+      await fetchCampaign();
+    } catch {
+      toast.error('Could not re-personalize queued emails', 'Error');
+    } finally {
+      setIsRepersonalizing(false);
+    }
+  };
+
   const handleTogglePauseResume = async () => {
     if (!id || !campaign) return;
     setMenuOpen(false);
@@ -191,6 +206,9 @@ export const CampaignDetail: React.FC = () => {
         break;
       case 'RECONCILE_QUEUE':
         handleReconcileQueue();
+        break;
+      case 'REPERSONALIZE':
+        handleRepersonalizeQueue();
         break;
       case 'ASSIGN_SENDERS':
         setActiveTab('settings');
@@ -387,12 +405,10 @@ export const CampaignDetail: React.FC = () => {
     unsubscribedCount: 0,
   };
 
-  // Compute Unsubscribe Rate safely
   const unsubscribeRate = analytics.sentCount > 0
     ? Number(((analytics.unsubscribedCount / analytics.sentCount) * 100).toFixed(1))
     : 0;
 
-  // Filter leads based on clicked category card
   const getFilteredLeadsForCategory = () => {
     const list = campaign.leads || [];
     const emails = campaign.emails || [];
@@ -512,6 +528,14 @@ export const CampaignDetail: React.FC = () => {
                   </button>
 
                   <button
+                    onClick={handleRepersonalizeQueue}
+                    disabled={isRepersonalizing}
+                    className="block w-full text-left px-4 py-2 text-xs font-medium text-amber-700 hover:bg-zinc-50"
+                  >
+                    {isRepersonalizing ? 'Re-Personalizing...' : '🔄 Re-Personalize Queued'}
+                  </button>
+
+                  <button
                     onClick={() => { setShowRenameModal(true); setMenuOpen(false); }}
                     className="block w-full text-left px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                   >
@@ -571,7 +595,7 @@ export const CampaignDetail: React.FC = () => {
                 {alert.actionLabel && (
                   <button
                     onClick={() => handleAlertAction(alert.actionType)}
-                    disabled={isDispatchingNow || isReconciling}
+                    disabled={isDispatchingNow || isReconciling || isRepersonalizing}
                     className={`px-4 py-1.5 rounded-xl text-xs font-bold shadow-xs transition-colors whitespace-nowrap self-end sm:self-center ${
                       isError
                         ? 'bg-rose-600 hover:bg-rose-700 text-white'
@@ -584,6 +608,8 @@ export const CampaignDetail: React.FC = () => {
                       ? 'Sweeping Queue...'
                       : isReconciling && alert.actionType === 'RECONCILE_QUEUE'
                       ? 'Queueing Leads...'
+                      : isRepersonalizing && alert.actionType === 'REPERSONALIZE'
+                      ? 'Re-Personalizing...'
                       : alert.actionLabel}
                   </button>
                 )}
@@ -593,7 +619,7 @@ export const CampaignDetail: React.FC = () => {
         </div>
       )}
 
-      {/* Navigation Tabs (Dashboard / Analytics is Default on load) */}
+      {/* Navigation Tabs */}
       <div className="border-b border-zinc-200">
         <nav className="flex space-x-8">
           {[
@@ -617,15 +643,10 @@ export const CampaignDetail: React.FC = () => {
         </nav>
       </div>
 
-      {/* 
-        TAB 0: OVERVIEW & ANALYTICS DASHBOARD (DEFAULT ON LOAD)
-        Features 7 Interactive Funnel Cards including Bounce Rate and Unsubscribe Rate.
-        Clicking any card opens the Lead Category Drilldown Drawer!
-      */}
+      {/* TAB 0: OVERVIEW & ANALYTICS DASHBOARD */}
       {activeTab === 'dashboard' && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-            {/* Card 1: Total Leads */}
             <div
               onClick={() => setDrilldownCategory('ALL')}
               className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
@@ -638,7 +659,6 @@ export const CampaignDetail: React.FC = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">In sequence</p>
             </div>
 
-            {/* Card 2: Contacted */}
             <div
               onClick={() => setDrilldownCategory('CONTACTED')}
               className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
@@ -651,7 +671,6 @@ export const CampaignDetail: React.FC = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">Sent outreach</p>
             </div>
 
-            {/* Card 3: Opened */}
             <div
               onClick={() => setDrilldownCategory('OPENED')}
               className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
@@ -664,7 +683,6 @@ export const CampaignDetail: React.FC = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.openedCount} unique</p>
             </div>
 
-            {/* Card 4: Clicked */}
             <div
               onClick={() => setDrilldownCategory('CLICKED')}
               className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
@@ -677,7 +695,6 @@ export const CampaignDetail: React.FC = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.clickedCount} clicks</p>
             </div>
 
-            {/* Card 5: Replied */}
             <div
               onClick={() => setDrilldownCategory('REPLIED')}
               className="p-4 bg-white border border-zinc-200 hover:border-blue-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
@@ -690,7 +707,6 @@ export const CampaignDetail: React.FC = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.replyCount} replies</p>
             </div>
 
-            {/* Card 6: Bounced */}
             <div
               onClick={() => setDrilldownCategory('BOUNCED')}
               className="p-4 bg-white border border-zinc-200 hover:border-rose-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
@@ -705,7 +721,6 @@ export const CampaignDetail: React.FC = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">{analytics.bounceCount} bounces</p>
             </div>
 
-            {/* Card 7: Unsubscribed */}
             <div
               onClick={() => setDrilldownCategory('UNSUBSCRIBED')}
               className="p-4 bg-white border border-zinc-200 hover:border-amber-500 rounded-2xl shadow-xs cursor-pointer transition-all hover:shadow-md group"
@@ -905,6 +920,14 @@ export const CampaignDetail: React.FC = () => {
                 <h4 className="text-sm font-bold text-zinc-900">{draft.subject}</h4>
                 <p className="text-xs text-zinc-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
 
+                {/* Per-Draft Real Analytics Display */}
+                <div className="p-2.5 bg-zinc-50 border border-zinc-200/80 rounded-xl flex items-center justify-between text-[11px] text-zinc-600">
+                  <div>Sent: <strong className="text-zinc-900">{draft.sentCount || 0}</strong></div>
+                  <div>Opens: <strong className="text-blue-700">{draft.openCount || 0} ({draft.openRate || 0}%)</strong></div>
+                  <div>Clicks: <strong className="text-purple-700">{draft.clickCount || 0} ({draft.clickRate || 0}%)</strong></div>
+                  <div>Replies: <strong className="text-emerald-700">{draft.replyCount || 0} ({draft.replyRate || 0}%)</strong></div>
+                </div>
+
                 <div className="space-y-3 pt-3 border-t border-zinc-100">
                   <DeliverabilityGrader
                     campaignId={campaign.id}
@@ -1093,10 +1116,7 @@ export const CampaignDetail: React.FC = () => {
         </div>
       )}
 
-      {/* 
-        LEAD CATEGORY DRILLDOWN DRAWER:
-        Opened when any of the 7 analytics cards are clicked!
-      */}
+      {/* LEAD CATEGORY DRILLDOWN DRAWER */}
       <Sheet
         isOpen={Boolean(drilldownCategory)}
         onClose={() => { setDrilldownCategory(null); setDrilldownSearch(''); }}
