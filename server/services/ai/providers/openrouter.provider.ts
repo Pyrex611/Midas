@@ -12,6 +12,33 @@ export class OpenRouterProvider implements AIProvider {
     return Boolean(this.apiKey || process.env.OPENROUTER_API_KEY);
   }
 
+  private extractMessageContent(choice: any, modelName: string): string {
+    const message = choice?.message;
+    if (!message) {
+      if (typeof choice?.text === 'string' && choice.text.trim()) return choice.text;
+      throw new Error(`OpenRouter returned an empty choice structure for model "${modelName}"`);
+    }
+
+    // 1. Direct content string
+    if (typeof message.content === 'string' && message.content.trim()) {
+      return message.content;
+    }
+
+    // 2. Reasoning / Thinking models on OpenRouter
+    if (typeof message.reasoning === 'string' && message.reasoning.trim()) {
+      return message.reasoning;
+    }
+    if (typeof message.reasoning_content === 'string' && message.reasoning_content.trim()) {
+      return message.reasoning_content;
+    }
+
+    if (choice.finish_reason === 'length') {
+      throw new Error(`Model "${modelName}" exceeded token limit during reasoning. Use a faster instruction model.`);
+    }
+
+    throw new Error(`OpenRouter model "${modelName}" returned empty content and reasoning`);
+  }
+
   async complete(prompt: string, system?: string): Promise<string> {
     const key = this.apiKey || process.env.OPENROUTER_API_KEY;
     if (!key) throw new Error('OPENROUTER_API_KEY is not configured');
@@ -34,9 +61,9 @@ export class OpenRouterProvider implements AIProvider {
         model: cleanModel,
         messages,
         temperature: 0.7,
-        max_tokens: 2500,
+        max_tokens: 3500,
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(30_000),
     });
 
     const rawText = await response.text();
@@ -51,10 +78,6 @@ export class OpenRouterProvider implements AIProvider {
 
     const data = JSON.parse(rawText);
     const choice = data.choices?.[0];
-    const rawContent = choice?.message?.content || choice?.message?.reasoning || '';
-    if (!rawContent) {
-      throw new Error(`OpenRouter API returned empty content: ${rawText}`);
-    }
-    return rawContent;
+    return this.extractMessageContent(choice, cleanModel);
   }
 }

@@ -350,10 +350,6 @@ export const reconcileQueueEndpoint = async (req: CampaignRequest, res: Response
   } catch (error) { next(error); }
 };
 
-/**
- * POST /api/campaigns/:id/repersonalize-queue
- * Fixes historical emails queued with raw/corrupted variables by re-running the strict mustache engine.
- */
 export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.id as string;
@@ -367,7 +363,6 @@ export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Resp
       const baseSubject = item.draft?.subject || item.subject;
       const baseBody = item.draft?.body || item.body;
 
-      // Re-run through the strict personalization engine
       const { subject, body } = personalisationService.personalise(
         item.lead,
         baseSubject,
@@ -384,7 +379,9 @@ export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Resp
     }
 
     res.json({ success: true, updatedCount, message: `Successfully re-personalized ${updatedCount} queued email(s).` });
-  } catch (error) { next(error); }
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to re-personalize queued emails' });
+  }
 };
 
 export const getCampaignHealth = async (req: CampaignRequest, res: Response, next: NextFunction) => {
@@ -481,7 +478,6 @@ export const getCampaignHealth = async (req: CampaignRequest, res: Response, nex
       });
     }
 
-    // Check for corrupt placeholders in pending emails
     const rawPlaceholdersCount = await prisma.pendingEmail.count({
       where: {
         campaignId: id,
@@ -532,7 +528,9 @@ export const dispatchCampaignNow = async (req: CampaignRequest, res: Response, n
     await reconcileCampaignQueue(id, userId);
     const summary = await emailQueueService.processQueue();
     res.json({ success: true, summary });
-  } catch (error) { next(error); }
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to dispatch campaign queue' });
+  }
 };
 
 export const gradeCampaignDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -822,10 +820,6 @@ export const updateCampaignStrategy = async (req: CampaignRequest, res: Response
   }
 };
 
-/**
- * GET /api/campaigns/:campaignId/leads/:leadId/thread
- * Returns sent and incoming emails PLUS scheduled PendingEmails with resolved variables.
- */
 export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.campaignId as string;
@@ -850,7 +844,6 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
       analysis: email.analysis ? (typeof email.analysis === 'string' ? JSON.parse(email.analysis) : email.analysis) : null,
     }));
 
-    // Personalize scheduled messages on the fly so UI displays resolved variables
     const resolvedScheduled = scheduled.map(item => {
       const { subject, body } = personalisationService.personalise(
         lead,
@@ -882,10 +875,6 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
   }
 };
 
-/**
- * PUT /api/campaigns/:campaignId/scheduled/:pendingId
- * Updates raw subject and body of a scheduled PendingEmail.
- */
 export const updateScheduledEmail = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const { pendingId } = req.params;
@@ -901,16 +890,14 @@ export const updateScheduledEmail = async (req: CampaignRequest, res: Response, 
     });
 
     res.json(updated);
-  } catch (error) { next(error); }
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to update scheduled email' });
+  }
 };
 
-/**
- * POST /api/campaigns/:campaignId/scheduled/:pendingId/send-now
- * Immediately dispatches a scheduled email, bypassing queue and campaign pause status.
- */
 export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
-    const { pendingId, campaignId } = req.params;
+    const { pendingId } = req.params;
     const userId = req.user!.id;
 
     const pending = await prisma.pendingEmail.findUnique({
@@ -1004,7 +991,9 @@ export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response,
     await prisma.pendingEmail.delete({ where: { id: pending.id } });
 
     res.json({ success: true, message: 'Scheduled email dispatched immediately.' });
-  } catch (error) { next(error); }
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to dispatch email' });
+  }
 };
 
 export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -1183,8 +1172,8 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
     });
 
     res.json(savedDraft);
-  } catch (error) {
-    next(error);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to synthesize reply draft' });
   }
 };
 
@@ -1425,7 +1414,7 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    // Explicitly pass userId so user-configured AI Gateway / OpenRouter is used
+    // Explicitly pass userId and throw actual error if AI provider fails
     const draftData = await aiService.generateDraft({
       tone: 'professional',
       useCase: 'initial',
@@ -1446,7 +1435,10 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
     });
 
     res.status(201).json(draft);
-  } catch (error) { next(error); }
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to generate campaign draft');
+    res.status(400).json({ error: error.message || 'Failed to generate AI draft' });
+  }
 };
 
 export const generateStepDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -1458,7 +1450,6 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    // Explicitly pass userId
     const draftData = await aiService.generateDraft({
       tone: 'professional',
       useCase: 'followup',
@@ -1481,7 +1472,9 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
     });
 
     res.status(201).json(draft);
-  } catch (error) { next(error); }
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to generate step draft' });
+  }
 };
 
 export const getCampaignSenders = async (req: AuthRequest, res: Response, next: NextFunction) => {

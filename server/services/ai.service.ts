@@ -134,7 +134,16 @@ export class AIService {
     }
   }
 
-  private async attemptComplete(prompt: string, system?: string, activeProvider?: AIProvider): Promise<string> {
+  /**
+   * Completes a prompt through the active provider with explicit error throwing
+   * (never silently degrades to mock if an active live provider was requested).
+   */
+  private async attemptComplete(
+    prompt: string,
+    system?: string,
+    activeProvider?: AIProvider,
+    allowMockFallback: boolean = false
+  ): Promise<string> {
     const provider = activeProvider || this.defaultPrimaryProvider;
 
     try {
@@ -145,9 +154,10 @@ export class AIService {
           provider: provider.name,
           error: primaryError?.message || String(primaryError),
         },
-        '[AI-ENGINE] Configured AI provider call failed'
+        '[AI-ENGINE] Primary AI provider execution failed'
       );
 
+      // Attempt configured fallback if available
       if (this.defaultFallbackProvider) {
         try {
           logger.info({ fallback: this.defaultFallbackProvider.name }, '[AI-ENGINE] Switching to fallback AI provider');
@@ -163,50 +173,62 @@ export class AIService {
         }
       }
 
-      logger.warn('[AI-ENGINE] ALL CONFIGURED AI PROVIDERS FAILED — Falling over to Mock AI provider');
+      // If operator explicitly configured a live provider, NEVER swallow error with mock!
+      if (!allowMockFallback && provider.name !== 'mock') {
+        throw new Error(`[${provider.name.toUpperCase()}] ${primaryError?.message || 'AI Provider request failed'}`);
+      }
+
+      logger.warn('[AI-ENGINE] Degrading to Mock AI provider (background safe fallback)');
       return await this.mockProvider.complete(prompt, system);
     }
   }
 
+  /**
+   * Robust JSON extraction: handles thinking blocks, markdown fences,
+   * and extracts JSON even if embedded inside reasoning text.
+   */
   private extractJSON(raw: string): any {
+    // 1. Strip thinking tags
     let cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    // 2. Strip outer markdown fences: ```json ... ``` or ``` ... ```
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
+    // 3. Find outer braces
     const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) {
-      throw new Error(`No JSON object found in response: ${cleaned.substring(0, 300)}`);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {}
     }
 
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      let depth = 0;
-      let start = -1;
-      for (let i = 0; i < cleaned.length; i++) {
-        const ch = cleaned[i];
-        if (ch === '{') {
-          if (depth === 0) start = i;
-          depth++;
-        } else if (ch === '}') {
-          depth--;
-          if (depth === 0 && start !== -1) {
-            const candidate = cleaned.substring(start, i + 1);
-            try {
-              return JSON.parse(candidate);
-            } catch {}
-          }
+    // 4. Fallback scanner
+    let depth = 0;
+    let start = -1;
+    for (let i = 0; i < cleaned.length; i++) {
+      const ch = cleaned[i];
+      if (ch === '{') {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          const candidate = cleaned.substring(start, i + 1);
+          try {
+            return JSON.parse(candidate);
+          } catch {}
         }
       }
-      throw new Error(`Could not extract valid JSON from response: ${cleaned.substring(0, 300)}`);
     }
+
+    throw new Error(`AI generated response but it could not be parsed into valid JSON. Response snippet: ${cleaned.substring(0, 180)}`);
   }
 
   async complete(prompt: string, system?: string, userId?: string): Promise<string> {
     const provider = await this.resolveUserProvider(userId);
-    return this.attemptComplete(prompt, system, provider);
+    return this.attemptComplete(prompt, system, provider, false);
   }
 
-  // TypeScript Function Overloads for generateDraft:
   async generateDraft(options: GenerateDraftOptions): Promise<{ subject: string; body: string }>;
   async generateDraft(
     tone?: string,
@@ -232,7 +254,6 @@ export class AIService {
   ): Promise<{ subject: string; body: string }> {
     let opts: GenerateDraftOptions;
 
-    // Invert type guard to primitive string check: prevents TS2322
     if (typeof optionsOrTone === 'string') {
       opts = {
         tone: optionsOrTone,
@@ -267,10 +288,11 @@ export class AIService {
     const prompt = promptManager.buildPrompt(params);
     const system = 'You are an elite B2B sales copywriter. Output only valid JSON with "subject" and "body".';
 
-    const raw = await this.attemptComplete(prompt, system, provider);
+    // Disallow silent mock fallback for user-requested drafts
+    const raw = await this.attemptComplete(prompt, system, provider, false);
     const parsed = this.extractJSON(raw);
     if (!parsed.subject || !parsed.body) {
-      throw new Error(`Parsed JSON missing subject or body: ${JSON.stringify(parsed)}`);
+      throw new Error(`Parsed JSON missing "subject" or "body" property`);
     }
     return { subject: parsed.subject, body: parsed.body };
   }
@@ -292,7 +314,7 @@ ${replyText}
 """`;
 
     const system = 'You are an expert sales analyst. Return only valid JSON.';
-    const raw = await this.attemptComplete(prompt, system, provider);
+    const raw = await this.attemptComplete(prompt, system, provider, true);
     const parsed = this.extractJSON(raw);
 
     return {
@@ -335,7 +357,7 @@ Rules:
 Output JSON: {"subject": "Re: ...", "body": "..."}`;
 
     const system = 'You are an elite B2B objection handling copywriter. Return valid JSON only.';
-    const raw = await this.attemptComplete(prompt, system, provider);
+    const raw = await this.attemptComplete(prompt, system, provider, true);
     return this.extractJSON(raw);
   }
 
@@ -354,7 +376,7 @@ Output JSON: {"subject": "Re: ...", "body": "..."}`;
 Reply text: """${replyText}"""`;
 
     const system = 'You are an expert sales analyst. Output only valid JSON.';
-    const raw = await this.attemptComplete(prompt, system, provider);
+    const raw = await this.attemptComplete(prompt, system, provider, true);
     return this.extractJSON(raw) as ReplyAnalysis;
   }
 

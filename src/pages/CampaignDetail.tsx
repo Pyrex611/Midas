@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { campaignAPI, senderAPI } from '../services/api';
+import { campaignAPI, senderAPI, getErrorMessage } from '../services/api';
 import { Sheet } from '../components/common/Sheet';
 import { SequenceCanvas } from '../components/campaigns/SequenceCanvas';
 import { SpintaxSimulator } from '../components/campaigns/SpintaxSimulator';
@@ -37,31 +37,25 @@ export const CampaignDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'flow' | 'leads' | 'drafts' | 'automation' | 'settings'>('dashboard');
 
-  // Interactive Lead Drilldown Modal / Drawer State
   const [drilldownCategory, setDrilldownCategory] = useState<DrilldownCategory | null>(null);
   const [drilldownSearch, setDrilldownSearch] = useState('');
 
-  // Push-Notification Health Alert Banner State
   const [healthAlerts, setHealthAlerts] = useState<HealthAlert[]>([]);
   const [isDispatchingNow, setIsDispatchingNow] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
   const [isRepersonalizing, setIsRepersonalizing] = useState(false);
 
-  // In-Campaign Direct Upload Drawer
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(false);
 
-  // Header Dropdown & Modals
   const [menuOpen, setMenuOpen] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showStrategyModal, setShowStrategyModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
 
-  // Lead Inspector Drawer
   const [previewLead, setPreviewLead] = useState<any | null>(null);
   const [isLeadDrawerOpen, setIsLeadDrawerOpen] = useState(false);
 
-  // Draft Editor Drawer State
   const [isDraftDrawerOpen, setIsDraftDrawerOpen] = useState(false);
   const [editingDraft, setEditingDraft] = useState<any | null>(null);
   const [draftSubject, setDraftSubject] = useState('');
@@ -69,12 +63,10 @@ export const CampaignDetail: React.FC = () => {
   const [savingDraft, setSavingDraft] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
-  // Senders Rotation State
   const [userSenders, setUserSenders] = useState<any[]>([]);
   const [campaignSenderIds, setCampaignSenderIds] = useState<Set<string>>(new Set());
   const [updatingSender, setUpdatingSender] = useState(false);
 
-  // Automation & Delivery Window State
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [savingAutoReply, setSavingAutoReply] = useState(false);
   const [sendHourUTC, setSendHourUTC] = useState(9);
@@ -145,8 +137,8 @@ export const CampaignDetail: React.FC = () => {
       const res = await campaignAPI.reconcileQueue(id);
       toast.success(res.data?.message || 'Queue reconciled', 'Queue Staged');
       await fetchCampaign();
-    } catch {
-      toast.error('Could not reconcile queue', 'Error');
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not reconcile queue'), 'Queue Error');
     } finally {
       setIsReconciling(false);
     }
@@ -159,8 +151,8 @@ export const CampaignDetail: React.FC = () => {
       const res = await campaignAPI.repersonalizeQueue(id);
       toast.success(res.data?.message || 'Queued emails re-personalized', 'Re-Personalized');
       await fetchCampaign();
-    } catch {
-      toast.error('Could not re-personalize queued emails', 'Error');
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not re-personalize queued emails'), 'Error');
     } finally {
       setIsRepersonalizing(false);
     }
@@ -191,8 +183,8 @@ export const CampaignDetail: React.FC = () => {
       const sent = res.data?.summary?.sent || 0;
       toast.success(`Dispatched send sweep: ${sent} email(s) sent`, 'Queue Processed');
       await fetchCampaign();
-    } catch {
-      toast.error('Could not trigger queue sweep', 'Error');
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not trigger queue sweep'), 'Dispatch Error');
     } finally {
       setIsDispatchingNow(false);
     }
@@ -306,14 +298,16 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
+  // Live AI Draft Generation with 5-Second Real Error Pop-Up
   const handleGenerateAiDraft = async () => {
     setGeneratingDraft(true);
     try {
       await campaignAPI.generateDraft(id!);
       toast.success('AI synthesized a fresh tonal draft variation', 'Synthesized');
       await fetchCampaign();
-    } catch {
-      toast.error('Could not generate AI draft variation. Check AI provider settings.', 'AI Error');
+    } catch (err: any) {
+      const errorMsg = getErrorMessage(err, 'Failed to synthesize draft with active AI provider');
+      toast.error(errorMsg, 'AI Generation Error');
     } finally {
       setGeneratingDraft(false);
     }
@@ -325,8 +319,9 @@ export const CampaignDetail: React.FC = () => {
       await campaignAPI.generateStepDraft(id!, stepNumber);
       toast.success(`Synthesized AI draft for step #${stepNumber}`, 'Complete');
       await fetchCampaign();
-    } catch {
-      toast.error('Failed to generate step draft', 'AI Error');
+    } catch (err: any) {
+      const errorMsg = getErrorMessage(err, `Failed to generate draft for step #${stepNumber}`);
+      toast.error(errorMsg, 'AI Step Draft Error');
     } finally {
       setGeneratingDraftFor(null);
     }
@@ -920,7 +915,7 @@ export const CampaignDetail: React.FC = () => {
                 <h4 className="text-sm font-bold text-zinc-900">{draft.subject}</h4>
                 <p className="text-xs text-zinc-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
 
-                {/* Per-Draft Real Analytics Display */}
+                {/* Per-Draft Analytics Data */}
                 <div className="p-2.5 bg-zinc-50 border border-zinc-200/80 rounded-xl flex items-center justify-between text-[11px] text-zinc-600">
                   <div>Sent: <strong className="text-zinc-900">{draft.sentCount || 0}</strong></div>
                   <div>Opens: <strong className="text-blue-700">{draft.openCount || 0} ({draft.openRate || 0}%)</strong></div>

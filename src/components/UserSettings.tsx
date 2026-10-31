@@ -6,16 +6,16 @@ import { useToast } from '../context/ToastContext';
 const MODEL_PRESETS: Record<string, string[]> = {
   aigateway: [
     'openai/gpt-4o-mini',
+    'deepseek/deepseek-chat',
+    'google/gemini-1.5-flash',
     'anthropic/claude-3-5-sonnet',
     'meta-llama/llama-3.3-70b-instruct',
-    'google/gemini-1.5-flash',
-    'deepseek/deepseek-chat',
   ],
   openrouter: [
     'deepseek/deepseek-chat',
     'anthropic/claude-3.5-sonnet',
-    'meta-llama/llama-3.3-70b-instruct',
     'google/gemini-2.0-flash-exp:free',
+    'meta-llama/llama-3.3-70b-instruct',
     'openai/gpt-4o-mini',
   ],
   gemini: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
@@ -28,21 +28,16 @@ const MODEL_PRESETS: Record<string, string[]> = {
 export const UserSettings: React.FC = () => {
   const { toast } = useToast();
 
-  // Delivery Throttling State
   const [sendLimit, setSendLimit] = useState(50);
   const [sendPeriod, setSendPeriod] = useState('day');
-
-  // Legal & Postal Compliance State
   const [companyName, setCompanyName] = useState('');
   const [physicalAddress, setPhysicalAddress] = useState('');
   const [customOptOutText, setCustomOptOutText] = useState('');
 
-  // AI Integrations Hub State
   const [confirmedIntegrations, setConfirmedIntegrations] = useState<any[]>([]);
   const [activeAiProvider, setActiveAiProvider] = useState<string>('aigateway');
   const [activeAiModel, setActiveAiModel] = useState<string>('openai/gpt-4o-mini');
 
-  // Setup New Provider Sheet State
   const [isSetupSheetOpen, setIsSetupSheetOpen] = useState(false);
   const [newProvider, setNewProvider] = useState('aigateway');
   const [newModel, setNewModel] = useState('openai/gpt-4o-mini');
@@ -50,7 +45,6 @@ export const UserSettings: React.FC = () => {
   const [newGatewayUrl, setNewGatewayUrl] = useState('https://ai-gateway.vercel.sh/v1');
   const [verifyingNewProvider, setVerifyingNewProvider] = useState(false);
 
-  // Add Model to Existing Provider State
   const [addingModelForProvider, setAddingModelForProvider] = useState<string | null>(null);
   const [customModelInput, setCustomModelInput] = useState('');
   const [verifyingNewModel, setVerifyingNewModel] = useState(false);
@@ -93,14 +87,13 @@ export const UserSettings: React.FC = () => {
     setNewModel(MODEL_PRESETS[p]?.[0] || '');
   };
 
-  // Setup & Confirm New Provider Integration
   const handleConfirmNewProvider = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProvider || !newModel) return;
 
     setVerifyingNewProvider(true);
     try {
-      const res = await aiAPI.confirmProvider({
+      await aiAPI.confirmProvider({
         provider: newProvider,
         model: newModel.trim(),
         apiKey: newApiKey.trim() || undefined,
@@ -120,7 +113,6 @@ export const UserSettings: React.FC = () => {
     }
   };
 
-  // Add Model to Existing Confirmed Provider
   const handleAddModel = async (providerId: string) => {
     if (!customModelInput.trim()) return;
 
@@ -139,7 +131,6 @@ export const UserSettings: React.FC = () => {
     }
   };
 
-  // Fast Switch Active Provider & Model
   const handleSwitchActive = async (provider: string, model: string) => {
     try {
       await aiAPI.switchActive(provider, model);
@@ -201,9 +192,7 @@ export const UserSettings: React.FC = () => {
 
   return (
     <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-10">
-      {/* 
-        1. AI ENGINE STUDIO (CONFIRMED INTEGRATIONS HUB)
-      */}
+      {/* AI ENGINE STUDIO */}
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-zinc-100">
           <div>
@@ -241,7 +230,6 @@ export const UserSettings: React.FC = () => {
                     : 'bg-zinc-50/70 border-zinc-200 hover:border-zinc-300'
                 }`}
               >
-                {/* Card Header */}
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
@@ -268,7 +256,6 @@ export const UserSettings: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Gateway / Credential Details */}
                 <div className="text-[11px] text-zinc-500 space-y-0.5 font-mono">
                   {integration.gatewayUrl && (
                     <p className="truncate">Gateway: <span className="text-zinc-700">{integration.gatewayUrl}</span></p>
@@ -290,7 +277,6 @@ export const UserSettings: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* Inline Model Addition Form */}
                   {addingModelForProvider === integration.id && (
                     <div className="p-3 bg-white border border-zinc-200 rounded-xl space-y-2 animate-in fade-in duration-100">
                       <p className="text-[10px] font-bold uppercase text-zinc-500">Enter Model String to Verify & Add</p>
@@ -299,7 +285,7 @@ export const UserSettings: React.FC = () => {
                           type="text"
                           value={customModelInput}
                           onChange={(e) => setCustomModelInput(e.target.value)}
-                          placeholder="e.g. anthropic/claude-3-5-sonnet"
+                          placeholder="e.g. openai/gpt-4o-mini or deepseek/deepseek-chat"
                           className="flex-1 px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs font-mono font-bold focus:outline-none focus:border-blue-500"
                         />
                         <button
@@ -312,7 +298,6 @@ export const UserSettings: React.FC = () => {
                         </button>
                       </div>
 
-                      {/* Presets suggestions */}
                       <div className="flex flex-wrap gap-1 pt-1">
                         {(MODEL_PRESETS[integration.provider] || []).filter(p => !integration.models.includes(p)).map((preset) => (
                           <button
@@ -328,7 +313,6 @@ export const UserSettings: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Model Pills */}
                   <div className="flex flex-wrap gap-1.5">
                     {integration.models.map((m: string) => {
                       const isModelActive = isActive && activeAiModel === m;
@@ -369,7 +353,6 @@ export const UserSettings: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Card Actions */}
                 {!isActive && (
                   <div className="pt-2 border-t border-zinc-200/60 flex justify-end">
                     <button
@@ -387,9 +370,7 @@ export const UserSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* 
-        2. DELIVERY THROTTLING
-      */}
+      {/* DELIVERY THROTTLING */}
       <div className="space-y-4 pt-6 border-t border-zinc-100">
         <div>
           <h3 className="text-base font-black text-zinc-900 tracking-tight">Global Delivery Throttling</h3>
@@ -429,9 +410,7 @@ export const UserSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* 
-        3. CAN-SPAM LEGAL & POSTAL COMPLIANCE
-      */}
+      {/* CAN-SPAM LEGAL & POSTAL COMPLIANCE */}
       <div className="space-y-4 pt-6 border-t border-zinc-100">
         <div>
           <div className="flex items-center gap-2">
@@ -497,9 +476,7 @@ export const UserSettings: React.FC = () => {
         </button>
       </div>
 
-      {/* 
-        SLIDE-OVER SHEET: SET UP NEW PROVIDER INTEGRATION
-      */}
+      {/* Set Up New Provider Sheet */}
       <Sheet
         isOpen={isSetupSheetOpen}
         onClose={() => setIsSetupSheetOpen(false)}

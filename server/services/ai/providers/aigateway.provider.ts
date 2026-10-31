@@ -14,10 +14,6 @@ export class AIGatewayProvider implements AIProvider {
     return Boolean(key || this.gatewayUrl.includes('gateway.ai.cloudflare'));
   }
 
-  /**
-   * Auto-formats model strings into Vercel AI Gateway creator/model syntax
-   * (e.g. "gpt-4o-mini" -> "openai/gpt-4o-mini", "claude-3-5-sonnet" -> "anthropic/claude-3-5-sonnet")
-   */
   private formatModelSlug(rawModel: string): string {
     const trimmed = (rawModel || 'openai/gpt-4o-mini').trim();
     if (trimmed.includes('/')) return trimmed;
@@ -40,8 +36,49 @@ export class AIGatewayProvider implements AIProvider {
     return trimmed;
   }
 
+  /**
+   * Universal Content Extractor across all models in Vercel AI Gateway:
+   * Handles standard models (content), reasoning models (reasoning / reasoning_content),
+   * and multi-part content arrays.
+   */
+  private extractMessageContent(choice: any, modelName: string): string {
+    const message = choice?.message;
+    if (!message) {
+      if (typeof choice?.text === 'string' && choice.text.trim()) return choice.text;
+      throw new Error(`AI Gateway returned an empty choice structure for model "${modelName}"`);
+    }
+
+    // 1. Standard Content String
+    if (typeof message.content === 'string' && message.content.trim()) {
+      return message.content;
+    }
+
+    // 2. Multi-part Content Array
+    if (Array.isArray(message.content)) {
+      const textPart = message.content.find((p: any) => p.type === 'text' || typeof p.text === 'string');
+      if (textPart?.text?.trim()) return textPart.text;
+    }
+
+    // 3. Reasoning / Thinking Models (Nemotron, DeepSeek-R1, QwQ)
+    if (typeof message.reasoning === 'string' && message.reasoning.trim()) {
+      return message.reasoning;
+    }
+    if (typeof message.reasoning_content === 'string' && message.reasoning_content.trim()) {
+      return message.reasoning_content;
+    }
+
+    // 4. Token Length Limit Exhaustion Detection
+    if (choice.finish_reason === 'length') {
+      throw new Error(
+        `Model "${modelName}" hit its max token limit during reasoning without completing output. ` +
+        `Switch to a fast instruction model (e.g. "openai/gpt-4o-mini" or "deepseek/deepseek-chat") in Settings.`
+      );
+    }
+
+    throw new Error(`AI Gateway model "${modelName}" returned empty content and no reasoning text`);
+  }
+
   async complete(prompt: string, system?: string): Promise<string> {
-    // 1. Sanitize & Migrate legacy broken api.vercel.ai URLs to ai-gateway.vercel.sh
     let cleanUrl = (this.gatewayUrl || 'https://ai-gateway.vercel.sh/v1').trim().replace(/\/+$/, '');
     if (cleanUrl.includes('api.vercel.ai')) {
       cleanUrl = cleanUrl.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
@@ -53,7 +90,6 @@ export class AIGatewayProvider implements AIProvider {
       ? `${cleanUrl}/chat/completions`
       : `${cleanUrl}/v1/chat/completions`;
 
-    // 2. Resolve Auth Token (Cascade: Instance Key -> AI_GATEWAY_API_KEY -> VERCEL_OIDC_TOKEN)
     const token =
       this.apiKey ||
       process.env.AI_GATEWAY_API_KEY ||
@@ -63,8 +99,7 @@ export class AIGatewayProvider implements AIProvider {
 
     if (!token && !cleanUrl.includes('gateway.ai.cloudflare')) {
       throw new Error(
-        'Vercel AI Gateway requires an API key. Create one at Vercel Dashboard → AI Gateway, ' +
-        'or set AI_GATEWAY_API_KEY in your Vercel project environment variables.'
+        'Vercel AI Gateway requires an API key. Set AI_GATEWAY_API_KEY in Vercel environment variables or enter it in Settings.'
       );
     }
 
@@ -88,9 +123,9 @@ export class AIGatewayProvider implements AIProvider {
         model: resolvedModel,
         messages,
         temperature: 0.7,
-        max_tokens: 1500,
+        max_tokens: 3500, // Headroom for reasoning models + JSON payload
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(30_000),
     });
 
     const rawText = await response.text();
@@ -104,10 +139,7 @@ export class AIGatewayProvider implements AIProvider {
     }
 
     const data = JSON.parse(rawText);
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error(`AI Gateway returned empty message content: ${rawText}`);
-    }
-    return content;
+    const choice = data.choices?.[0];
+    return this.extractMessageContent(choice, resolvedModel);
   }
 }
