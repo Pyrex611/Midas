@@ -1,5 +1,5 @@
 export class PersonalisationService {
-  // Blacklist of literal placeholder strings often found in dirty CSVs or test records
+  // Blacklist of literal placeholder strings found in dirty test data or raw header rows
   private static readonly BOGUS_NAME_TOKENS = new Set([
     'name', 'first name', 'firstname', 'last name', 'lastname', 'contact', 'lead',
     'prospect', 'user', 'test', 'unknown', 'n/a', 'null', 'none', 'there', 'customer', 'client'
@@ -46,7 +46,8 @@ export class PersonalisationService {
 
   /**
    * Strictly interpolates {{variable}} or {{variable|fallback}} mustache tokens.
-   * Bare words like "name", "company", or "team" in the body text are NEVER modified.
+   * If a variable is missing or equals a bogus token ("name", "company"),
+   * it falls back to natural English grammar ("there", "your clinic", "your team").
    */
   personalise(
     lead: any,
@@ -65,7 +66,7 @@ export class PersonalisationService {
     let pSubject = this.resolveSpintax(subject);
     let pBody = this.resolveSpintax(body);
 
-    // 2. Extract and sanitize prospect values
+    // 2. Sanitize Prospect Name
     const rawFullName = this.cleanString(lead?.name);
     let validName: string | null = null;
     let validFirstName: string | null = null;
@@ -80,27 +81,28 @@ export class PersonalisationService {
       }
     }
 
+    // 3. Sanitize Company Name
     const rawCompany = this.cleanString(lead?.company);
     let validCompany: string | null = null;
     if (rawCompany && !PersonalisationService.BOGUS_COMPANY_TOKENS.has(rawCompany.toLowerCase())) {
       validCompany = this.toTitleCase(rawCompany);
     }
 
+    // 4. Sanitize Position
     const rawPosition = this.cleanString(lead?.position);
     let validPosition: string | null = null;
     if (rawPosition && !/^(n\/a|null|undefined|none|test)$/i.test(rawPosition)) {
       validPosition = this.toTitleCase(rawPosition);
     }
 
+    // 5. Sanitize Sender Name
     const rawSender = this.cleanString(senderName);
     let validSenderName = 'The Team';
     if (rawSender && !PersonalisationService.BOGUS_SENDER_TOKENS.has(rawSender.toLowerCase())) {
       validSenderName = this.toTitleCase(rawSender);
     }
 
-    // 3. Strict Mustache Token Replacer:
-    // Matches ONLY: {{token}} or {{token|fallback}}
-    // Leaves all other un-braced words untouched.
+    // Strict Mustache Replacer
     const replaceMustacheTokens = (
       text: string,
       tokenName: string,
@@ -132,8 +134,9 @@ export class PersonalisationService {
     pSubject = replaceMustacheTokens(pSubject, 'lastName', validLastName, '');
     pBody = replaceMustacheTokens(pBody, 'lastName', validLastName, '');
 
+    // Company fallback: use "your clinic" or "your team"
     pSubject = replaceMustacheTokens(pSubject, 'company', validCompany, 'your team');
-    pBody = replaceMustacheTokens(pBody, 'company', validCompany, 'your team');
+    pBody = replaceMustacheTokens(pBody, 'company', validCompany, 'your clinic');
 
     pSubject = replaceMustacheTokens(pSubject, 'position', validPosition, 'your role');
     pBody = replaceMustacheTokens(pBody, 'position', validPosition, 'your role');
@@ -149,11 +152,11 @@ export class PersonalisationService {
       pSubject = pSubject.replace(/\{\{reference_company\}\}/gi, 'a recent partner');
     }
 
-    // 4. Clean any remaining unrecognized {{mustache}} tokens so raw tags never leak
+    // Clean any remaining unrecognized mustache tags
     pSubject = pSubject.replace(/\{\{[^}]+\}\}/g, '').trim();
     pBody = pBody.replace(/\{\{[^}]+\}\}/g, '').trim();
 
-    // 5. CAN-SPAM Legal & Postal Compliance Footer
+    // CAN-SPAM Compliance Footer
     const footerLines: string[] = [];
     if (unsubscribeUrl) {
       const optOutLabel = complianceOptions?.customOptOutText?.trim() || "Don't want to receive these emails? Unsubscribe here";

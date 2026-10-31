@@ -523,12 +523,12 @@ export const CampaignDetail: React.FC = () => {
                   </button>
 
                   <button
-                    onClick={handleRepersonalizeQueue}
-                    disabled={isRepersonalizing}
-                    className="block w-full text-left px-4 py-2 text-xs font-medium text-amber-700 hover:bg-zinc-50"
-                  >
-                    {isRepersonalizing ? 'Re-Personalizing...' : '🔄 Re-Personalize Queued'}
-                  </button>
+										onClick={handleRepersonalizeQueue}
+										disabled={isRepersonalizing}
+										className="block w-full text-left px-4 py-2 text-xs font-medium text-amber-700 hover:bg-zinc-50"
+									>
+										{isRepersonalizing ? 'Refreshing...' : '🔄 Refresh Queue from Copy Reserves'}
+									</button>
 
                   <button
                     onClick={() => { setShowRenameModal(true); setMenuOpen(false); }}
@@ -777,21 +777,22 @@ export const CampaignDetail: React.FC = () => {
       {activeTab === 'flow' && (
         <div className="space-y-8">
           <SequenceCanvas
-            steps={followUpSteps}
-            canEdit={canEdit}
-            onAddStep={() => {
-              const nextNum = (followUpSteps[followUpSteps.length - 1]?.stepNumber || 0) + 1;
-              setFollowUpSteps([...followUpSteps, { stepNumber: nextNum, delayDays: 3 }]);
-            }}
-            onUpdateDelay={(idx, days) => {
-              const next = [...followUpSteps];
-              next[idx] = { ...next[idx], delayDays: days };
-              setFollowUpSteps(next);
-            }}
-            onRemoveStep={(idx) => setFollowUpSteps(followUpSteps.filter((_, i) => i !== idx))}
-            onGenerateDraft={handleGenerateStepDraft}
-            generatingDraftFor={generatingDraftFor}
-          />
+						steps={followUpSteps}
+						drafts={campaign.drafts || []}
+						canEdit={canEdit}
+						onAddStep={() => {
+							const nextNum = (followUpSteps[followUpSteps.length - 1]?.stepNumber || 0) + 1;
+							setFollowUpSteps([...followUpSteps, { stepNumber: nextNum, delayDays: 3 }]);
+						}}
+						onUpdateDelay={(idx, days) => {
+							const next = [...followUpSteps];
+							next[idx] = { ...next[idx], delayDays: days };
+							setFollowUpSteps(next);
+						}}
+						onRemoveStep={(idx) => setFollowUpSteps(followUpSteps.filter((_, i) => i !== idx))}
+						onGenerateDraft={handleGenerateStepDraft}
+						generatingDraftFor={generatingDraftFor}
+					/>
 
           {canEdit && (
             <div className="flex justify-end">

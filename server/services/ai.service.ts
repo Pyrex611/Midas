@@ -134,10 +134,6 @@ export class AIService {
     }
   }
 
-  /**
-   * Completes a prompt through the active provider with explicit error throwing
-   * (never silently degrades to mock if an active live provider was requested).
-   */
   private async attemptComplete(
     prompt: string,
     system?: string,
@@ -145,35 +141,38 @@ export class AIService {
     allowMockFallback: boolean = false
   ): Promise<string> {
     const provider = activeProvider || this.defaultPrimaryProvider;
+    const start = Date.now();
+
+    logger.info(`[AI-CALL-START] Dispatching prompt to ${provider.name}`);
 
     try {
-      return await provider.complete(prompt, system);
+      const result = await provider.complete(prompt, system);
+      const duration = Date.now() - start;
+      logger.info(`[AI-CALL-SUCCESS] ${provider.name} responded in ${duration}ms`);
+      return result;
     } catch (primaryError: any) {
+      const duration = Date.now() - start;
       logger.error(
         {
           provider: provider.name,
+          durationMs: duration,
           error: primaryError?.message || String(primaryError),
         },
-        '[AI-ENGINE] Primary AI provider execution failed'
+        `[AI-CALL-FAILED] ${provider.name} failed after ${duration}ms`
       );
 
-      // Attempt configured fallback if available
       if (this.defaultFallbackProvider) {
         try {
-          logger.info({ fallback: this.defaultFallbackProvider.name }, '[AI-ENGINE] Switching to fallback AI provider');
+          logger.info(`[AI-CALL-FALLBACK] Attempting fallback to ${this.defaultFallbackProvider.name}`);
           return await this.defaultFallbackProvider.complete(prompt, system);
         } catch (fallbackError: any) {
           logger.error(
-            {
-              fallback: this.defaultFallbackProvider.name,
-              error: fallbackError?.message || String(fallbackError),
-            },
-            '[AI-ENGINE] Fallback AI provider also failed'
+            { fallback: this.defaultFallbackProvider.name, error: fallbackError?.message },
+            '[AI-CALL-FAILED] Fallback provider also failed'
           );
         }
       }
 
-      // If operator explicitly configured a live provider, NEVER swallow error with mock!
       if (!allowMockFallback && provider.name !== 'mock') {
         throw new Error(`[${provider.name.toUpperCase()}] ${primaryError?.message || 'AI Provider request failed'}`);
       }
@@ -183,18 +182,10 @@ export class AIService {
     }
   }
 
-  /**
-   * Robust JSON extraction: handles thinking blocks, markdown fences,
-   * and extracts JSON even if embedded inside reasoning text.
-   */
   private extractJSON(raw: string): any {
-    // 1. Strip thinking tags
     let cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-    // 2. Strip outer markdown fences: ```json ... ``` or ``` ... ```
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
-    // 3. Find outer braces
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -202,7 +193,6 @@ export class AIService {
       } catch {}
     }
 
-    // 4. Fallback scanner
     let depth = 0;
     let start = -1;
     for (let i = 0; i < cleaned.length; i++) {
@@ -288,13 +278,15 @@ export class AIService {
     const prompt = promptManager.buildPrompt(params);
     const system = 'You are an elite B2B sales copywriter. Output only valid JSON with "subject" and "body".';
 
-    // Disallow silent mock fallback for user-requested drafts
     const raw = await this.attemptComplete(prompt, system, provider, false);
     const parsed = this.extractJSON(raw);
-    if (!parsed.subject || !parsed.body) {
-      throw new Error(`Parsed JSON missing "subject" or "body" property`);
+
+    // Assert subject and body are valid non-empty strings
+    if (!parsed.subject?.trim() || !parsed.body?.trim()) {
+      throw new Error(`AI model "${provider.name}" returned an empty subject or body. Use a fast instruction model like "openai/gpt-4o-mini" or "gemini-1.5-flash".`);
     }
-    return { subject: parsed.subject, body: parsed.body };
+
+    return { subject: parsed.subject.trim(), body: parsed.body.trim() };
   }
 
   async classifyIntent(replyText: string, userId?: string): Promise<InboundClassification> {
