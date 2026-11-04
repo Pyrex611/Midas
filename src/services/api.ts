@@ -181,7 +181,6 @@ export const domainAPI = {
   resetReceivingTest: (id: string) => api.post(`/domains/${id}/receiving-test/reset`),
   checkReceivingTest: (id: string) => api.get(`/domains/${id}/receiving-test`),
   delete: (id: string) => api.delete(`/domains/${id}`),
-  // Sprint B.1: BIMI & DMARC Certification
   checkDmarcBimi: (id: string) => api.get(`/domains/${id}/dmarc-bimi`),
   updateBimi: (id: string, data: { bimiEnabled: boolean; bimiSvgUrl?: string; bimiVmcUrl?: string }) =>
     api.post(`/domains/${id}/bimi`, data),
@@ -195,6 +194,33 @@ export const senderAPI = {
   update: (senderId: string, data: { displayName?: string; dailyLimit?: number; status?: 'active' | 'paused' }) =>
     api.patch(`/domains/senders/${senderId}`, data),
   delete: (senderId: string) => api.delete(`/domains/senders/${senderId}`),
+};
+
+export const townCrierAPI = {
+  // API Keys
+  getApiKeys: () => api.get('/town-crier/api-keys'),
+  createApiKey: (label: string, scopes?: string[]) => api.post('/town-crier/api-keys', { label, scopes }),
+  revokeApiKey: (id: string) => api.delete(`/town-crier/api-keys/${id}`),
+
+  // Broadcasts
+  getBroadcasts: () => api.get('/town-crier/broadcasts'),
+  createBroadcast: (data: { subject: string; body: string }) => api.post('/town-crier/broadcasts', data),
+  queueBroadcast: (id: string) => api.post(`/town-crier/broadcasts/${id}/queue`),
+  deleteBroadcast: (id: string) => api.delete(`/town-crier/broadcasts/${id}`),
+  triggerSweep: () => api.post('/town-crier/sweep'),
+
+  // Recipients
+  getRecipients: (page = 1, pageSize = 20, status?: string) =>
+    api.get('/town-crier/recipients', { params: { page, pageSize, status } }),
+  addRecipient: (email: string, name?: string) => api.post('/town-crier/recipients', { email, name }),
+  importRecipients: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/town-crier/recipients/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  deleteRecipient: (id: string) => api.delete(`/town-crier/recipients/${id}`),
 };
 
 export const adminAPI = {

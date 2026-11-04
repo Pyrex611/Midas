@@ -1,9 +1,14 @@
 import { Response, NextFunction } from 'express';
+import multer from 'multer';
+import Papa from 'papaparse';
+import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { generateApiKey } from '../lib/apiKeys';
 import { newsletterQueueService } from '../services/newsletterQueue.service';
 import { logger } from '../config/logger';
+
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
 // --- API Key Management ---
 
@@ -31,7 +36,7 @@ export const createApiKey = async (req: AuthRequest, res: Response, next: NextFu
     const userId = req.user!.id;
     const { label, scopes } = req.body;
 
-    if (!label || typeof label !== 'string') {
+    if (!label || typeof label !== 'string' || !label.trim()) {
       return res.status(400).json({ error: 'A label is required for this API Key' });
     }
 
@@ -47,7 +52,6 @@ export const createApiKey = async (req: AuthRequest, res: Response, next: NextFu
       },
     });
 
-    // Return the plaintext key ONCE
     res.status(201).json({
       id: created.id,
       label: created.label,
@@ -73,6 +77,143 @@ export const revokeApiKey = async (req: AuthRequest, res: Response, next: NextFu
     });
 
     res.json({ success: true, message: 'API key revoked' });
+  } catch (error) { next(error); }
+};
+
+// --- Recipient Management (UI Authed) ---
+
+export const listRecipients = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const page = parseInt(req.query.page as string || '1', 10);
+    const pageSize = parseInt(req.query.pageSize as string || '20', 10);
+    const status = req.query.status as string;
+
+    const where: any = { userId };
+    if (status && status !== 'all') where.status = status;
+
+    const [recipients, total] = await Promise.all([
+      prisma.newsletterRecipient.findMany({
+        where,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.newsletterRecipient.count({ where }),
+    ]);
+
+    res.json({
+      data: recipients,
+      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    });
+  } catch (error) { next(error); }
+};
+
+export const addRecipient = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { email, name } = req.body;
+
+    const cleanEmail = (email || '').trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
+
+    const unsubToken = crypto.randomBytes(16).toString('hex');
+
+    const recipient = await prisma.newsletterRecipient.upsert({
+      where: {
+        userId_email: {
+          userId,
+          email: cleanEmail,
+        },
+      },
+      update: {
+        name: name ? String(name).trim() : undefined,
+        status: 'SUBSCRIBED',
+      },
+      create: {
+        userId,
+        email: cleanEmail,
+        name: name ? String(name).trim() : null,
+        source: 'ui',
+        status: 'SUBSCRIBED',
+        unsubscribeToken: unsubToken,
+      },
+    });
+
+    res.status(201).json(recipient);
+  } catch (error) { next(error); }
+};
+
+export const importRecipients = [
+  upload.single('file'),
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded' });
+      const userId = req.user!.id;
+      const csvText = req.file.buffer.toString('utf8');
+
+      const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+      const rows = parsed.data as any[];
+
+      const blocklist = await prisma.blocklist.findMany({ where: { userId } });
+
+      const validRecipients: { email: string; name: string | null; userId: string; source: string; status: string; unsubscribeToken: string }[] = [];
+
+      for (const row of rows) {
+        const keys = Object.keys(row);
+        const emailKey = keys.find(k => /email/i.test(k));
+        const nameKey = keys.find(k => /^(full ?name|name)$/i.test(k));
+
+        const email = emailKey ? String(row[emailKey] || '').trim().toLowerCase() : '';
+        const name = nameKey ? String(row[nameKey] || '').trim() : null;
+
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+
+        // Check suppression blocklist
+        const isBlocked = blocklist.some(b => {
+          const pattern = b.pattern.replace(/^\*@?/, '').replace(/^@/, '');
+          return email === pattern || email.endsWith('@' + pattern) || email.endsWith('.' + pattern);
+        });
+        if (isBlocked) continue;
+
+        validRecipients.push({
+          email,
+          name: name || null,
+          userId,
+          source: 'import',
+          status: 'SUBSCRIBED',
+          unsubscribeToken: crypto.randomBytes(16).toString('hex'),
+        });
+      }
+
+      let insertedCount = 0;
+      const CHUNK = 500;
+      for (let i = 0; i < validRecipients.length; i += CHUNK) {
+        const batch = validRecipients.slice(i, i + CHUNK);
+        const res = await prisma.newsletterRecipient.createMany({
+          data: batch,
+          skipDuplicates: true,
+        });
+        insertedCount += res.count;
+      }
+
+      res.status(201).json({ success: true, totalRows: rows.length, importedCount: insertedCount });
+    } catch (error) { next(error); }
+  },
+];
+
+export const deleteRecipient = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+
+    await prisma.newsletterRecipient.deleteMany({
+      where: { id, userId },
+    });
+
+    res.json({ success: true });
   } catch (error) { next(error); }
 };
 
@@ -132,10 +273,6 @@ export const createBroadcast = async (req: AuthRequest, res: Response, next: Nex
   } catch (error) { next(error); }
 };
 
-/**
- * POST /api/town-crier/broadcasts/:id/queue
- * Enqueues broadcast into NewsletterQueueItem. NEVER sends directly in bulk.
- */
 export const queueBroadcast = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
@@ -151,6 +288,19 @@ export const queueBroadcast = async (req: AuthRequest, res: Response, next: Next
     logger.error({ error: error.message }, 'Failed to queue newsletter broadcast');
     res.status(400).json({ error: error.message || 'Failed to queue broadcast' });
   }
+};
+
+export const deleteBroadcast = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+
+    await prisma.newsletterBroadcast.deleteMany({
+      where: { id, userId },
+    });
+
+    res.json({ success: true });
+  } catch (error) { next(error); }
 };
 
 export const triggerNewsletterSweep = async (req: AuthRequest, res: Response, next: NextFunction) => {

@@ -1,10 +1,13 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
+import Papa from 'papaparse';
 import crypto from 'crypto';
 import prisma from '../../lib/prisma';
 import { requireApiKey, ApiKeyRequest } from '../../middleware/apiKeyAuth.middleware';
 import { logger } from '../../config/logger';
 
 const router = Router();
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
 // Public Unsubscribe Endpoint (Token-based, unauthenticated)
 router.get('/recipients/:id/unsubscribe', async (req: Request, res: Response) => {
@@ -18,12 +21,12 @@ router.get('/recipients/:id/unsubscribe', async (req: Request, res: Response) =>
       data: { status: 'UNSUBSCRIBED' },
     });
 
-    // Remove from pending newsletter queue
     await prisma.newsletterQueueItem.deleteMany({
       where: { recipientId: id, status: 'PENDING' },
     });
 
     res.send(`
+      <!DOCTYPE html>
       <html><body style="font-family: -apple-system, sans-serif; max-width: 480px; margin: 80px auto; text-align: center; color: #18181b;">
         <h2>You have been unsubscribed</h2>
         <p>${recipient.email} will no longer receive broadcast newsletters from this sender.</p>
@@ -49,7 +52,6 @@ router.post('/recipients', async (req: Request, res: Response) => {
   }
 
   try {
-    // Cross-check suppression blocklist
     const blocklist = await prisma.blocklist.findMany({ where: { userId } });
     const isBlocked = blocklist.some(b => {
       const pattern = b.pattern.replace(/^\*@?/, '').replace(/^@/, '');
@@ -87,6 +89,66 @@ router.post('/recipients', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error({ error: error.message }, 'Failed to add newsletter recipient via API');
     res.status(500).json({ error: 'Failed to add recipient' });
+  }
+});
+
+// POST /api/public/town-crier/recipients/import (CSV Bulk Upload via Public API)
+router.post('/recipients/import', upload.single('file'), async (req: Request, res: Response) => {
+  const apiReq = req as ApiKeyRequest;
+  const userId = apiReq.apiUser!.id;
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'A CSV file is required' });
+  }
+
+  try {
+    const csvText = req.file.buffer.toString('utf8');
+    const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+    const rows = parsed.data as any[];
+
+    const blocklist = await prisma.blocklist.findMany({ where: { userId } });
+    const validRecipients: { email: string; name: string | null; userId: string; source: string; status: string; unsubscribeToken: string }[] = [];
+
+    for (const row of rows) {
+      const keys = Object.keys(row);
+      const emailKey = keys.find(k => /email/i.test(k));
+      const nameKey = keys.find(k => /^(full ?name|name)$/i.test(k));
+
+      const email = emailKey ? String(row[emailKey] || '').trim().toLowerCase() : '';
+      const name = nameKey ? String(row[nameKey] || '').trim() : null;
+
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+
+      const isBlocked = blocklist.some(b => {
+        const pattern = b.pattern.replace(/^\*@?/, '').replace(/^@/, '');
+        return email === pattern || email.endsWith('@' + pattern) || email.endsWith('.' + pattern);
+      });
+      if (isBlocked) continue;
+
+      validRecipients.push({
+        email,
+        name: name || null,
+        userId,
+        source: 'api_import',
+        status: 'SUBSCRIBED',
+        unsubscribeToken: crypto.randomBytes(16).toString('hex'),
+      });
+    }
+
+    let insertedCount = 0;
+    const CHUNK = 500;
+    for (let i = 0; i < validRecipients.length; i += CHUNK) {
+      const batch = validRecipients.slice(i, i + CHUNK);
+      const r = await prisma.newsletterRecipient.createMany({
+        data: batch,
+        skipDuplicates: true,
+      });
+      insertedCount += r.count;
+    }
+
+    res.status(201).json({ success: true, processedRows: rows.length, insertedCount });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Import failed' });
   }
 });
 

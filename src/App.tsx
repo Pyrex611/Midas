@@ -12,6 +12,7 @@ import { Login } from './pages/Login';
 import { Signup } from './pages/SignUp';
 import { Domains } from './pages/Domains';
 import { Inbox } from './pages/Inbox';
+import { TownCrier } from './pages/TownCrier';
 import { AdminDashboard } from './pages/AdminDashboard';
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
@@ -30,6 +31,7 @@ function AppRoutes() {
       <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
       <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
       <Route path="/campaigns/:id" element={<ProtectedRoute><CampaignDetail /></ProtectedRoute>} />
+      <Route path="/town-crier" element={<ProtectedRoute><TownCrier /></ProtectedRoute>} />
       <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
       <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
