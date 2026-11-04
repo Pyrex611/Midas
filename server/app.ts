@@ -18,6 +18,8 @@ import configRoutes from './routes/config.routes';
 import unsubscribeRoutes from './routes/unsubscribe.routes';
 import adminRoutes from './routes/admin.routes';
 import trackRoutes from './routes/track.routes';
+import townCrierRoutes from './routes/townCrier.routes';
+import townCrierPublicRoutes from './routes/public/townCrier.public.routes';
 
 const app = express();
 
@@ -74,7 +76,10 @@ app.use('/api/config', configRoutes);
 app.use('/api/unsubscribe', unsubscribeRoutes);
 app.use('/api/track', trackRoutes);
 
-// Protected Core Application Routes
+// Public Town Crier Subscriber API (Guarded by API Key)
+app.use('/api/public/town-crier', townCrierPublicRoutes);
+
+// Protected Core Application Routes (Clerk Authed)
 app.use('/api/leads', requireAuth, leadRoutes);
 app.use('/api/campaigns', requireAuth, campaignRoutes);
 app.use('/api/domains', requireAuth, domainRoutes);
@@ -83,8 +88,7 @@ app.use('/api/ai', requireAuth, aiRoutes);
 app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
-
-// Admin Routes (requireAuth guards against unauthenticated callers; requireAdmin is applied inside adminRoutes)
+app.use('/api/town-crier', requireAuth, townCrierRoutes);
 app.use('/api/admin', requireAuth, adminRoutes);
 
 export default app;

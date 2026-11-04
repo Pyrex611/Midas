@@ -4,10 +4,6 @@ import { emailService } from '../services/email.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../config/logger';
 
-/**
- * GET /api/inbox
- * Returns all leads that have an active conversation (either replied or contacted).
- */
 export const getUnifiedInbox = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
@@ -35,10 +31,6 @@ export const getUnifiedInbox = async (req: AuthRequest, res: Response, next: Nex
   }
 };
 
-/**
- * POST /api/inbox/start
- * Initiates a brand-new conversation directly from the Inbox.
- */
 export const startConversation = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
@@ -61,7 +53,6 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'A sending mailbox (senderId) is required' });
     }
 
-    // 1. Resolve Sender & Domain
     const sender = await prisma.sender.findFirst({
       where: { id: senderId, userId, status: 'active' },
       include: { domain: true },
@@ -71,7 +62,6 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'The selected sending mailbox or its domain is not active' });
     }
 
-    // 2. Resolve or Upsert Lead
     let targetLead: any = null;
 
     if (leadId) {
@@ -117,10 +107,11 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'This recipient has previously unsubscribed and cannot be emailed' });
     }
 
-    // 3. Atomically claim mailbox quota
+    // Atomic quota claim
     const claimResult = await prisma.$queryRaw<{ id: string }[]>`
       UPDATE "Sender"
-      SET "sent_count_today" = "sent_count_today" + 1
+      SET "sent_count_today" = "sent_count_today" + 1,
+          "last_dispatched_at" = NOW()
       WHERE id = ${sender.id} AND "sent_count_today" < "daily_limit"
       RETURNING id
     `;
@@ -129,7 +120,9 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'This sender mailbox has reached its daily quota limit. Please select another sender.' });
     }
 
-    // 4. Create OutboundEmail record
+    // Resolve user branding preferences
+    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
@@ -142,7 +135,6 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       },
     });
 
-    // 5. Send via Mailgun
     const result = await emailService.sendEmailNow(
       { ...sender.domain, senderLocalPart: sender.localPart },
       targetLead.email,
@@ -153,7 +145,14 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       sender.displayName || null,
       undefined,
       undefined,
-      { leadId: targetLead.id, campaignId: targetLead.campaignId }
+      { leadId: targetLead.id, campaignId: targetLead.campaignId },
+      {
+        brandName: userSettings?.companyName,
+        brandInitials: userSettings?.brandInitials,
+        brandColorHex: userSettings?.brandColorHex,
+        logoUrl: userSettings?.logoUrl,
+        brandingEnabled: userSettings?.brandingEnabled,
+      }
     );
 
     if (!result.success) {
@@ -168,13 +167,11 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       throw new Error(result.error || 'Failed to dispatch email via Mailgun');
     }
 
-    // 6. Update OutboundEmail to SENT
     const finalizedEmail = await prisma.outboundEmail.update({
       where: { id: outboundRecord.id },
       data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
     });
 
-    // 7. Log append-only telemetry
     await prisma.leadActivityEvent.create({
       data: {
         leadId: targetLead.id,
@@ -200,10 +197,6 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
   }
 };
 
-/**
- * POST /api/inbox/:leadId/reply
- * Dispatches a manual reply to an existing inbound prospect message.
- */
 export const sendManualReply = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
@@ -241,6 +234,8 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
 
     const subject = latestInbound.subject.startsWith('Re:') ? latestInbound.subject : `Re: ${latestInbound.subject}`;
 
+    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
@@ -265,7 +260,14 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
       lead.campaign?.senderName || sender?.displayName || null,
       latestInbound.messageId,
       undefined,
-      { leadId: lead.id, campaignId: lead.campaignId }
+      { leadId: lead.id, campaignId: lead.campaignId },
+      {
+        brandName: userSettings?.companyName,
+        brandInitials: userSettings?.brandInitials,
+        brandColorHex: userSettings?.brandColorHex,
+        logoUrl: userSettings?.logoUrl,
+        brandingEnabled: userSettings?.brandingEnabled,
+      }
     );
 
     if (!result.success) throw new Error(result.error);
