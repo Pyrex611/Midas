@@ -181,6 +181,10 @@ export const domainAPI = {
   resetReceivingTest: (id: string) => api.post(`/domains/${id}/receiving-test/reset`),
   checkReceivingTest: (id: string) => api.get(`/domains/${id}/receiving-test`),
   delete: (id: string) => api.delete(`/domains/${id}`),
+  // Sprint B.1: BIMI & DMARC Certification
+  checkDmarcBimi: (id: string) => api.get(`/domains/${id}/dmarc-bimi`),
+  updateBimi: (id: string, data: { bimiEnabled: boolean; bimiSvgUrl?: string; bimiVmcUrl?: string }) =>
+    api.post(`/domains/${id}/bimi`, data),
 };
 
 export const senderAPI = {

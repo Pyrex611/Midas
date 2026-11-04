@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 
 export interface Toast {
   id: string;
@@ -28,7 +28,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const addToast = useCallback((type: Toast['type'], message: string, title?: string, action?: Toast['action']) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const newToast: Toast = { id, type, message, title, action, duration: 4500 };
+    const newToast: Toast = { id, type, message, title, action, duration: 5000 };
 
     setToasts((prev) => [...prev, newToast]);
 
@@ -41,12 +41,16 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const toast = {
-    success: (message: string, title?: string, action?: Toast['action']) => addToast('success', message, title, action),
-    error: (message: string, title?: string) => addToast('error', message, title),
-    info: (message: string, title?: string) => addToast('info', message, title),
-    warning: (message: string, title?: string) => addToast('warning', message, title),
-  };
+  // Stabilize toast reference so it NEVER triggers re-renders in consumers
+  const toast = useMemo(
+    () => ({
+      success: (message: string, title?: string, action?: Toast['action']) => addToast('success', message, title, action),
+      error: (message: string, title?: string) => addToast('error', message, title),
+      info: (message: string, title?: string) => addToast('info', message, title),
+      warning: (message: string, title?: string) => addToast('warning', message, title),
+    }),
+    [addToast]
+  );
 
   const getToastStyles = (type: Toast['type']) => {
     switch (type) {
@@ -65,7 +69,6 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      {/* Toast Render Viewport (Z-Index 100) */}
       <div className="fixed bottom-5 right-5 z-[100] flex flex-col gap-2.5 max-w-md w-full pointer-events-none px-4 sm:px-0">
         {toasts.map((t) => (
           <div

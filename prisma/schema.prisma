@@ -61,6 +61,12 @@ model Domain {
 
   routeId          String?  @map("route_id")
 
+  // Sprint B.1: BIMI & DMARC Verification Suite
+  bimiEnabled      Boolean  @default(false) @map("bimi_enabled")
+  bimiSvgUrl       String?  @map("bimi_svg_url")
+  bimiVmcUrl       String?  @map("bimi_vmc_url")
+  dmarcPolicy      String?  @map("dmarc_policy") // "none" | "quarantine" | "reject" | "missing"
+
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -83,7 +89,6 @@ model Sender {
   dailyLimit       Int       @default(20) @map("daily_limit")
   sentCountToday   Int       @default(0) @map("sent_count_today")
   lastSentReset    DateTime  @default(now()) @map("last_sent_reset")
-  // Cooldown tracking to prevent compounding multi-scheduler trigger bursts
   lastDispatchedAt DateTime? @map("last_dispatched_at")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")

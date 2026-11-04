@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { campaignAPI, senderAPI, getErrorMessage } from '../services/api';
 import { Sheet } from '../components/common/Sheet';
@@ -28,6 +28,8 @@ export const CampaignDetail: React.FC = () => {
 
   const [campaign, setCampaign] = useState<any>(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const isFirstLoadRef = useRef(true);
+
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
 
   // Interactive Lead Drilldown Sheet State
@@ -85,12 +87,14 @@ export const CampaignDetail: React.FC = () => {
 
   /**
    * FLICKER-FREE REFETCH:
-   * When silent = true, updates data in the background without setting loading = true.
-   * Prevents unmounting the view tree.
+   * Only sets initialLoading on the absolute first mount.
+   * All subsequent revalidations run strictly in the background without unmounting the DOM.
    */
-  const fetchCampaign = useCallback(async (silent = false) => {
+  const fetchCampaign = useCallback(async () => {
     if (!id) return;
-    if (!silent) setInitialLoading(true);
+    if (isFirstLoadRef.current) {
+      setInitialLoading(true);
+    }
 
     try {
       const [res, healthRes] = await Promise.all([
@@ -109,6 +113,7 @@ export const CampaignDetail: React.FC = () => {
     } catch {
       toast.error('Failed to load campaign data', 'Network Error');
     } finally {
+      isFirstLoadRef.current = false;
       setInitialLoading(false);
     }
   }, [id, toast]);
@@ -126,9 +131,9 @@ export const CampaignDetail: React.FC = () => {
   }, [id]);
 
   useEffect(() => {
-    fetchCampaign(false);
+    fetchCampaign();
     fetchSenders();
-  }, [fetchCampaign, fetchSenders]);
+  }, [id]);
 
   // Actions
   const handleReconcileQueue = async () => {
@@ -137,7 +142,7 @@ export const CampaignDetail: React.FC = () => {
     try {
       const res = await campaignAPI.reconcileQueue(id);
       toast.success(res.data?.message || 'Queue reconciled', 'Queue Staged');
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch (err: any) {
       toast.error(getErrorMessage(err, 'Could not reconcile queue'), 'Queue Error');
     } finally {
@@ -151,7 +156,7 @@ export const CampaignDetail: React.FC = () => {
     try {
       const res = await campaignAPI.repersonalizeQueue(id);
       toast.success(res.data?.message || 'Queue refreshed from active reserves', 'Re-Personalized');
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch (err: any) {
       toast.error(getErrorMessage(err, 'Could not refresh queue from reserves'), 'Error');
     } finally {
@@ -169,7 +174,7 @@ export const CampaignDetail: React.FC = () => {
         await campaignAPI.pause(id);
         toast.warning('Campaign outreach paused', 'Halted');
       }
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch {
       toast.error('Could not update campaign status', 'Error');
     }
@@ -182,7 +187,7 @@ export const CampaignDetail: React.FC = () => {
       const res = await campaignAPI.dispatchNow(id);
       const sent = res.data?.summary?.sent || 0;
       toast.success(`Dispatched send batch: ${sent} email(s) sent`, 'Batch Sent (≤5)');
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch (err: any) {
       toast.error(getErrorMessage(err, 'Could not trigger queue sweep'), 'Dispatch Error');
     } finally {
@@ -247,7 +252,7 @@ export const CampaignDetail: React.FC = () => {
         });
         toast.info('Mailbox unlinked from rotation', 'Sender Removed');
       }
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch {
       toast.error('Could not update sender link', 'Error');
     } finally {
@@ -280,7 +285,7 @@ export const CampaignDetail: React.FC = () => {
         toast.success('New draft variation created', 'Saved');
       }
       setIsDraftDrawerOpen(false);
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch {
       toast.error('Could not save draft', 'Error');
     } finally {
@@ -294,7 +299,7 @@ export const CampaignDetail: React.FC = () => {
     try {
       await campaignAPI.deleteDraft(id, draftId);
       toast.info('Draft variation deleted', 'Deleted');
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch {
       toast.error('Could not delete draft', 'Error');
     }
@@ -306,7 +311,7 @@ export const CampaignDetail: React.FC = () => {
     try {
       await campaignAPI.generateDraft(id);
       toast.success('AI synthesized a fresh tonal draft variation', 'Synthesized');
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch (err: any) {
       toast.error(getErrorMessage(err, 'Failed to synthesize draft with active AI provider'), 'AI Error');
     } finally {
@@ -320,7 +325,7 @@ export const CampaignDetail: React.FC = () => {
     try {
       await campaignAPI.generateStepDraft(id, stepNumber);
       toast.success(`Synthesized AI draft for step #${stepNumber}`, 'Complete');
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch (err: any) {
       toast.error(getErrorMessage(err, `Failed to generate draft for step #${stepNumber}`), 'AI Step Draft Error');
     } finally {
@@ -382,7 +387,7 @@ export const CampaignDetail: React.FC = () => {
         followUpSteps.map((s) => ({ stepNumber: s.stepNumber, delayDays: s.delayDays }))
       );
       toast.success('Follow-up sequence timeline persisted', 'Flow Updated');
-      await fetchCampaign(true);
+      await fetchCampaign();
     } catch {
       toast.error('Could not save follow-up sequence', 'Error');
     } finally {
@@ -390,7 +395,7 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  // Only show full loading spinner on initial cold mount
+  // ONLY show full loading indicator on cold first-time mount
   if (initialLoading && !campaign) {
     return <div className="py-24 text-center text-xs text-zinc-400">Loading campaign workflow...</div>;
   }
@@ -692,7 +697,7 @@ export const CampaignDetail: React.FC = () => {
         <UploadArea
           campaignId={campaign.id}
           onJobComplete={() => {
-            fetchCampaign(true);
+            fetchCampaign();
             setIsUploadDrawerOpen(false);
           }}
         />
@@ -703,7 +708,7 @@ export const CampaignDetail: React.FC = () => {
         onClose={() => setIsLeadDrawerOpen(false)}
         lead={previewLead}
         campaignId={campaign.id}
-        onUpdate={() => fetchCampaign(true)}
+        onUpdate={() => fetchCampaign()}
       />
 
       <Sheet
@@ -744,10 +749,10 @@ export const CampaignDetail: React.FC = () => {
         </div>
       </Sheet>
 
-      <RenameCampaignModal isOpen={showRenameModal} onClose={() => setShowRenameModal(false)} campaign={campaign} onSuccess={() => fetchCampaign(true)} />
+      <RenameCampaignModal isOpen={showRenameModal} onClose={() => setShowRenameModal(false)} campaign={campaign} onSuccess={() => fetchCampaign()} />
       <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDeleteCampaign} campaignName={campaign.name} />
-      <EditStrategyModal isOpen={showStrategyModal} onClose={() => setShowStrategyModal(false)} campaign={campaign} onSuccess={() => fetchCampaign(true)} />
-      <InviteCollaboratorModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} campaignId={campaign.id} onSuccess={() => fetchCampaign(true)} />
+      <EditStrategyModal isOpen={showStrategyModal} onClose={() => setShowStrategyModal(false)} campaign={campaign} onSuccess={() => fetchCampaign()} />
+      <InviteCollaboratorModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} campaignId={campaign.id} onSuccess={() => fetchCampaign()} />
     </div>
   );
 };

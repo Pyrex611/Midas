@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import dns from 'dns';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { encrypt, tryDecrypt } from '../lib/encryption';
@@ -17,7 +18,6 @@ export class DomainService {
     return `Basic ${Buffer.from(`api:${cleanKey}`).toString('base64')}`;
   }
 
-  /** Never return the encrypted key or the receiving test code to the client. */
   private sanitize(domain: any) {
     if (!domain) return domain;
     const { mailgunApiKeyEncrypted, ...rest } = domain;
@@ -25,9 +25,70 @@ export class DomainService {
   }
 
   /**
-   * Sends one real test email through the given domain+key.
-   * Safely handles both JSON and plain-text (401 Forbidden) Mailgun responses.
+   * Authoritative DNS DMARC Policy Inspector (Initiative 4 / Sprint B.1):
+   * Queries _dmarc.<domain> via DNS TXT records and evaluates quarantine / reject enforcement.
    */
+  async checkDmarcPolicy(domainName: string): Promise<{
+    policy: 'none' | 'quarantine' | 'reject' | 'missing';
+    record?: string;
+    bimiReady: boolean;
+  }> {
+    const cleanDomain = domainName.trim().toLowerCase();
+    try {
+      const records = await dns.promises.resolveTxt(`_dmarc.${cleanDomain}`);
+      const flat = records.map((chunk) => chunk.join('')).join(' ');
+      const match = flat.match(/p=(none|quarantine|reject)/i);
+      const policy = match ? (match[1].toLowerCase() as any) : 'none';
+      const bimiReady = policy === 'quarantine' || policy === 'reject';
+      return { policy, record: flat, bimiReady };
+    } catch {
+      // If subdomain fails, query organizational parent root
+      const parts = cleanDomain.split('.');
+      if (parts.length > 2) {
+        const rootDomain = parts.slice(-2).join('.');
+        try {
+          const rootRecords = await dns.promises.resolveTxt(`_dmarc.${rootDomain}`);
+          const flat = rootRecords.map((chunk) => chunk.join('')).join(' ');
+          const match = flat.match(/p=(none|quarantine|reject)/i);
+          const policy = match ? (match[1].toLowerCase() as any) : 'none';
+          const bimiReady = policy === 'quarantine' || policy === 'reject';
+          return { policy, record: flat, bimiReady };
+        } catch {}
+      }
+      return { policy: 'missing', bimiReady: false };
+    }
+  }
+
+  async updateBimiSettings(
+    userId: string,
+    domainId: string,
+    data: { bimiEnabled: boolean; bimiSvgUrl?: string; bimiVmcUrl?: string }
+  ) {
+    const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
+    if (!domain) throw new Error('Domain not found');
+
+    const dmarcResult = await this.checkDmarcPolicy(domain.domainName);
+
+    if (data.bimiEnabled && !dmarcResult.bimiReady) {
+      throw new Error(
+        `Cannot enable BIMI: DMARC policy for ${domain.domainName} is "${dmarcResult.policy}". ` +
+        `BIMI requires DMARC to be enforced at p=quarantine or p=reject.`
+      );
+    }
+
+    const updated = await prisma.domain.update({
+      where: { id: domainId },
+      data: {
+        bimiEnabled: data.bimiEnabled,
+        bimiSvgUrl: data.bimiSvgUrl?.trim() || null,
+        bimiVmcUrl: data.bimiVmcUrl?.trim() || null,
+        dmarcPolicy: dmarcResult.policy,
+      },
+    });
+
+    return this.sanitize(updated);
+  }
+
   private async sendTestEmail(domainName: string, mailgunApiKey: string, region: string | null, toEmail: string) {
     const cleanTo = (toEmail || '').trim().toLowerCase();
     if (!cleanTo || !cleanTo.includes('@')) {
@@ -111,9 +172,7 @@ export class DomainService {
           signal: AbortSignal.timeout(10_000),
         });
         if (check.ok) return current.routeId;
-      } catch {
-        // Fall through
-      }
+      } catch {}
     }
 
     const list = await this.listRoutes(mailgunApiKey, region);
@@ -154,6 +213,8 @@ export class DomainService {
     const existing = await prisma.domain.findFirst({ where: { userId, domainName: cleanDomain } });
     if (existing) throw new Error('This domain is already connected to your account');
 
+    const dmarcCheck = await this.checkDmarcPolicy(cleanDomain);
+
     const domain = await prisma.domain.create({
       data: {
         userId,
@@ -161,6 +222,7 @@ export class DomainService {
         status: 'pending_setup',
         mailgunApiKeyEncrypted: encrypt(cleanKey),
         mailgunRegion: region || null,
+        dmarcPolicy: dmarcCheck.policy,
       },
     });
 
@@ -233,7 +295,7 @@ export class DomainService {
       include: { senders: { orderBy: { createdAt: 'asc' } } },
       orderBy: { createdAt: 'desc' },
     });
-    return domains.map(d => this.sanitize(d));
+    return domains.map((d) => this.sanitize(d));
   }
 
   async getDomainRaw(domainId: string) {

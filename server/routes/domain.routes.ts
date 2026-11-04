@@ -40,6 +40,33 @@ router.post('/', async (req: any, res) => {
   }
 });
 
+// DMARC & BIMI Verification Inspector (Sprint B.1)
+router.get('/:id/dmarc-bimi', async (req: any, res) => {
+  try {
+    const domain = await domainService.getDomainRaw(req.params.id);
+    if (!domain || domain.userId !== req.user.id) return res.status(404).json({ error: 'Domain not found' });
+
+    const policy = await domainService.checkDmarcPolicy(domain.domainName);
+    res.json(policy);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.post('/:id/bimi', async (req: any, res) => {
+  try {
+    const { bimiEnabled, bimiSvgUrl, bimiVmcUrl } = req.body;
+    const updated = await domainService.updateBimiSettings(req.user.id, req.params.id, {
+      bimiEnabled: Boolean(bimiEnabled),
+      bimiSvgUrl,
+      bimiVmcUrl,
+    });
+    res.json(updated);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 router.post('/:id/send-test', async (req: any, res) => {
   try {
     const { testRecipientEmail } = req.body;
@@ -85,7 +112,7 @@ router.delete('/:id', async (req: any, res) => {
   }
 });
 
-// Senders routes
+// Senders
 router.get('/senders/all', async (req: any, res) => {
   try {
     const senders = await senderService.listAllSendersForUser(req.user.id);

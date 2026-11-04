@@ -22,6 +22,10 @@ interface Domain {
   sendTestPassedAt: string | null;
   receivingConfirmedAt: string | null;
   receivingTestAddress: string | null;
+  bimiEnabled: boolean;
+  bimiSvgUrl: string | null;
+  bimiVmcUrl: string | null;
+  dmarcPolicy: string | null;
   senders: Sender[];
 }
 
@@ -31,7 +35,7 @@ export const Domains: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
-  // Connect Drawer State (Hidden by default as requested)
+  // Connect Drawer State
   const [isConnectDrawerOpen, setIsConnectDrawerOpen] = useState(false);
   const [newDomain, setNewDomain] = useState('');
   const [mailgunKey, setMailgunKey] = useState('');
@@ -49,6 +53,15 @@ export const Domains: React.FC = () => {
   const [newSenderDisplayName, setNewSenderDisplayName] = useState('');
   const [addingSender, setAddingSender] = useState(false);
 
+  // BIMI Management Drawer State (Sprint B.1)
+  const [bimiDrawerDomain, setBimiDrawerDomain] = useState<Domain | null>(null);
+  const [bimiEnabled, setBimiEnabled] = useState(false);
+  const [bimiSvgUrl, setBimiSvgUrl] = useState('');
+  const [bimiVmcUrl, setBimiVmcUrl] = useState('');
+  const [dmarcReport, setDmarcReport] = useState<any | null>(null);
+  const [checkingDmarc, setCheckingDmarc] = useState(false);
+  const [savingBimi, setSavingBimi] = useState(false);
+
   const fetchDomains = async () => {
     try {
       setErrorBanner(null);
@@ -62,6 +75,43 @@ export const Domains: React.FC = () => {
   };
 
   useEffect(() => { fetchDomains(); }, []);
+
+  const handleOpenBimiDrawer = async (domain: Domain) => {
+    setBimiDrawerDomain(domain);
+    setBimiEnabled(domain.bimiEnabled || false);
+    setBimiSvgUrl(domain.bimiSvgUrl || '');
+    setBimiVmcUrl(domain.bimiVmcUrl || '');
+    setCheckingDmarc(true);
+    try {
+      const res = await domainAPI.checkDmarcBimi(domain.id);
+      setDmarcReport(res.data);
+    } catch {
+      setDmarcReport({ policy: 'missing', bimiReady: false });
+    } finally {
+      setCheckingDmarc(false);
+    }
+  };
+
+  const handleSaveBimi = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bimiDrawerDomain) return;
+
+    setSavingBimi(true);
+    try {
+      await domainAPI.updateBimi(bimiDrawerDomain.id, {
+        bimiEnabled,
+        bimiSvgUrl,
+        bimiVmcUrl,
+      });
+      toast.success('BIMI & avatar settings updated', 'BIMI Configured');
+      setBimiDrawerDomain(null);
+      await fetchDomains();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not save BIMI settings'), 'BIMI Error');
+    } finally {
+      setSavingBimi(false);
+    }
+  };
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,7 +168,7 @@ export const Domains: React.FC = () => {
     setCheckingReceiving(id);
     try {
       const res = await domainAPI.checkReceivingTest(id);
-      setReceivingResult(prev => ({ ...prev, [id]: res.data }));
+      setReceivingResult((prev) => ({ ...prev, [id]: res.data }));
       if (res.data.confirmed) {
         toast.success('Inbound reply routing confirmed!', 'Domain Ready');
         await fetchDomains();
@@ -173,10 +223,6 @@ export const Domains: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* 
-        HEADER WITH TOP-LEFT "CONNECT NEW DOMAIN" ACTION:
-        Connected domains show immediately without clutter.
-      */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -189,7 +235,7 @@ export const Domains: React.FC = () => {
             </button>
           </div>
           <p className="text-xs text-zinc-500 mt-1">
-            Manage authenticated network sending domains, Mailgun credentials, and individual mailbox quotas.
+            Manage authenticated network sending domains, Mailgun credentials, sender avatars, and mailbox quotas.
           </p>
         </div>
 
@@ -264,7 +310,7 @@ export const Domains: React.FC = () => {
               required
               className="w-full px-4 py-2 border border-zinc-200 rounded-xl text-sm font-mono focus:outline-none focus:border-blue-500"
             />
-            <p className="mt-1 text-[11px] text-zinc-400">Primary Account or Sending Key from Mailgun Settings → API Security.</p>
+            <p className="mt-1 text-[10px] text-zinc-400">Primary Account or Sending Key from Mailgun Settings → API Security.</p>
           </div>
 
           <div className="pt-4 flex justify-end gap-3 border-t border-zinc-100">
@@ -281,6 +327,96 @@ export const Domains: React.FC = () => {
               className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50 transition-colors shadow-xs"
             >
               {connecting ? 'Running Live Send Test...' : 'Authenticate & Test'}
+            </button>
+          </div>
+        </form>
+      </Sheet>
+
+      {/* BIMI & SENDER AVATAR MANAGEMENT DRAWER (Sprint B.1) */}
+      <Sheet
+        isOpen={Boolean(bimiDrawerDomain)}
+        onClose={() => setBimiDrawerDomain(null)}
+        title={`Sender Avatar & BIMI (${bimiDrawerDomain?.domainName})`}
+        description="Configure BIMI (Brand Indicators for Message Identification) to display your verified logo as an inbox avatar in Gmail and Apple Mail."
+        width="lg"
+      >
+        <form onSubmit={handleSaveBimi} className="space-y-4">
+          {/* DMARC Readiness Inspection Card */}
+          <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase text-zinc-400">DMARC Policy Check</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                dmarcReport?.bimiReady
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+              }`}>
+                {checkingDmarc ? 'Inspecting DNS...' : `Policy: ${dmarcReport?.policy?.toUpperCase() || 'NONE'}`}
+              </span>
+            </div>
+            <p className="text-zinc-600">
+              {dmarcReport?.bimiReady
+                ? '✓ Your DMARC policy is strictly enforced (quarantine/reject). You are eligible to publish a BIMI avatar.'
+                : '⚠ BIMI requires DMARC to be published with p=quarantine or p=reject. Publish or update _dmarc TXT record in your DNS provider.'}
+            </p>
+            {dmarcReport?.record && (
+              <p className="font-mono text-[10px] text-zinc-400 bg-white p-2 rounded border border-zinc-100 truncate">
+                {dmarcReport.record}
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <div>
+              <label className="block text-xs font-bold text-zinc-800">Enable BIMI Avatar for Domain</label>
+              <p className="text-[11px] text-zinc-400">Instructs mail clients to load your brand SVG logo.</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={bimiEnabled}
+              disabled={!dmarcReport?.bimiReady}
+              onChange={(e) => setBimiEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-0 disabled:opacity-40"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">SVG Tiny 1.2 Logo URL</label>
+            <input
+              type="url"
+              value={bimiSvgUrl}
+              onChange={(e) => setBimiSvgUrl(e.target.value)}
+              placeholder="https://yourdomain.com/.well-known/bimi-logo.svg"
+              className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+            />
+            <p className="mt-1 text-[10px] text-zinc-400">Must be an SVG Tiny P/S format file under 32KB hosted on HTTPS.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">VMC Certificate URL (Optional - For Gmail Checkmark)</label>
+            <input
+              type="url"
+              value={bimiVmcUrl}
+              onChange={(e) => setBimiVmcUrl(e.target.value)}
+              placeholder="https://yourdomain.com/.well-known/bimi-vmc.pem"
+              className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+            />
+            <p className="mt-1 text-[10px] text-zinc-400">Issued by DigiCert or Entrust for registered trademarks (optional for Yahoo/Fastmail).</p>
+          </div>
+
+          <div className="pt-4 flex justify-end gap-3 border-t border-zinc-100">
+            <button
+              type="button"
+              onClick={() => setBimiDrawerDomain(null)}
+              className="px-4 py-2 text-xs font-bold text-zinc-600 hover:text-zinc-900"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingBimi}
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50 transition-colors shadow-xs"
+            >
+              {savingBimi ? 'Saving...' : 'Save BIMI Settings'}
             </button>
           </div>
         </form>
@@ -329,15 +465,29 @@ export const Domains: React.FC = () => {
                       }`}>
                         Inbound Replies: {isReceivingConfirmed ? 'VERIFIED' : 'PENDING CODE'}
                       </span>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                        domain.bimiEnabled ? 'bg-purple-50 text-purple-700 border border-purple-200' : 'bg-zinc-100 text-zinc-500'
+                      }`}>
+                        BIMI Avatar: {domain.bimiEnabled ? 'ACTIVE' : 'OFF'}
+                      </span>
                       <span className="text-zinc-500 ml-2">Bounce rate: {(domain.bounceRate * 100).toFixed(1)}%</span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDeleteDomain(domain.id)}
-                    className="px-3 py-1.5 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-bold transition-colors"
-                  >
-                    Delete Domain
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleOpenBimiDrawer(domain)}
+                      className="px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-bold transition-colors"
+                    >
+                      BIMI Avatar
+                    </button>
+                    <button
+                      onClick={() => handleDeleteDomain(domain.id)}
+                      className="px-3 py-1.5 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-bold transition-colors"
+                    >
+                      Delete Domain
+                    </button>
+                  </div>
                 </div>
 
                 {/* Send Test Retry Helper */}
