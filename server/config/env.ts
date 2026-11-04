@@ -23,6 +23,10 @@ const envSchema = z.object({
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('midas-aem.vercel.app'),
 
+  // Bounded Send Sweep Ceiling & Cooldown Guard (Phase A - Initiative 2)
+  SEND_SWEEP_BATCH_SIZE: z.string().default('5').transform(Number),
+  SENDER_COOLDOWN_SECONDS: z.string().default('20').transform(Number),
+
   APP_URL: z.string().url().optional(),
 
   // Clerk Authentication Keys

@@ -1,4 +1,5 @@
 import { AIProvider } from '../types';
+import { isReasoningModel } from '../utils/modelClassifier';
 
 export class GeminiProvider implements AIProvider {
   readonly name = 'gemini';
@@ -16,10 +17,22 @@ export class GeminiProvider implements AIProvider {
     const key = this.apiKey || process.env.GEMINI_API_KEY;
     if (!key) throw new Error('GEMINI_API_KEY is not configured');
 
-    // Clean model string: if user inputted "google/gemini-1.5-flash", strip "google/" for direct Gemini API
     let cleanModel = (this.model || 'gemini-1.5-flash').trim();
     if (cleanModel.startsWith('google/')) {
       cleanModel = cleanModel.replace('google/', '');
+    }
+
+    const isThinking = isReasoningModel('gemini', cleanModel);
+
+    // For structured copywriting tasks, disable internal thinking budget if model supports it
+    // to prevent burning output tokens on internal chain-of-thought
+    const generationConfig: Record<string, any> = {
+      temperature: 0.7,
+      maxOutputTokens: isThinking ? 4000 : 1500,
+    };
+
+    if (isThinking && cleanModel.includes('thinking')) {
+      generationConfig.thinkingConfig = { thinkingBudget: 0 };
     }
 
     const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
@@ -30,9 +43,9 @@ export class GeminiProvider implements AIProvider {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: fullPrompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
+        generationConfig,
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(25_000),
     });
 
     const rawText = await response.text();
@@ -48,7 +61,7 @@ export class GeminiProvider implements AIProvider {
     const data = JSON.parse(rawText);
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
-      throw new Error(`Gemini returned unexpected structure: ${rawText}`);
+      throw new Error(`Gemini returned an empty response. Try using "gemini-1.5-flash" or verify API key.`);
     }
     return text;
   }

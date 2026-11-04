@@ -1,4 +1,5 @@
 import { AIProvider } from '../types';
+import { isReasoningModel } from '../utils/modelClassifier';
 
 export class OpenAIProvider implements AIProvider {
   readonly name = 'openai';
@@ -21,9 +22,29 @@ export class OpenAIProvider implements AIProvider {
       cleanModel = cleanModel.replace('openai/', '');
     }
 
+    const isReasoning = isReasoningModel('openai', cleanModel);
+
     const messages = [];
-    if (system) messages.push({ role: 'system', content: system });
+    if (system && !isReasoning) {
+      messages.push({ role: 'system', content: system });
+    } else if (system && isReasoning) {
+      // o-series models recommend user-embedded instructions
+      prompt = `${system}\n\n${prompt}`;
+    }
     messages.push({ role: 'user', content: prompt });
+
+    const requestBody: Record<string, any> = {
+      model: cleanModel,
+      messages,
+    };
+
+    // o1/o3 models require max_completion_tokens and reject custom temperature
+    if (isReasoning) {
+      requestBody.max_completion_tokens = 4000;
+    } else {
+      requestBody.temperature = 0.7;
+      requestBody.max_tokens = 1500;
+    }
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -31,13 +52,8 @@ export class OpenAIProvider implements AIProvider {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${key.trim()}`,
       },
-      body: JSON.stringify({
-        model: cleanModel,
-        messages,
-        temperature: 0.7,
-        max_tokens: 1200,
-      }),
-      signal: AbortSignal.timeout(20_000),
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(25_000),
     });
 
     const rawText = await response.text();
@@ -51,6 +67,10 @@ export class OpenAIProvider implements AIProvider {
     }
 
     const data = JSON.parse(rawText);
-    return data.choices[0].message.content;
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error(`OpenAI returned empty message content for model "${cleanModel}"`);
+    }
+    return content;
   }
 }

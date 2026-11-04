@@ -1,6 +1,7 @@
 import { logger } from '../config/logger';
 import { domainService } from './domain.service';
 import { encodeOpenToken, encodeClickToken } from '../lib/tracking';
+import { emailTemplateService } from './emailTemplate.service';
 
 export class EmailService {
   private appBaseUrl(): string {
@@ -52,6 +53,10 @@ export class EmailService {
     const pixelUrl = `${baseUrl}/api/track/open/${openToken}`;
     const pixelTag = `<img src="${pixelUrl}" width="1" height="1" style="display:none!important;max-height:0;max-width:0;opacity:0;overflow:hidden" alt="" />`;
 
+    if (trackedHtml.includes('</body>')) {
+      return trackedHtml.replace('</body>', `${pixelTag}\n</body>`);
+    }
+
     return `${trackedHtml}\n${pixelTag}`;
   }
 
@@ -65,7 +70,14 @@ export class EmailService {
     senderName?: string | null,
     inReplyTo?: string | null,
     unsubscribeUrl?: string | null,
-    trackingContext?: { leadId: string; campaignId?: string | null }
+    trackingContext?: { leadId: string; campaignId?: string | null },
+    brandOptions?: {
+      brandName?: string | null;
+      brandInitials?: string | null;
+      brandColorHex?: string | null;
+      logoUrl?: string | null;
+      brandingEnabled?: boolean;
+    }
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const localPart = domain.senderLocalPart || 'hello';
@@ -74,10 +86,16 @@ export class EmailService {
 
       const { authHeader, baseUrl } = domainService.getMailgunContextForDomain(domain);
 
+      // 1. Wrap in branded card envelope if enabled
       let finalHtml = html;
+      if (brandOptions?.brandingEnabled) {
+        finalHtml = emailTemplateService.wrapInBrandTemplate(html, brandOptions);
+      }
+
+      // 2. Instrument HTML with telemetry tracking
       if (trackingContext?.leadId) {
         finalHtml = this.instrumentHtmlTracking(
-          html,
+          finalHtml,
           outboundEmailId,
           trackingContext.leadId,
           trackingContext.campaignId
@@ -96,6 +114,7 @@ export class EmailService {
       formData.append('o:tracking-opens', 'yes');
       formData.append('h:Reply-To', fromEmail);
 
+      // RFC 8058 One-Click List-Unsubscribe
       if (unsubscribeUrl) {
         formData.append('h:List-Unsubscribe', `<${unsubscribeUrl}>`);
         formData.append('h:List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');

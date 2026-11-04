@@ -72,19 +72,21 @@ model Domain {
 }
 
 model Sender {
-  id             String   @id @default(cuid())
-  domainId       String   @map("domain_id")
-  domain         Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  userId         String   @map("user_id") @db.Uuid
-  localPart      String   @map("local_part")
-  displayName    String?  @map("display_name")
-  status         String   @default("active")
-  warmupDay      Int      @default(1) @map("warmup_day")
-  dailyLimit     Int      @default(20) @map("daily_limit")
-  sentCountToday Int      @default(0) @map("sent_count_today")
-  lastSentReset  DateTime @default(now()) @map("last_sent_reset")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id               String    @id @default(cuid())
+  domainId         String    @map("domain_id")
+  domain           Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  userId           String    @map("user_id") @db.Uuid
+  localPart        String    @map("local_part")
+  displayName      String?   @map("display_name")
+  status           String    @default("active")
+  warmupDay        Int       @default(1) @map("warmup_day")
+  dailyLimit       Int       @default(20) @map("daily_limit")
+  sentCountToday   Int       @default(0) @map("sent_count_today")
+  lastSentReset    DateTime  @default(now()) @map("last_sent_reset")
+  // Cooldown tracking to prevent compounding multi-scheduler trigger bursts
+  lastDispatchedAt DateTime? @map("last_dispatched_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   campaignLinks          CampaignSender[]
   preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferredSender")
@@ -377,6 +379,12 @@ model UserSettings {
   aiApiKeyEncrypted String?  @db.Text @map("ai_api_key_encrypted")
   aiGatewayUrl      String?  @map("ai_gateway_url")
   aiIntegrations    Json?    @map("ai_integrations")
+
+  // PyrexxAI / Resend Branded Card Email Envelope Settings
+  brandColorHex     String?  @map("brand_color_hex")
+  brandInitials     String?  @map("brand_initials")
+  logoUrl           String?  @map("logo_url")
+  brandingEnabled   Boolean  @default(false) @map("branding_enabled")
 
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")

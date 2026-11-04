@@ -3,6 +3,7 @@ import { logger } from '../config/logger';
 import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
 import { ensureUnsubscribeToken, buildUnsubscribeUrl } from '../lib/unsubscribe';
+import { env } from '../config/env';
 
 export class EmailQueueService {
 
@@ -43,8 +44,13 @@ export class EmailQueueService {
   async processQueue(): Promise<{ claimed: number; sent: number; deferred: number; failed: number; skippedUnsubscribed: number }> {
     const summary = { claimed: 0, sent: 0, deferred: 0, failed: 0, skippedUnsubscribed: 0 };
     const userLimitCache = new Map<string, boolean>();
+    const userSettingsCache = new Map<string, any>();
+
+    const batchSize = env.SEND_SWEEP_BATCH_SIZE || 5; // Enforced 5-send ceiling
+    const cooldownSeconds = env.SENDER_COOLDOWN_SECONDS || 20; // 20s inter-tick guard
 
     try {
+      // 1. Recover stale stuck PROCESSING rows
       await prisma.$executeRaw`
         UPDATE "PendingEmail"
         SET status = 'PENDING'
@@ -52,7 +58,7 @@ export class EmailQueueService {
         AND updated_at < NOW() - INTERVAL '10 minutes'
       `;
 
-      // Claim rows strictly where Campaign is ACTIVE
+      // 2. Atomic claim bounded to batchSize (5)
       let emailIds: string[] = [];
       try {
         emailIds = await prisma.$transaction(async (tx) => {
@@ -63,7 +69,7 @@ export class EmailQueueService {
             AND c.status = 'ACTIVE'
             AND (p.scheduled_at IS NULL OR p.scheduled_at <= NOW())
             ORDER BY p.priority ASC, p.created_at ASC
-            LIMIT 15
+            LIMIT ${batchSize}
             FOR UPDATE OF p SKIP LOCKED
           `;
 
@@ -104,7 +110,6 @@ export class EmailQueueService {
           const campaign = pending.campaign;
           const lead = pending.lead;
 
-          // Double check campaign is active
           if (campaign.status !== 'ACTIVE') {
             await prisma.pendingEmail.update({
               where: { id: pending.id },
@@ -159,6 +164,20 @@ export class EmailQueueService {
             ? pending.preferredSender
             : activeSenders[campaign.lastDomainIndex % activeSenders.length];
 
+          // Compounding-trigger cooldown guard per sender
+          if (selectedSender.lastDispatchedAt) {
+            const msSinceLast = Date.now() - new Date(selectedSender.lastDispatchedAt).getTime();
+            if (msSinceLast < cooldownSeconds * 1000) {
+              await prisma.pendingEmail.update({
+                where: { id: pending.id },
+                data: { status: 'PENDING', scheduledAt: new Date(Date.now() + cooldownSeconds * 1000) }
+              });
+              summary.deferred++;
+              continue;
+            }
+          }
+
+          // Warmup daily reset check
           const today = new Date().toISOString().split('T')[0];
           const lastReset = new Date(selectedSender.lastSentReset).toISOString().split('T')[0];
 
@@ -175,9 +194,11 @@ export class EmailQueueService {
             });
           }
 
+          // Atomic quota reservation + update lastDispatchedAt
           const claimResult = await prisma.$queryRaw<{ id: string }[]>`
             UPDATE "Sender"
-            SET "sent_count_today" = "sent_count_today" + 1
+            SET "sent_count_today" = "sent_count_today" + 1,
+                "last_dispatched_at" = NOW()
             WHERE id = ${selectedSender.id} AND "sent_count_today" < "daily_limit"
             RETURNING id
           `;
@@ -192,9 +213,15 @@ export class EmailQueueService {
               data: { status: 'PENDING', scheduledAt: tomorrow }
             });
             summary.deferred++;
-            logger.info({ sender: `${selectedSender.localPart}@${selectedSender.domain.domainName}` }, 'Mailbox limit reached for today — deferred');
             continue;
           }
+
+          // Cache UserSettings for compliance & branding
+          if (!userSettingsCache.has(pending.userId)) {
+            const s = await prisma.userSettings.findUnique({ where: { userId: pending.userId } });
+            userSettingsCache.set(pending.userId, s);
+          }
+          const userSettings = userSettingsCache.get(pending.userId);
 
           const unsubscribeToken = await ensureUnsubscribeToken(lead.id, lead.unsubscribeToken);
           const unsubscribeUrl = buildUnsubscribeUrl(unsubscribeToken);
@@ -205,7 +232,12 @@ export class EmailQueueService {
             pending.body,
             campaign.reference,
             selectedSender.displayName || campaign.senderName,
-            unsubscribeUrl
+            unsubscribeUrl,
+            {
+              companyName: userSettings?.companyName,
+              physicalAddress: userSettings?.physicalAddress,
+              customOptOutText: userSettings?.customOptOutText,
+            }
           );
 
           const outboundRecord = await prisma.outboundEmail.create({
@@ -231,7 +263,14 @@ export class EmailQueueService {
             selectedSender.displayName || campaign.senderName,
             pending.inReplyTo,
             unsubscribeUrl,
-            { leadId: lead.id, campaignId: campaign.id }
+            { leadId: lead.id, campaignId: campaign.id },
+            {
+              brandName: userSettings?.companyName,
+              brandInitials: userSettings?.brandInitials,
+              brandColorHex: userSettings?.brandColorHex,
+              logoUrl: userSettings?.logoUrl,
+              brandingEnabled: userSettings?.brandingEnabled,
+            }
           );
 
           if (result.success) {

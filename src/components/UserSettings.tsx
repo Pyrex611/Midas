@@ -28,16 +28,27 @@ const MODEL_PRESETS: Record<string, string[]> = {
 export const UserSettings: React.FC = () => {
   const { toast } = useToast();
 
+  // Delivery Throttling State
   const [sendLimit, setSendLimit] = useState(50);
   const [sendPeriod, setSendPeriod] = useState('day');
+
+  // Legal & Postal Compliance State
   const [companyName, setCompanyName] = useState('');
   const [physicalAddress, setPhysicalAddress] = useState('');
   const [customOptOutText, setCustomOptOutText] = useState('');
 
+  // Branding Card State
+  const [brandingEnabled, setBrandingEnabled] = useState(false);
+  const [brandColorHex, setBrandColorHex] = useState('#2563EB');
+  const [brandInitials, setBrandInitials] = useState('PX');
+  const [logoUrl, setLogoUrl] = useState('');
+
+  // AI Integrations Hub State
   const [confirmedIntegrations, setConfirmedIntegrations] = useState<any[]>([]);
   const [activeAiProvider, setActiveAiProvider] = useState<string>('aigateway');
   const [activeAiModel, setActiveAiModel] = useState<string>('openai/gpt-4o-mini');
 
+  // Setup New Provider Sheet State
   const [isSetupSheetOpen, setIsSetupSheetOpen] = useState(false);
   const [newProvider, setNewProvider] = useState('aigateway');
   const [newModel, setNewModel] = useState('openai/gpt-4o-mini');
@@ -45,6 +56,7 @@ export const UserSettings: React.FC = () => {
   const [newGatewayUrl, setNewGatewayUrl] = useState('https://ai-gateway.vercel.sh/v1');
   const [verifyingNewProvider, setVerifyingNewProvider] = useState(false);
 
+  // Add Model to Existing Provider State
   const [addingModelForProvider, setAddingModelForProvider] = useState<string | null>(null);
   const [customModelInput, setCustomModelInput] = useState('');
   const [verifyingNewModel, setVerifyingNewModel] = useState(false);
@@ -58,9 +70,7 @@ export const UserSettings: React.FC = () => {
       setActiveAiProvider(res.data?.activeProvider || 'aigateway');
       setActiveAiModel(res.data?.activeModel || 'openai/gpt-4o-mini');
       setConfirmedIntegrations(res.data?.integrations || []);
-    } catch {
-      // Handled
-    }
+    } catch {}
   };
 
   useEffect(() => {
@@ -72,6 +82,10 @@ export const UserSettings: React.FC = () => {
           setCompanyName(res.data.companyName ?? '');
           setPhysicalAddress(res.data.physicalAddress ?? '');
           setCustomOptOutText(res.data.customOptOutText ?? '');
+          setBrandingEnabled(Boolean(res.data.brandingEnabled));
+          setBrandColorHex(res.data.brandColorHex || '#2563EB');
+          setBrandInitials(res.data.brandInitials || 'PX');
+          setLogoUrl(res.data.logoUrl || '');
         }
       })
       .catch(() => {
@@ -177,8 +191,12 @@ export const UserSettings: React.FC = () => {
         companyName: companyName.trim() || null,
         physicalAddress: physicalAddress.trim() || null,
         customOptOutText: customOptOutText.trim() || null,
+        brandColorHex: brandColorHex.trim() || '#2563EB',
+        brandInitials: brandInitials.trim() || 'PX',
+        logoUrl: logoUrl.trim() || null,
+        brandingEnabled,
       });
-      toast.success('Workspace settings updated', 'Preferences Saved');
+      toast.success('Workspace preferences & branding saved', 'Preferences Saved');
     } catch {
       toast.error('Failed to update workspace settings', 'Save Error');
     } finally {
@@ -192,7 +210,7 @@ export const UserSettings: React.FC = () => {
 
   return (
     <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-10">
-      {/* AI ENGINE STUDIO */}
+      {/* 1. AI ENGINE STUDIO */}
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-zinc-100">
           <div>
@@ -370,7 +388,119 @@ export const UserSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* DELIVERY THROTTLING */}
+      {/* 
+        2. BRAND IDENTITY & PYREXXAI CARD ENVELOPE STYLING (Initiative 3)
+      */}
+      <div className="space-y-6 pt-6 border-t border-zinc-100">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-black text-zinc-900 tracking-tight">Brand Identity & Card Envelope</h3>
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                brandingEnabled ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-zinc-100 text-zinc-500'
+              }`}>
+                {brandingEnabled ? 'ACTIVE ENVELOPE' : 'PLAIN HTML (OFF)'}
+              </span>
+            </div>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Wraps outbound email copy in a modern, centered 580px card envelope with custom brand badge, accent callouts, and clean CAN-SPAM styling.
+            </p>
+          </div>
+
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={brandingEnabled}
+              onChange={(e) => setBrandingEnabled(e.target.checked)}
+            />
+            <div className="w-11 h-6 bg-zinc-200 rounded-full peer peer-checked:bg-blue-600 transition-colors" />
+            <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5" />
+          </label>
+        </div>
+
+        {brandingEnabled && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-zinc-50 border border-zinc-200 rounded-2xl animate-in fade-in duration-150">
+            <div className="space-y-4 md:col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Brand Initials</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={brandInitials}
+                    onChange={(e) => setBrandInitials(e.target.value.toUpperCase())}
+                    placeholder="e.g. PX"
+                    className="w-full px-3.5 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold font-mono focus:outline-none focus:border-blue-500"
+                  />
+                  <p className="mt-1 text-[10px] text-zinc-400">Renders inside the 32x32 rounded header badge.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Brand Accent Color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={brandColorHex}
+                      onChange={(e) => setBrandColorHex(e.target.value)}
+                      className="w-10 h-9 p-0.5 border border-zinc-200 rounded-lg cursor-pointer bg-white"
+                    />
+                    <input
+                      type="text"
+                      value={brandColorHex}
+                      onChange={(e) => setBrandColorHex(e.target.value)}
+                      placeholder="#2563EB"
+                      className="flex-1 px-3.5 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-mono font-bold focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Brand Logo Image URL (Optional)</label>
+                  <input
+                    type="url"
+                    value={logoUrl}
+                    onChange={(e) => setLogoUrl(e.target.value)}
+                    placeholder="https://yourdomain.com/logo.png"
+                    className="w-full px-3.5 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+                  />
+                  <p className="mt-1 text-[10px] text-zinc-400">If set, overrides initials badge with your direct logo image.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Interactive Envelope Preview */}
+            <div className="space-y-1">
+              <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Envelope Live Preview</span>
+              <div className="p-4 bg-zinc-200/60 rounded-xl border border-zinc-300/80">
+                <div className="bg-white rounded-xl border border-zinc-200 p-4 shadow-sm space-y-3 text-[11px]">
+                  <div className="flex items-center gap-2 pb-2 border-b border-zinc-100">
+                    <div
+                      style={{ backgroundColor: brandColorHex }}
+                      className="w-6 h-6 rounded-md text-white font-extrabold text-[10px] flex items-center justify-center"
+                    >
+                      {brandInitials || 'PX'}
+                    </div>
+                    <span className="font-bold text-zinc-900">{companyName || 'PyrexxAI'}</span>
+                  </div>
+                  <p className="text-zinc-700 leading-relaxed font-sans">
+                    Hi Sarah,<br /><br />
+                    I noticed your clinic faces missed calls after hours...
+                  </p>
+                  <div className="p-2 bg-blue-50/80 border-l-2 border-blue-600 rounded-r text-[10px] text-blue-900">
+                    Next step: 15-minute consultation
+                  </div>
+                  <div className="pt-2 border-t border-zinc-100 text-[9px] text-zinc-400">
+                    Unsubscribe · {physicalAddress || '100 Market St, San Francisco'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3. DELIVERY THROTTLING */}
       <div className="space-y-4 pt-6 border-t border-zinc-100">
         <div>
           <h3 className="text-base font-black text-zinc-900 tracking-tight">Global Delivery Throttling</h3>
@@ -410,7 +540,7 @@ export const UserSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* CAN-SPAM LEGAL & POSTAL COMPLIANCE */}
+      {/* 4. CAN-SPAM LEGAL & POSTAL COMPLIANCE */}
       <div className="space-y-4 pt-6 border-t border-zinc-100">
         <div>
           <div className="flex items-center gap-2">

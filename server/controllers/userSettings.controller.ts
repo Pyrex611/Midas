@@ -11,10 +11,9 @@ export const getSettings = async (req: AuthRequest, res: Response, next: NextFun
     });
 
     if (!settings) {
-      return res.json({ hasAiApiKey: false });
+      return res.json({ hasAiApiKey: false, brandingEnabled: false });
     }
 
-    // Never return raw or encrypted API keys
     const { aiApiKeyEncrypted, ...safeSettings } = settings;
     res.json({
       ...safeSettings,
@@ -42,6 +41,10 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       aiApiKey,
       clearAiApiKey,
       aiGatewayUrl,
+      brandColorHex,
+      brandInitials,
+      logoUrl,
+      brandingEnabled,
     } = req.body;
 
     const data: Record<string, any> = {};
@@ -73,6 +76,20 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       data.customOptOutText = typeof customOptOutText === 'string' ? customOptOutText.trim() : null;
     }
 
+    // Branding Settings
+    if (brandColorHex !== undefined) {
+      data.brandColorHex = typeof brandColorHex === 'string' ? brandColorHex.trim() : null;
+    }
+    if (brandInitials !== undefined) {
+      data.brandInitials = typeof brandInitials === 'string' ? brandInitials.trim().slice(0, 4) : null;
+    }
+    if (logoUrl !== undefined) {
+      data.logoUrl = typeof logoUrl === 'string' ? logoUrl.trim() : null;
+    }
+    if (brandingEnabled !== undefined) {
+      data.brandingEnabled = Boolean(brandingEnabled);
+    }
+
     // AI Provider & Model Configuration
     if (aiProvider !== undefined) {
       if (aiProvider !== null && !VALID_PROVIDERS.includes(aiProvider)) {
@@ -89,7 +106,6 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       data.aiGatewayUrl = typeof aiGatewayUrl === 'string' && aiGatewayUrl.trim() ? aiGatewayUrl.trim() : null;
     }
 
-    // Encrypt custom API key if provided
     if (aiApiKey && typeof aiApiKey === 'string' && aiApiKey.trim()) {
       data.aiApiKeyEncrypted = encrypt(aiApiKey.trim());
     } else if (clearAiApiKey === true) {
