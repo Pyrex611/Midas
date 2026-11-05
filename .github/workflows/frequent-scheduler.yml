@@ -1,13 +1,12 @@
 name: midas-frequent-scheduler
 
 # Vercel's Hobby (free) plan only allows a cron job to run ONCE PER DAY.
-# The email queue, lead-upload verification, and follow-up sequencer all
-# need to run far more often than that to feel "live". This workflow calls
-# the same /api/cron/* endpoints on a tight interval, entirely free, using
-# GitHub's own scheduler. It runs ALONGSIDE Vercel's native crons (both are
-# safe to run concurrently — see server/services/emailQueue.service.ts and
-# leadQueue.service.ts for why). Once the project is on Vercel Pro, this
-# workflow can be disabled (or kept as a redundant backup).
+# The email queue, lead-upload verification, follow-up sequencer, and
+# Town Crier newsletter drainer all need to run far more often than that
+# to feel "live". This workflow calls the same /api/cron/* endpoints on a
+# tight interval, entirely free, using GitHub's own scheduler. It runs
+# ALONGSIDE Vercel's native crons and QStash schedules (all are safe to
+# run concurrently due to DB-backed CronLocks and atomic claims).
 on:
   schedule:
     # GitHub's minimum interval is 5 minutes, and under load it can lag by a
@@ -36,3 +35,9 @@ jobs:
           curl -sf -X POST "${{ secrets.MIDAS_BASE_URL }}/api/cron/followups" \
             -H "Authorization: Bearer ${{ secrets.MIDAS_CRON_SECRET }}" \
             || echo "followups trigger failed (non-fatal, will retry in 5 min)"
+
+      - name: Process newsletter broadcast queue
+        run: |
+          curl -sf -X POST "${{ secrets.MIDAS_BASE_URL }}/api/cron/newsletter" \
+            -H "Authorization: Bearer ${{ secrets.MIDAS_CRON_SECRET }}" \
+            || echo "newsletter trigger failed (non-fatal, will retry in 5 min)"

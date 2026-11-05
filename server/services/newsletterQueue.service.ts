@@ -1,21 +1,29 @@
+import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
+import { senderService } from './sender.service';
+import { notificationService } from './notification.service';
 import { env } from '../config/env';
 
 export class NewsletterQueueService {
-  /**
-   * Drains up to 5 pending newsletter items per tick.
-   * Strictly adheres to the non-bulk bounded queue invariant.
-   */
+  private async ensureRecipientUnsubscribeToken(recipientId: string, currentToken: string | null): Promise<string> {
+    if (currentToken && currentToken.trim()) return currentToken.trim();
+    const token = crypto.randomBytes(16).toString('hex');
+    await prisma.newsletterRecipient.update({
+      where: { id: recipientId },
+      data: { unsubscribeToken: token },
+    });
+    return token;
+  }
+
   async processNewsletterQueue(): Promise<{ claimed: number; sent: number; deferred: number; failed: number }> {
     const summary = { claimed: 0, sent: 0, deferred: 0, failed: 0 };
     const batchSize = env.SEND_SWEEP_BATCH_SIZE || 5;
     const cooldownSeconds = env.SENDER_COOLDOWN_SECONDS || 20;
 
     try {
-      // 1. Recover stale processing rows
       await prisma.$executeRaw`
         UPDATE "NewsletterQueueItem"
         SET status = 'PENDING'
@@ -23,7 +31,6 @@ export class NewsletterQueueService {
         AND created_at < NOW() - INTERVAL '10 minutes'
       `;
 
-      // 2. Atomic claim bounded to 5 items
       let itemIds: string[] = [];
       try {
         itemIds = await prisma.$transaction(async (tx) => {
@@ -77,8 +84,7 @@ export class NewsletterQueueService {
             continue;
           }
 
-          // Fetch active senders for user
-          const activeSenders = await prisma.sender.findMany({
+          const rawSenders = await prisma.sender.findMany({
             where: {
               userId: item.userId,
               status: 'active',
@@ -87,7 +93,7 @@ export class NewsletterQueueService {
             include: { domain: true },
           });
 
-          if (activeSenders.length === 0) {
+          if (rawSenders.length === 0) {
             await prisma.newsletterQueueItem.update({
               where: { id: item.id },
               data: { status: 'PENDING' },
@@ -96,14 +102,17 @@ export class NewsletterQueueService {
             continue;
           }
 
-          // FAIR-SHARE SENDER ALLOCATION:
-          // Reserve 50% of each sender's daily capacity for cold campaign outreach
+          const activeSenders = await Promise.all(
+            rawSenders.map(s => senderService.ensureSenderDailyReset(s.id))
+          );
+
           const eligibleSender = activeSenders.find(s => {
+            if (!s) return false;
             const fairShareCap = Math.max(5, Math.floor(s.dailyLimit * 0.5));
             const isUnderCap = s.sentCountToday < fairShareCap;
             const isCooledDown = !s.lastDispatchedAt || (Date.now() - new Date(s.lastDispatchedAt).getTime()) >= cooldownSeconds * 1000;
             return isUnderCap && isCooledDown;
-          }) || activeSenders.find(s => s.sentCountToday < s.dailyLimit);
+          }) || activeSenders.find(s => s && s.sentCountToday < s.dailyLimit);
 
           if (!eligibleSender) {
             await prisma.newsletterQueueItem.update({
@@ -114,7 +123,6 @@ export class NewsletterQueueService {
             continue;
           }
 
-          // Atomic quota reservation on sender
           const claimResult = await prisma.$queryRaw<{ id: string }[]>`
             UPDATE "Sender"
             SET "sent_count_today" = "sent_count_today" + 1,
@@ -134,9 +142,9 @@ export class NewsletterQueueService {
 
           const userSettings = await prisma.userSettings.findUnique({ where: { userId: item.userId } });
 
-          // Personalize newsletter copy
+          const token = await this.ensureRecipientUnsubscribeToken(recipient.id, recipient.unsubscribeToken);
           const appBaseUrl = process.env.APP_URL || 'https://midas-aem.vercel.app';
-          const unsubUrl = `${appBaseUrl.replace(/\/$/, '')}/api/public/town-crier/recipients/${recipient.id}/unsubscribe`;
+          const unsubUrl = `${appBaseUrl.replace(/\/$/, '')}/api/public/town-crier/recipients/unsubscribe/${token}`;
 
           const { subject, body } = personalisationService.personalise(
             recipient,
@@ -179,7 +187,6 @@ export class NewsletterQueueService {
             });
             summary.sent++;
 
-            // Check if broadcast is complete
             const remaining = await prisma.newsletterQueueItem.count({
               where: { broadcastId: item.broadcastId, status: { in: ['PENDING', 'PROCESSING'] } },
             });
@@ -188,6 +195,15 @@ export class NewsletterQueueService {
                 where: { id: item.broadcastId },
                 data: { status: 'COMPLETED' },
               });
+
+              // Notification: Broadcast Delivery Completed
+              notificationService.create({
+                userId: item.userId,
+                title: '📣 Newsletter Broadcast Completed',
+                message: `"${item.broadcast.subject}" has finished sending to all queued subscribers.`,
+                type: 'SUCCESS',
+                link: '/town-crier',
+              }).catch(() => {});
             } else {
               await prisma.newsletterBroadcast.update({
                 where: { id: item.broadcastId },
@@ -220,10 +236,6 @@ export class NewsletterQueueService {
     return summary;
   }
 
-  /**
-   * Queues a broadcast for send by fanning out rows into NewsletterQueueItem.
-   * NEVER sends emails directly.
-   */
   async queueBroadcast(broadcastId: string, userId: string): Promise<{ queuedCount: number }> {
     const broadcast = await prisma.newsletterBroadcast.findFirst({
       where: { id: broadcastId, userId },
@@ -239,7 +251,6 @@ export class NewsletterQueueService {
       throw new Error('No active subscribed recipients found for this broadcast');
     }
 
-    // Chunked insertion of 500 rows/batch
     const CHUNK_SIZE = 500;
     let inserted = 0;
 
@@ -262,7 +273,6 @@ export class NewsletterQueueService {
       data: { status: 'QUEUED', queuedAt: new Date() },
     });
 
-    // Opportunistically run 1 bounded tick
     this.processNewsletterQueue().catch(err => {
       logger.error({ err }, 'Opportunistic newsletter queue sweep failed');
     });

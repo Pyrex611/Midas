@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { sequenceAgentService } from './sequenceAgent.service';
+import { notificationService } from './notification.service';
 
 export class WebhooksService {
 
@@ -25,28 +26,74 @@ export class WebhooksService {
     if (!outboundEmailId) return;
 
     const eventType = eventData.event;
+    const now = new Date(eventData.timestamp * 1000);
 
     try {
+      // -------------------------------------------------------------
+      // BRANCH A: TOWN CRIER NEWSLETTER BROADCAST DELIVERABILITY
+      // -------------------------------------------------------------
+      if (outboundEmailId.startsWith('tc_')) {
+        const queueItemId = outboundEmailId.replace(/^tc_/, '');
+        const queueItem = await prisma.newsletterQueueItem.findUnique({
+          where: { id: queueItemId },
+        });
+        if (!queueItem) return;
+
+        const domainId = eventData['user-variables']?.domain_id;
+        let resolvedDomainId = domainId;
+
+        if (!resolvedDomainId && eventData.domain) {
+          const domain = await prisma.domain.findFirst({
+            where: { domainName: eventData.domain },
+            select: { id: true },
+          });
+          resolvedDomainId = domain?.id;
+        }
+
+        if (eventType === 'bounced' || eventType === 'failed') {
+          await prisma.newsletterQueueItem.update({
+            where: { id: queueItemId },
+            data: { status: 'FAILED', error: eventData['delivery-status']?.message || 'Bounced' },
+          });
+          await prisma.newsletterRecipient.update({
+            where: { id: queueItem.recipientId },
+            data: { status: 'BOUNCED' },
+          });
+          if (resolvedDomainId) {
+            await this.updateDomainHealth(resolvedDomainId, 'bounce');
+          }
+          logger.warn({ queueItemId, recipientId: queueItem.recipientId }, 'Newsletter delivery bounced');
+        } else if (eventType === 'complained') {
+          await prisma.newsletterRecipient.update({
+            where: { id: queueItem.recipientId },
+            data: { status: 'UNSUBSCRIBED' },
+          });
+          if (resolvedDomainId) {
+            await this.updateDomainHealth(resolvedDomainId, 'complaint');
+          }
+          logger.warn({ queueItemId, recipientId: queueItem.recipientId }, 'Newsletter spam complaint recorded');
+        }
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // BRANCH B: COLD CAMPAIGN OUTREACH DELIVERABILITY (OutboundEmail)
+      // -------------------------------------------------------------
       const email = await prisma.outboundEmail.findUnique({
         where: { id: outboundEmailId },
-        include: { domain: true }
+        include: { domain: true },
       });
       if (!email) return;
 
-      const now = new Date(eventData.timestamp * 1000);
-
       if (eventType === 'opened' && !email.openedAt) {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { openedAt: now } });
-      }
-      else if (eventType === 'clicked' && !email.clickedAt) {
+      } else if (eventType === 'clicked' && !email.clickedAt) {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { clickedAt: now } });
-      }
-      else if (eventType === 'bounced' || eventType === 'failed') {
+      } else if (eventType === 'bounced' || eventType === 'failed') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { bouncedAt: now, status: 'BOUNCED' } });
         await prisma.lead.update({ where: { id: email.leadId }, data: { outreachStatus: 'BOUNCED', status: 'BOUNCED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'bounce');
-      }
-      else if (eventType === 'complained') {
+      } else if (eventType === 'complained') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { spamComplaint: true } });
         await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED', outreachStatus: 'UNSUBSCRIBED' } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'complaint');
@@ -57,7 +104,7 @@ export class WebhooksService {
   }
 
   private async updateDomainHealth(domainId: string, type: 'bounce' | 'complaint') {
-    const domain = await prisma.domain.findUnique({ where: { id: domainId }});
+    const domain = await prisma.domain.findUnique({ where: { id: domainId } });
     if (!domain) return;
 
     const totalSent = await prisma.outboundEmail.count({
@@ -71,6 +118,16 @@ export class WebhooksService {
     if (newBounceRate >= 0.05 || newComplaintRate >= 0.003) {
       status = 'paused_health_risk';
       logger.warn({ domainId, newBounceRate, newComplaintRate }, 'AUTO-PAUSE KILLSWITCH ACTIVATED FOR DOMAIN');
+
+      // Urgent Deliverability Notification Trigger
+      notificationService.create({
+        userId: domain.userId,
+        title: `🚨 Deliverability Circuit Breaker Tripped: ${domain.domainName}`,
+        message: `Sending has been automatically halted. Bounce rate is ${(newBounceRate * 100).toFixed(1)}% (threshold 5%) or complaint rate is ${(newComplaintRate * 100).toFixed(2)}% (threshold 0.3%).`,
+        type: 'URGENT',
+        link: '/domains',
+        metadata: { domainId, newBounceRate, newComplaintRate },
+      }).catch(() => {});
     }
 
     await prisma.domain.update({
@@ -79,7 +136,7 @@ export class WebhooksService {
         bounceRate: newBounceRate,
         complaintRate: newComplaintRate,
         status,
-      }
+      },
     });
   }
 
@@ -108,6 +165,14 @@ export class WebhooksService {
               data: { receivingConfirmedAt: new Date() },
             });
             logger.info({ domainId: domain.id, domainName: recipientDomainName }, 'Domain receiving test confirmed');
+
+            notificationService.create({
+              userId: domain.userId,
+              title: `Domain Receiving Confirmed: ${domain.domainName}`,
+              message: `Inbound route verified successfully. Prospects can now reply directly to your mailboxes.`,
+              type: 'SUCCESS',
+              link: '/domains',
+            }).catch(() => {});
           }
           return;
         }
@@ -193,7 +258,6 @@ export class WebhooksService {
         data: { repliedAt: new Date() }
       });
 
-      // Atomically increment Draft.replyCount to track copy conversion
       if (originalEmail.draftId) {
         await prisma.draft.update({
           where: { id: originalEmail.draftId },
@@ -201,13 +265,23 @@ export class WebhooksService {
         }).catch(() => {});
       }
 
-      await prisma.lead.update({
+      const lead = await prisma.lead.update({
         where: { id: originalEmail.leadId },
         data: {
           outreachStatus: 'REPLIED',
           status: 'REPLIED'
         }
       });
+
+      // Immediate Push Notification: Prospect Replied
+      notificationService.create({
+        userId: originalEmail.userId,
+        title: `📩 New Reply from ${lead.name}`,
+        message: `${subject}: "${body.slice(0, 90).replace(/\s+/g, ' ')}..."`,
+        type: 'INBOUND_REPLY',
+        link: `/inbox`,
+        metadata: { leadId: lead.id, emailId: inboundEmail.id },
+      }).catch(() => {});
 
       // Route through State-Graph Engine
       if (originalEmail.campaignId) {
@@ -220,7 +294,6 @@ export class WebhooksService {
           logger.error({ err: err?.message }, '[STATE-GRAPH] Transition execution failure');
         });
       }
-
     } catch (error) {
       logger.error({ error }, 'Failed to process inbound Mailgun email');
     }

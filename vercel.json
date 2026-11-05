@@ -6,7 +6,8 @@
   "crons": [
     { "path": "/api/cron/queue", "schedule": "0 9 * * *" },
     { "path": "/api/cron/leads", "schedule": "0 10 * * *" },
-    { "path": "/api/cron/followups", "schedule": "0 11 * * *" }
+    { "path": "/api/cron/followups", "schedule": "0 11 * * *" },
+    { "path": "/api/cron/newsletter", "schedule": "0 12 * * *" }
   ],
   "functions": {
     "api/**/*.ts": { "maxDuration": 30 }

@@ -53,7 +53,7 @@ export const Domains: React.FC = () => {
   const [newSenderDisplayName, setNewSenderDisplayName] = useState('');
   const [addingSender, setAddingSender] = useState(false);
 
-  // BIMI Management Drawer State (Sprint B.1)
+  // BIMI / Sender Avatar Management Drawer
   const [bimiDrawerDomain, setBimiDrawerDomain] = useState<Domain | null>(null);
   const [bimiEnabled, setBimiEnabled] = useState(false);
   const [bimiSvgUrl, setBimiSvgUrl] = useState('');
@@ -103,11 +103,11 @@ export const Domains: React.FC = () => {
         bimiSvgUrl,
         bimiVmcUrl,
       });
-      toast.success('BIMI & avatar settings updated', 'BIMI Configured');
+      toast.success('BIMI inbox avatar settings updated successfully', 'Avatar Configured');
       setBimiDrawerDomain(null);
       await fetchDomains();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Could not save BIMI settings'), 'BIMI Error');
+      toast.error(getErrorMessage(err, 'Could not save BIMI avatar settings'), 'BIMI Error');
     } finally {
       setSavingBimi(false);
     }
@@ -223,6 +223,7 @@ export const Domains: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
+      {/* Top Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -235,12 +236,32 @@ export const Domains: React.FC = () => {
             </button>
           </div>
           <p className="text-xs text-zinc-500 mt-1">
-            Manage authenticated network sending domains, Mailgun credentials, sender avatars, and mailbox quotas.
+            Manage authenticated sending domains, Mailgun keys, sender avatars (BIMI), and mailbox quotas.
           </p>
         </div>
 
         <div className="text-xs font-bold bg-zinc-100 text-zinc-700 px-3 py-1.5 rounded-xl border border-zinc-200">
           {domains.length} Domain{domains.length === 1 ? '' : 's'} Active
+        </div>
+      </div>
+
+      {/* 
+        SENDER AVATAR & INBOX BRANDING GUIDE CALLOUT
+        Solves discovery friction by explicitly explaining where and how avatar configuration works.
+      */}
+      <div className="p-5 bg-gradient-to-r from-purple-50/70 via-white to-blue-50/60 border border-purple-200/70 rounded-2xl shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-2xl bg-purple-600 text-white flex items-center justify-center font-bold text-lg flex-shrink-0 shadow-sm">
+            🖼️
+          </div>
+          <div>
+            <h3 className="text-xs font-black uppercase tracking-wider text-purple-900">
+              Sender Avatars in Gmail & Apple Mail (BIMI)
+            </h3>
+            <p className="text-xs text-zinc-600 mt-0.5 max-w-2xl leading-relaxed">
+              Want your official company logo to appear as the circular sender avatar beside your cold emails in prospect inboxes? Configure **BIMI Avatar Settings** on any domain with an enforced DMARC policy.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -332,12 +353,12 @@ export const Domains: React.FC = () => {
         </form>
       </Sheet>
 
-      {/* BIMI & SENDER AVATAR MANAGEMENT DRAWER (Sprint B.1) */}
+      {/* BIMI & SENDER AVATAR MANAGEMENT DRAWER */}
       <Sheet
         isOpen={Boolean(bimiDrawerDomain)}
         onClose={() => setBimiDrawerDomain(null)}
-        title={`Sender Avatar & BIMI (${bimiDrawerDomain?.domainName})`}
-        description="Configure BIMI (Brand Indicators for Message Identification) to display your verified logo as an inbox avatar in Gmail and Apple Mail."
+        title={`Sender Avatar & BIMI Logo: ${bimiDrawerDomain?.domainName}`}
+        description="Configure BIMI to display your official brand logo beside emails sent from this domain in Gmail, Yahoo, and Apple Mail."
         width="lg"
       >
         <form onSubmit={handleSaveBimi} className="space-y-4">
@@ -355,8 +376,8 @@ export const Domains: React.FC = () => {
             </div>
             <p className="text-zinc-600">
               {dmarcReport?.bimiReady
-                ? '✓ Your DMARC policy is strictly enforced (quarantine/reject). You are eligible to publish a BIMI avatar.'
-                : '⚠ BIMI requires DMARC to be published with p=quarantine or p=reject. Publish or update _dmarc TXT record in your DNS provider.'}
+                ? '✓ Your DMARC policy is strictly enforced (quarantine/reject). This domain is fully eligible for an inbox avatar logo.'
+                : '⚠ BIMI requires DMARC to be published with p=quarantine or p=reject. Update your _dmarc DNS TXT record to enable avatar support.'}
             </p>
             {dmarcReport?.record && (
               <p className="font-mono text-[10px] text-zinc-400 bg-white p-2 rounded border border-zinc-100 truncate">
@@ -367,7 +388,7 @@ export const Domains: React.FC = () => {
 
           <div className="flex items-center justify-between pt-2">
             <div>
-              <label className="block text-xs font-bold text-zinc-800">Enable BIMI Avatar for Domain</label>
+              <label className="block text-xs font-bold text-zinc-800">Enable Inbox Avatar for Domain</label>
               <p className="text-[11px] text-zinc-400">Instructs mail clients to load your brand SVG logo.</p>
             </div>
             <input
@@ -403,6 +424,19 @@ export const Domains: React.FC = () => {
             <p className="mt-1 text-[10px] text-zinc-400">Issued by DigiCert or Entrust for registered trademarks (optional for Yahoo/Fastmail).</p>
           </div>
 
+          {bimiSvgUrl && (
+            <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl flex items-center gap-3">
+              <span className="text-[10px] font-bold uppercase text-zinc-400">Avatar Preview:</span>
+              <img
+                src={bimiSvgUrl}
+                alt="Avatar Preview"
+                className="w-8 h-8 rounded-full border border-zinc-300 object-cover bg-white"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+              <span className="text-xs font-mono text-zinc-600">{bimiSvgUrl.split('/').pop()}</span>
+            </div>
+          )}
+
           <div className="pt-4 flex justify-end gap-3 border-t border-zinc-100">
             <button
               type="button"
@@ -416,7 +450,7 @@ export const Domains: React.FC = () => {
               disabled={savingBimi}
               className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50 transition-colors shadow-xs"
             >
-              {savingBimi ? 'Saving...' : 'Save BIMI Settings'}
+              {savingBimi ? 'Saving...' : 'Save Avatar Settings'}
             </button>
           </div>
         </form>
@@ -434,7 +468,7 @@ export const Domains: React.FC = () => {
           </div>
           <h3 className="text-base font-bold text-zinc-900">No sending domains connected</h3>
           <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-            Connect an authenticated domain to enable autonomous sending and mailbox rotation.
+            Connect an authenticated domain to enable autonomous sending, mailbox rotation, and custom inbox avatars.
           </p>
           <button
             onClick={() => setIsConnectDrawerOpen(true)}
@@ -452,40 +486,66 @@ export const Domains: React.FC = () => {
             return (
               <div key={domain.id} className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
                 <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="text-xl font-bold text-zinc-900 tracking-tight font-mono">{domain.domainName}</h3>
-                    <div className="flex items-center gap-2 mt-2 text-xs flex-wrap">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-3">
+                      {/* Avatar Logo Preview if enabled */}
+                      {domain.bimiEnabled && domain.bimiSvgUrl ? (
+                        <img
+                          src={domain.bimiSvgUrl}
+                          alt={`${domain.domainName} Avatar`}
+                          className="w-7 h-7 rounded-full border border-purple-300 object-cover bg-white shadow-2xs"
+                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-zinc-100 text-zinc-400 font-bold text-xs flex items-center justify-center border border-zinc-200">
+                          {domain.domainName.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+
+                      <h3 className="text-xl font-bold text-zinc-900 tracking-tight font-mono">{domain.domainName}</h3>
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-2 text-xs flex-wrap pt-1">
                       <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
                         domain.sendTestPassedAt ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                       }`}>
-                        Outbound Sending: {domain.sendTestPassedAt ? 'VERIFIED' : 'FAILED'}
+                        Outbound: {domain.sendTestPassedAt ? 'VERIFIED' : 'FAILED'}
                       </span>
                       <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
                         isReceivingConfirmed ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
                       }`}>
-                        Inbound Replies: {isReceivingConfirmed ? 'VERIFIED' : 'PENDING CODE'}
+                        Replies: {isReceivingConfirmed ? 'VERIFIED' : 'PENDING CODE'}
                       </span>
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        domain.bimiEnabled ? 'bg-purple-50 text-purple-700 border border-purple-200' : 'bg-zinc-100 text-zinc-500'
+                        domain.bimiEnabled
+                          ? 'bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs'
+                          : 'bg-zinc-100 text-zinc-500'
                       }`}>
-                        BIMI Avatar: {domain.bimiEnabled ? 'ACTIVE' : 'OFF'}
+                        Avatar: {domain.bimiEnabled ? 'ACTIVE (BIMI)' : 'NOT CONFIGURED'}
                       </span>
                       <span className="text-zinc-500 ml-2">Bounce rate: {(domain.bounceRate * 100).toFixed(1)}%</span>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {/* ELEVATED AVATAR ACTION BUTTON */}
                     <button
                       onClick={() => handleOpenBimiDrawer(domain)}
-                      className="px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-bold transition-colors"
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs ${
+                        domain.bimiEnabled
+                          ? 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
+                          : 'bg-purple-600 hover:bg-purple-700 text-white'
+                      }`}
                     >
-                      BIMI Avatar
+                      <span>🖼️</span>
+                      <span>{domain.bimiEnabled ? 'Manage Avatar' : 'Setup Avatar'}</span>
                     </button>
+
                     <button
                       onClick={() => handleDeleteDomain(domain.id)}
                       className="px-3 py-1.5 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-bold transition-colors"
                     >
-                      Delete Domain
+                      Delete
                     </button>
                   </div>
                 </div>

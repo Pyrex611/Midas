@@ -27,7 +27,8 @@ export class EmailService {
           cleanUrl.startsWith('mailto:') ||
           cleanUrl.startsWith('tel:') ||
           cleanUrl.startsWith('#') ||
-          cleanUrl.includes('/api/unsubscribe/')
+          cleanUrl.includes('/api/unsubscribe/') ||
+          cleanUrl.includes('/api/public/town-crier/recipients/')
         ) {
           return match;
         }
@@ -109,6 +110,9 @@ export class EmailService {
       formData.append('text', text);
       formData.append('html', finalHtml);
       formData.append('v:outbound_email_id', outboundEmailId);
+      if (domain.id) {
+        formData.append('v:domain_id', domain.id);
+      }
       formData.append('o:tracking', 'yes');
       formData.append('o:tracking-clicks', 'yes');
       formData.append('o:tracking-opens', 'yes');

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { userAPI, domainAPI, aiAPI } from '../../services/api';
+import { userAPI, domainAPI, aiAPI, notificationAPI } from '../../services/api';
 import { CommandPalette } from '../CommandPalette';
 import { useToast } from '../../context/ToastContext';
 import { Icons } from '../../lib/icons';
@@ -20,6 +20,13 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [activeDomainsCount, setActiveDomainsCount] = useState(0);
+
+  // Notifications State
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [notifMenuOpen, setNotifMenuOpen] = useState(false);
+  const notifMenuRef = useRef<HTMLDivElement | null>(null);
+  const seenNotifIdsRef = useRef<Set<string>>(new Set());
 
   // Global AI Switcher Popover State
   const [aiMenuOpen, setAiMenuOpen] = useState(false);
@@ -44,6 +51,42 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     setHasOperatorClearance(Boolean(token && expiresAt > Date.now()));
   };
 
+  // Notification Polling & Desktop Push Trigger
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await notificationAPI.get(15);
+      const items: any[] = res.data?.notifications || [];
+      const unread: number = res.data?.unreadCount || 0;
+
+      setNotifications(items);
+      setUnreadNotifCount(unread);
+
+      // Trigger Browser Desktop Push if permitted
+      if (
+        typeof window !== 'undefined' &&
+        'Notification' in window &&
+        Notification.permission === 'granted'
+      ) {
+        items.forEach((notif) => {
+          if (!notif.isRead && !seenNotifIdsRef.current.has(notif.id)) {
+            seenNotifIdsRef.current.add(notif.id);
+            const isFresh = Date.now() - new Date(notif.createdAt).getTime() < 3 * 60 * 1000;
+            if (isFresh) {
+              const desktopAlert = new Notification(notif.title, {
+                body: notif.message,
+                icon: '/vite.svg',
+              });
+              desktopAlert.onclick = () => {
+                window.focus();
+                if (notif.link) navigate(notif.link);
+              };
+            }
+          }
+        });
+      }
+    } catch {}
+  }, [navigate]);
+
   useEffect(() => {
     userAPI
       .getProfile()
@@ -52,6 +95,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
     checkClearanceState();
     fetchAIState();
+    fetchNotifications();
 
     domainAPI
       .getAll()
@@ -60,12 +104,16 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         setActiveDomainsCount(active);
       })
       .catch(() => {});
-  }, [location.pathname]);
+
+    const notifInterval = setInterval(fetchNotifications, 25000);
+    return () => clearInterval(notifInterval);
+  }, [location.pathname, fetchNotifications]);
 
   useEffect(() => {
     const handleSyncEvents = () => {
       checkClearanceState();
       fetchAIState();
+      fetchNotifications();
     };
 
     window.addEventListener('operator_auth_changed', handleSyncEvents);
@@ -77,17 +125,62 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       window.removeEventListener('ai_config_changed', handleSyncEvents);
       window.removeEventListener('storage', handleSyncEvents);
     };
-  }, []);
+  }, [fetchNotifications]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (aiMenuRef.current && !aiMenuRef.current.contains(e.target as Node)) {
         setAiMenuOpen(false);
       }
+      if (notifMenuRef.current && !notifMenuRef.current.contains(e.target as Node)) {
+        setNotifMenuOpen(false);
+      }
     };
-    if (aiMenuOpen) document.addEventListener('mousedown', handleClickOutside);
+    if (aiMenuOpen || notifMenuOpen) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [aiMenuOpen]);
+  }, [aiMenuOpen, notifMenuOpen]);
+
+  const requestDesktopNotificationPermission = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return toast.warning('Your browser does not support desktop notifications', 'Not Supported');
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        toast.success('Desktop alerts enabled for new prospect replies', 'Alerts Enabled');
+        new Notification('Midas Desktop Alerts Active', {
+          body: 'You will receive immediate popups when leads reply or deliverability alerts trigger.',
+          icon: '/vite.svg',
+        });
+      } else {
+        toast.info('Desktop notifications were disabled or dismissed', 'Notifications');
+      }
+    } catch {
+      toast.error('Could not request notification permissions', 'Error');
+    }
+  };
+
+  const handleMarkNotifRead = async (id: string, link?: string) => {
+    try {
+      await notificationAPI.markRead(id);
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+      setUnreadNotifCount((prev) => Math.max(0, prev - 1));
+      if (link) {
+        setNotifMenuOpen(false);
+        navigate(link);
+      }
+    } catch {}
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await notificationAPI.markAllRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      setUnreadNotifCount(0);
+      toast.success('All notifications marked as read', 'Cleared');
+    } catch {}
+  };
 
   const handleQuickSwitchAI = async (provider: string, model: string) => {
     try {
@@ -339,7 +432,98 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {/* 
+              NOTIFICATION BELL & REAL-TIME ALERTS CENTER
+            */}
+            <div className="relative" ref={notifMenuRef}>
+              <button
+                onClick={() => setNotifMenuOpen(!notifMenuOpen)}
+                className="relative p-2 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 transition-colors"
+                title="Notifications & Live Alerts"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                </svg>
+
+                {unreadNotifCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600 text-[9px] font-black text-white shadow-xs animate-in zoom-in-50">
+                    {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+                  </span>
+                )}
+              </button>
+
+              {notifMenuOpen && (
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-zinc-200 p-2 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-2">
+                  <div className="px-3 py-2 border-b border-zinc-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-black text-zinc-900">Priority Notifications</p>
+                      <p className="text-[10px] text-zinc-400">Prospect replies & deliverability health</p>
+                    </div>
+                    {unreadNotifCount > 0 && (
+                      <button
+                        onClick={handleMarkAllRead}
+                        className="text-[10px] font-bold text-blue-600 hover:underline"
+                      >
+                        Mark all as read
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Browser Push Permission Banner */}
+                  {typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted' && (
+                    <div className="p-2.5 bg-blue-50/70 border border-blue-200/60 rounded-xl flex items-center justify-between text-xs text-blue-900">
+                      <span className="text-[11px] font-medium">Get desktop alert popups?</span>
+                      <button
+                        onClick={requestDesktopNotificationPermission}
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold shadow-2xs"
+                      >
+                        Enable Alerts
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Notification Items List */}
+                  <div className="max-h-80 overflow-y-auto space-y-1 p-1">
+                    {notifications.length === 0 ? (
+                      <p className="text-xs text-zinc-400 text-center py-8">No notifications recorded yet.</p>
+                    ) : (
+                      notifications.map((n) => (
+                        <div
+                          key={n.id}
+                          onClick={() => handleMarkNotifRead(n.id, n.link)}
+                          className={`p-3 rounded-xl border text-left cursor-pointer transition-colors space-y-1 ${
+                            n.isRead
+                              ? 'bg-white border-transparent hover:bg-zinc-50'
+                              : n.type === 'URGENT'
+                              ? 'bg-rose-50/70 border-rose-200/80 hover:bg-rose-50'
+                              : 'bg-blue-50/50 border-blue-200/60 hover:bg-blue-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                              n.type === 'URGENT'
+                                ? 'text-rose-700'
+                                : n.type === 'INBOUND_REPLY'
+                                ? 'text-blue-700'
+                                : 'text-zinc-600'
+                            }`}>
+                              {n.type === 'INBOUND_REPLY' ? 'Prospect Reply' : n.type}
+                            </span>
+                            <span className="text-[10px] text-zinc-400">
+                              {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-zinc-900">{n.title}</p>
+                          <p className="text-[11px] text-zinc-600 line-clamp-2">{n.message}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* AI Quick Switcher Dropdown */}
             <div className="relative" ref={aiMenuRef}>
               <button

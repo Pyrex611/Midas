@@ -29,11 +29,11 @@ model User {
   memberships    CampaignMember[]
   invitesSent    CampaignInvite[]
 
-  // Town Crier Relations (Sprint B.2)
   apiKeys              ApiKey[]
   newsletterRecipients NewsletterRecipient[]
   newsletterBroadcasts NewsletterBroadcast[]
   newsletterQueueItems NewsletterQueueItem[]
+  notifications        Notification[]
 
   @@map("users")
 }
@@ -383,14 +383,12 @@ model UserSettings {
   physicalAddress   String?  @map("physical_address")
   customOptOutText  String?  @map("custom_opt_out_text")
   
-  // UI-Configurable AI Provider & Model Settings
   aiProvider        String?  @map("ai_provider")
   aiModel           String?  @map("ai_model")
   aiApiKeyEncrypted String?  @db.Text @map("ai_api_key_encrypted")
   aiGatewayUrl      String?  @map("ai_gateway_url")
   aiIntegrations    Json?    @map("ai_integrations")
 
-  // PyrexxAI / Resend Branded Card Email Envelope Settings
   brandColorHex     String?  @map("brand_color_hex")
   brandInitials     String?  @map("brand_initials")
   logoUrl           String?  @map("logo_url")
@@ -400,7 +398,7 @@ model UserSettings {
   updatedAt         DateTime @updatedAt @map("updated_at")
 }
 
-// --- TOWN CRIER NEWSLETTER BROADCAST MODELS (Phase B / Sprint B.2) ---
+// --- TOWN CRIER NEWSLETTER & AUDIENCE MODELS ---
 
 model ApiKey {
   id         String    @id @default(cuid())
@@ -425,7 +423,9 @@ model NewsletterRecipient {
   email            String
   name             String?
   status           String   @default("SUBSCRIBED") // SUBSCRIBED | UNSUBSCRIBED | BOUNCED
-  source           String   @default("ui")         // ui | api | import
+  source           String   @default("ui")         // ui | api | import | form_embed
+  tags             String[] @default([])
+  metadata         Json?
   unsubscribeToken String?  @unique @map("unsubscribe_token")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
@@ -435,15 +435,16 @@ model NewsletterRecipient {
 }
 
 model NewsletterBroadcast {
-  id         String                @id @default(cuid())
-  userId     String                @map("user_id") @db.Uuid
-  user       User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject    String
-  body       String
-  status     String                @default("DRAFT") // DRAFT | QUEUED | SENDING | COMPLETED
-  queuedAt   DateTime?             @map("queued_at")
-  createdAt  DateTime              @default(now()) @map("created_at")
-  queueItems NewsletterQueueItem[]
+  id          String                @id @default(cuid())
+  userId      String                @map("user_id") @db.Uuid
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject     String
+  body        String
+  status      String                @default("DRAFT") // DRAFT | QUEUED | SENDING | COMPLETED
+  tagFilter   String?               @map("tag_filter")
+  queuedAt    DateTime?             @map("queued_at")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  queueItems  NewsletterQueueItem[]
 
   @@index([userId])
 }
@@ -462,6 +463,22 @@ model NewsletterQueueItem {
   @@index([status, createdAt])
   @@index([broadcastId])
   @@index([userId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("INFO") // INFO | SUCCESS | WARNING | URGENT | INBOUND_REPLY
+  link      String?
+  isRead    Boolean  @default(false) @map("is_read")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
 }
 
 model CronLock {

@@ -55,6 +55,12 @@ export const configAPI = {
   get: () => api.get('/config'),
 };
 
+export const notificationAPI = {
+  get: (limit = 20) => api.get('/notifications', { params: { limit } }),
+  markRead: (id: string) => api.patch(`/notifications/${id}/read`),
+  markAllRead: () => api.post('/notifications/read-all'),
+};
+
 export const leadAPI = {
   upload: (file: File, verifyEmails: boolean = false, columnMapping?: string, campaignId?: string) => {
     const formData = new FormData();
@@ -197,30 +203,31 @@ export const senderAPI = {
 };
 
 export const townCrierAPI = {
-  // API Keys
+  getAnalytics: () => api.get('/town-crier/analytics'),
   getApiKeys: () => api.get('/town-crier/api-keys'),
   createApiKey: (label: string, scopes?: string[]) => api.post('/town-crier/api-keys', { label, scopes }),
   revokeApiKey: (id: string) => api.delete(`/town-crier/api-keys/${id}`),
 
-  // Broadcasts
   getBroadcasts: () => api.get('/town-crier/broadcasts'),
-  createBroadcast: (data: { subject: string; body: string }) => api.post('/town-crier/broadcasts', data),
+  createBroadcast: (data: { subject: string; body: string; tagFilter?: string }) => api.post('/town-crier/broadcasts', data),
   queueBroadcast: (id: string) => api.post(`/town-crier/broadcasts/${id}/queue`),
   deleteBroadcast: (id: string) => api.delete(`/town-crier/broadcasts/${id}`),
   triggerSweep: () => api.post('/town-crier/sweep'),
 
-  // Recipients
-  getRecipients: (page = 1, pageSize = 20, status?: string) =>
-    api.get('/town-crier/recipients', { params: { page, pageSize, status } }),
-  addRecipient: (email: string, name?: string) => api.post('/town-crier/recipients', { email, name }),
-  importRecipients: (file: File) => {
+  getRecipients: (page = 1, pageSize = 20, status?: string, tag?: string) =>
+    api.get('/town-crier/recipients', { params: { page, pageSize, status, tag } }),
+  addRecipient: (email: string, name?: string, tags?: string[]) => api.post('/town-crier/recipients', { email, name, tags }),
+  importRecipients: (file: File, tag?: string) => {
     const formData = new FormData();
     formData.append('file', file);
+    if (tag) formData.append('tag', tag);
     return api.post('/town-crier/recipients/import', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
   deleteRecipient: (id: string) => api.delete(`/town-crier/recipients/${id}`),
+  exportRecipients: (format: 'json' | 'csv' = 'json', status?: string) =>
+    api.get('/town-crier/recipients/export', { params: { format, status }, responseType: format === 'csv' ? 'blob' : 'json' }),
 };
 
 export const adminAPI = {

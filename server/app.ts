@@ -20,6 +20,7 @@ import adminRoutes from './routes/admin.routes';
 import trackRoutes from './routes/track.routes';
 import townCrierRoutes from './routes/townCrier.routes';
 import townCrierPublicRoutes from './routes/public/townCrier.public.routes';
+import notificationRoutes from './routes/notification.routes';
 
 const app = express();
 
@@ -69,14 +70,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use(requestTimeoutGuard(15000));
 
-// Public Webhooks & Tracking Endpoints
+// Public Webhooks, Tracking & Embeddable Scripts
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/unsubscribe', unsubscribeRoutes);
 app.use('/api/track', trackRoutes);
 
-// Public Town Crier Subscriber API (Guarded by API Key)
+// Public Town Crier Universal Subscriber API & Widget
 app.use('/api/public/town-crier', townCrierPublicRoutes);
 
 // Protected Core Application Routes (Clerk Authed)
@@ -89,6 +90,7 @@ app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/town-crier', requireAuth, townCrierRoutes);
+app.use('/api/notifications', requireAuth, notificationRoutes);
 app.use('/api/admin', requireAuth, adminRoutes);
 
 export default app;

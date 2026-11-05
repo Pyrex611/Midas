@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
 import { emailService } from '../services/email.service';
+import { senderService } from '../services/sender.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../config/logger';
 
@@ -53,12 +54,10 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'A sending mailbox (senderId) is required' });
     }
 
-    const sender = await prisma.sender.findFirst({
-      where: { id: senderId, userId, status: 'active' },
-      include: { domain: true },
-    });
+    // 1. Ensure daily midnight warmup reset runs before checking quota
+    let sender = await senderService.ensureSenderDailyReset(senderId);
 
-    if (!sender || sender.domain.status !== 'active') {
+    if (!sender || sender.userId !== userId || sender.status !== 'active' || sender.domain?.status !== 'active') {
       return res.status(400).json({ error: 'The selected sending mailbox or its domain is not active' });
     }
 
@@ -107,7 +106,7 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'This recipient has previously unsubscribed and cannot be emailed' });
     }
 
-    // Atomic quota claim
+    // 2. Atomic quota slot reservation
     const claimResult = await prisma.$queryRaw<{ id: string }[]>`
       UPDATE "Sender"
       SET "sent_count_today" = "sent_count_today" + 1,
@@ -120,7 +119,6 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'This sender mailbox has reached its daily quota limit. Please select another sender.' });
     }
 
-    // Resolve user branding preferences
     const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
 
     const outboundRecord = await prisma.outboundEmail.create({
@@ -227,9 +225,12 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
       include: { senders: { where: { status: 'active' }, take: 1 } },
     });
 
-    if (!domain) return res.status(400).json({ error: 'Associated domain is not active' });
+    if (!domain || domain.senders.length === 0) {
+      return res.status(400).json({ error: 'Associated domain has no active senders' });
+    }
 
-    const sender = domain.senders[0];
+    let sender = domain.senders[0];
+    sender = await senderService.ensureSenderDailyReset(sender.id);
     const localPart = sender?.localPart || 'hello';
 
     const subject = latestInbound.subject.startsWith('Re:') ? latestInbound.subject : `Re: ${latestInbound.subject}`;

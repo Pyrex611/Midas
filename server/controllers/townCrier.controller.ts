@@ -10,6 +10,79 @@ import { logger } from '../config/logger';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
+// --- Audience Analytics & Metrics ---
+
+export const getTownCrierAnalytics = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [totalSubscribers, unsubscribedCount, netGrowth30d, broadcastsCount, totalSent] = await Promise.all([
+      prisma.newsletterRecipient.count({ where: { userId, status: 'SUBSCRIBED' } }),
+      prisma.newsletterRecipient.count({ where: { userId, status: 'UNSUBSCRIBED' } }),
+      prisma.newsletterRecipient.count({ where: { userId, createdAt: { gte: thirtyDaysAgo } } }),
+      prisma.newsletterBroadcast.count({ where: { userId } }),
+      prisma.newsletterQueueItem.count({ where: { userId, status: 'SENT' } }),
+    ]);
+
+    const churnRate = totalSubscribers > 0
+      ? Number(((unsubscribedCount / (totalSubscribers + unsubscribedCount)) * 100).toFixed(1))
+      : 0;
+
+    res.json({
+      totalSubscribers,
+      unsubscribedCount,
+      netGrowth30d,
+      broadcastsCount,
+      totalSent,
+      churnRate,
+    });
+  } catch (error) { next(error); }
+};
+
+// --- Contacts Export (JSON or CSV Attachment) ---
+
+export const exportRecipients = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const format = (req.query.format as string || 'json').toLowerCase();
+    const status = req.query.status as string;
+
+    const where: any = { userId };
+    if (status && status !== 'all') where.status = status;
+
+    const recipients = await prisma.newsletterRecipient.findMany({
+      where,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        status: true,
+        source: true,
+        tags: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (format === 'csv') {
+      const header = 'id,email,name,status,source,tags,created_at\n';
+      const rows = recipients.map(r => {
+        const cleanTags = (r.tags || []).join(';');
+        const safeName = (r.name || '').replace(/"/g, '""');
+        return `"${r.id}","${r.email}","${safeName}","${r.status}","${r.source}","${cleanTags}","${r.createdAt.toISOString()}"`;
+      }).join('\n');
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="subscribers-export.csv"');
+      return res.send(header + rows);
+    }
+
+    res.json(recipients);
+  } catch (error) { next(error); }
+};
+
 // --- API Key Management ---
 
 export const listApiKeys = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -88,9 +161,11 @@ export const listRecipients = async (req: AuthRequest, res: Response, next: Next
     const page = parseInt(req.query.page as string || '1', 10);
     const pageSize = parseInt(req.query.pageSize as string || '20', 10);
     const status = req.query.status as string;
+    const tag = req.query.tag as string;
 
     const where: any = { userId };
     if (status && status !== 'all') where.status = status;
+    if (tag && tag.trim()) where.tags = { has: tag.trim() };
 
     const [recipients, total] = await Promise.all([
       prisma.newsletterRecipient.findMany({
@@ -112,7 +187,7 @@ export const listRecipients = async (req: AuthRequest, res: Response, next: Next
 export const addRecipient = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { email, name } = req.body;
+    const { email, name, tags } = req.body;
 
     const cleanEmail = (email || '').trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -120,6 +195,7 @@ export const addRecipient = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     const unsubToken = crypto.randomBytes(16).toString('hex');
+    const cleanTags = Array.isArray(tags) ? tags.map(t => String(t).trim()).filter(Boolean) : [];
 
     const recipient = await prisma.newsletterRecipient.upsert({
       where: {
@@ -131,6 +207,7 @@ export const addRecipient = async (req: AuthRequest, res: Response, next: NextFu
       update: {
         name: name ? String(name).trim() : undefined,
         status: 'SUBSCRIBED',
+        tags: cleanTags.length > 0 ? cleanTags : undefined,
       },
       create: {
         userId,
@@ -138,6 +215,7 @@ export const addRecipient = async (req: AuthRequest, res: Response, next: NextFu
         name: name ? String(name).trim() : null,
         source: 'ui',
         status: 'SUBSCRIBED',
+        tags: cleanTags,
         unsubscribeToken: unsubToken,
       },
     });
@@ -158,20 +236,22 @@ export const importRecipients = [
       const rows = parsed.data as any[];
 
       const blocklist = await prisma.blocklist.findMany({ where: { userId } });
+      const defaultTag = typeof req.body.tag === 'string' && req.body.tag.trim() ? [req.body.tag.trim()] : [];
 
-      const validRecipients: { email: string; name: string | null; userId: string; source: string; status: string; unsubscribeToken: string }[] = [];
+      const validRecipients: any[] = [];
 
       for (const row of rows) {
         const keys = Object.keys(row);
         const emailKey = keys.find(k => /email/i.test(k));
         const nameKey = keys.find(k => /^(full ?name|name)$/i.test(k));
+        const tagsKey = keys.find(k => /tags?/i.test(k));
 
         const email = emailKey ? String(row[emailKey] || '').trim().toLowerCase() : '';
         const name = nameKey ? String(row[nameKey] || '').trim() : null;
+        const rowTags = tagsKey && row[tagsKey] ? String(row[tagsKey]).split(/[,;]/).map(t => t.trim()).filter(Boolean) : defaultTag;
 
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
 
-        // Check suppression blocklist
         const isBlocked = blocklist.some(b => {
           const pattern = b.pattern.replace(/^\*@?/, '').replace(/^@/, '');
           return email === pattern || email.endsWith('@' + pattern) || email.endsWith('.' + pattern);
@@ -184,6 +264,7 @@ export const importRecipients = [
           userId,
           source: 'import',
           status: 'SUBSCRIBED',
+          tags: rowTags,
           unsubscribeToken: crypto.randomBytes(16).toString('hex'),
         });
       }
@@ -192,11 +273,11 @@ export const importRecipients = [
       const CHUNK = 500;
       for (let i = 0; i < validRecipients.length; i += CHUNK) {
         const batch = validRecipients.slice(i, i + CHUNK);
-        const res = await prisma.newsletterRecipient.createMany({
+        const r = await prisma.newsletterRecipient.createMany({
           data: batch,
           skipDuplicates: true,
         });
-        insertedCount += res.count;
+        insertedCount += r.count;
       }
 
       res.status(201).json({ success: true, totalRows: rows.length, importedCount: insertedCount });
@@ -254,7 +335,7 @@ export const listBroadcasts = async (req: AuthRequest, res: Response, next: Next
 export const createBroadcast = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { subject, body } = req.body;
+    const { subject, body, tagFilter } = req.body;
 
     if (!subject?.trim() || !body?.trim()) {
       return res.status(400).json({ error: 'Subject and body are required' });
@@ -266,6 +347,7 @@ export const createBroadcast = async (req: AuthRequest, res: Response, next: Nex
         subject: subject.trim(),
         body: body.trim(),
         status: 'DRAFT',
+        tagFilter: tagFilter?.trim() || null,
       },
     });
 

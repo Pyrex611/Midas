@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { userSettingsAPI, aiAPI } from '../services/api';
 import { Sheet } from './common/Sheet';
 import { useToast } from '../context/ToastContext';
+import { Link } from 'react-router-dom';
 
 const MODEL_PRESETS: Record<string, string[]> = {
   aigateway: [
@@ -37,7 +38,7 @@ export const UserSettings: React.FC = () => {
   const [physicalAddress, setPhysicalAddress] = useState('');
   const [customOptOutText, setCustomOptOutText] = useState('');
 
-  // Branding Card State
+  // Branding Card & Logo State
   const [brandingEnabled, setBrandingEnabled] = useState(false);
   const [brandColorHex, setBrandColorHex] = useState('#2563EB');
   const [brandInitials, setBrandInitials] = useState('PX');
@@ -389,21 +390,21 @@ export const UserSettings: React.FC = () => {
       </div>
 
       {/* 
-        2. BRAND IDENTITY & PYREXXAI CARD ENVELOPE STYLING (Initiative 3)
+        2. SENDER LOGO, AVATARS & EMAIL BRAND IDENTITY
       */}
       <div className="space-y-6 pt-6 border-t border-zinc-100">
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-black text-zinc-900 tracking-tight">Brand Identity & Card Envelope</h3>
+              <h3 className="text-base font-black text-zinc-900 tracking-tight">Sender Logo & Email Brand Avatar</h3>
               <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
                 brandingEnabled ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-zinc-100 text-zinc-500'
               }`}>
-                {brandingEnabled ? 'ACTIVE ENVELOPE' : 'PLAIN HTML (OFF)'}
+                {brandingEnabled ? 'CARD LOGO ACTIVE' : 'PLAIN HTML (OFF)'}
               </span>
             </div>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Wraps outbound email copy in a modern, centered 580px card envelope with custom brand badge, accent callouts, and clean CAN-SPAM styling.
+              Wraps outbound emails in a centered 580px card envelope with your custom logo or brand initials badge.
             </p>
           </div>
 
@@ -419,12 +420,31 @@ export const UserSettings: React.FC = () => {
           </label>
         </div>
 
+        {/* Informational Link to Domain Inbox Avatar (BIMI) */}
+        <div className="p-4 bg-purple-50/60 border border-purple-200/70 rounded-2xl flex items-center justify-between text-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-lg">🖼️</span>
+            <div>
+              <p className="font-bold text-purple-950">Looking to set your Gmail / Apple Mail circular inbox avatar?</p>
+              <p className="text-purple-800 text-[11px] opacity-90">
+                Inbox avatars are governed at the domain level through **BIMI** (requires DMARC p=quarantine/reject).
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/domains"
+            className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-colors whitespace-nowrap shadow-2xs"
+          >
+            Manage Domain Avatars →
+          </Link>
+        </div>
+
         {brandingEnabled && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-zinc-50 border border-zinc-200 rounded-2xl animate-in fade-in duration-150">
             <div className="space-y-4 md:col-span-2">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Brand Initials</label>
+                  <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Brand Avatar Initials</label>
                   <input
                     type="text"
                     maxLength={4}
@@ -433,7 +453,7 @@ export const UserSettings: React.FC = () => {
                     placeholder="e.g. PX"
                     className="w-full px-3.5 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold font-mono focus:outline-none focus:border-blue-500"
                   />
-                  <p className="mt-1 text-[10px] text-zinc-400">Renders inside the 32x32 rounded header badge.</p>
+                  <p className="mt-1 text-[10px] text-zinc-400">Renders inside the 32x32 rounded header avatar badge.</p>
                 </div>
 
                 <div>
@@ -456,7 +476,7 @@ export const UserSettings: React.FC = () => {
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Brand Logo Image URL (Optional)</label>
+                  <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Direct Brand Logo Image URL</label>
                   <input
                     type="url"
                     value={logoUrl}
@@ -464,7 +484,7 @@ export const UserSettings: React.FC = () => {
                     placeholder="https://yourdomain.com/logo.png"
                     className="w-full px-3.5 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
                   />
-                  <p className="mt-1 text-[10px] text-zinc-400">If set, overrides initials badge with your direct logo image.</p>
+                  <p className="mt-1 text-[10px] text-zinc-400">If set, overrides initials badge with your direct company logo image.</p>
                 </div>
               </div>
             </div>
@@ -475,12 +495,21 @@ export const UserSettings: React.FC = () => {
               <div className="p-4 bg-zinc-200/60 rounded-xl border border-zinc-300/80">
                 <div className="bg-white rounded-xl border border-zinc-200 p-4 shadow-sm space-y-3 text-[11px]">
                   <div className="flex items-center gap-2 pb-2 border-b border-zinc-100">
-                    <div
-                      style={{ backgroundColor: brandColorHex }}
-                      className="w-6 h-6 rounded-md text-white font-extrabold text-[10px] flex items-center justify-center"
-                    >
-                      {brandInitials || 'PX'}
-                    </div>
+                    {logoUrl ? (
+                      <img
+                        src={logoUrl}
+                        alt="Logo Preview"
+                        className="w-6 h-6 rounded-md object-cover"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    ) : (
+                      <div
+                        style={{ backgroundColor: brandColorHex }}
+                        className="w-6 h-6 rounded-md text-white font-extrabold text-[10px] flex items-center justify-center"
+                      >
+                        {brandInitials || 'PX'}
+                      </div>
+                    )}
                     <span className="font-bold text-zinc-900">{companyName || 'PyrexxAI'}</span>
                   </div>
                   <p className="text-zinc-700 leading-relaxed font-sans">
