@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+interface CommandAction {
+  label: string;
+  path: string;
+  category: string;
+  keywords?: string;
+}
+
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
@@ -28,16 +35,25 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
 
   if (!isOpen) return null;
 
-  const actions = [
-    { label: '📊 View Campaigns', path: '/campaigns', category: 'Navigation' },
-    { label: '📥 Open Unified Inbox', path: '/inbox', category: 'Navigation' },
-    { label: '📋 View All Leads', path: '/leads', category: 'Navigation' },
-    { label: '🌐 Manage Sending Domains', path: '/domains', category: 'Infrastructure' },
-    { label: '👤 User Profile & Settings', path: '/profile', category: 'Account' },
-    ...(isAdmin ? [{ label: '🛡️ Platform Admin Dashboard', path: '/admin', category: 'Administration' }] : []),
+  const actions: CommandAction[] = [
+    { label: '📊 View Campaigns', path: '/campaigns', category: 'Navigation', keywords: 'sequences outreach emails cold sales' },
+    { label: '📥 Open Unified Inbox', path: '/inbox', category: 'Navigation', keywords: 'replies unread triage messages conversations' },
+    { label: '📋 View All Leads', path: '/leads', category: 'Navigation', keywords: 'contacts prospects list data imports' },
+    { label: '🌐 Manage Sending Domains', path: '/domains', category: 'Infrastructure', keywords: 'domains mailboxes mailgun senders dmarc bimi' },
+    { label: '🖼️ Sender Avatar & BIMI Logo (Inbox Avatars)', path: '/domains', category: 'Infrastructure', keywords: 'avatar logo bimi icon photo picture brand image' },
+    { label: '📣 Town Crier Newsletter Hub', path: '/town-crier', category: 'Marketing', keywords: 'broadcasts newsletter subscribers gongs embed widget' },
+    { label: '📖 Developer Docs & API Guide', path: '/docs', category: 'Documentation', keywords: 'docs api guide sdk developer documentation manual integration help cli' },
+    { label: '🔑 Developer API Keys (Workspace)', path: '/profile?tab=apiKeys', category: 'Developer', keywords: 'api keys secret token midas_live developer credentials' },
+    { label: '⚡ Outbound Webhooks (CRM Sync)', path: '/profile?tab=webhooks', category: 'Developer', keywords: 'webhooks crm hubspot salesforce events integration' },
+    { label: '👤 User Profile & Delivery Throttling', path: '/profile?tab=settings', category: 'Account', keywords: 'settings limits quotas profile user password' },
+    ...(isAdmin ? [{ label: '🛡️ Platform Admin Dashboard', path: '/admin', category: 'Administration', keywords: 'admin operator circuit breaker clearance' }] : []),
   ];
 
-  const filtered = actions.filter((a) => a.label.toLowerCase().includes(query.toLowerCase()));
+  const q = query.toLowerCase().trim();
+  const filtered = actions.filter((a) => {
+    if (!q) return true;
+    return a.label.toLowerCase().includes(q) || (a.keywords || '').toLowerCase().includes(q);
+  });
 
   const handleSelect = (path: string) => {
     navigate(path);
@@ -57,7 +73,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search commands, campaigns, or routes..."
+            placeholder="Search commands, docs, or destinations (e.g. 'docs', 'api keys', 'gongs')..."
             className="w-full py-4 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none"
             autoFocus
           />
@@ -68,7 +84,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
 
         <div className="max-h-80 overflow-y-auto p-2 space-y-1">
           {filtered.length === 0 ? (
-            <p className="p-4 text-xs text-center text-zinc-400">No matching commands found.</p>
+            <p className="p-4 text-xs text-center text-zinc-400">No matching commands or destinations found.</p>
           ) : (
             filtered.map((item, idx) => (
               <button

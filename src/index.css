@@ -9,3 +9,36 @@
     -moz-osx-font-smoothing: grayscale;
   }
 }
+
+/* Publication-Grade Print / PDF Export Stylesheet */
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  aside, header, nav, .no-print {
+    display: none !important;
+  }
+
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  section {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    margin-bottom: 24px !important;
+  }
+
+  pre, code {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    border: 1px solid #d4d4d8 !important;
+    background-color: #f4f4f5 !important;
+    color: #18181b !important;
+  }
+}

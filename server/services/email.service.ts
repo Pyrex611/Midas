@@ -1,7 +1,7 @@
 import { logger } from '../config/logger';
 import { domainService } from './domain.service';
 import { encodeOpenToken, encodeClickToken } from '../lib/tracking';
-import { emailTemplateService } from './emailTemplate.service';
+import { emailTemplateService, BrandEnvelopeOptions } from './emailTemplate.service';
 
 export class EmailService {
   private appBaseUrl(): string {
@@ -72,13 +72,7 @@ export class EmailService {
     inReplyTo?: string | null,
     unsubscribeUrl?: string | null,
     trackingContext?: { leadId: string; campaignId?: string | null },
-    brandOptions?: {
-      brandName?: string | null;
-      brandInitials?: string | null;
-      brandColorHex?: string | null;
-      logoUrl?: string | null;
-      brandingEnabled?: boolean;
-    }
+    brandOptions?: BrandEnvelopeOptions
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const localPart = domain.senderLocalPart || 'hello';
@@ -87,9 +81,9 @@ export class EmailService {
 
       const { authHeader, baseUrl } = domainService.getMailgunContextForDomain(domain);
 
-      // 1. Wrap in branded card envelope if enabled
+      // 1. Wrap in branded card envelope or selected template style
       let finalHtml = html;
-      if (brandOptions?.brandingEnabled) {
+      if (brandOptions?.brandingEnabled || brandOptions?.templateStyle) {
         finalHtml = emailTemplateService.wrapInBrandTemplate(html, brandOptions);
       }
 

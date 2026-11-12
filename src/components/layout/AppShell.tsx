@@ -51,7 +51,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     setHasOperatorClearance(Boolean(token && expiresAt > Date.now()));
   };
 
-  // Notification Polling & Desktop Push Trigger
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await notificationAPI.get(15);
@@ -61,7 +60,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       setNotifications(items);
       setUnreadNotifCount(unread);
 
-      // Trigger Browser Desktop Push if permitted
       if (
         typeof window !== 'undefined' &&
         'Notification' in window &&
@@ -236,6 +234,15 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     { label: 'Unified Inbox', path: '/inbox', icon: <Icons.Inbox /> },
     { label: 'All Leads', path: '/leads', icon: <Icons.Leads /> },
     { label: 'Sending Domains', path: '/domains', icon: <Icons.Domains /> },
+    {
+      label: 'Developer Docs',
+      path: '/docs',
+      icon: (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+        </svg>
+      ),
+    },
     ...(isAdmin || hasOperatorClearance
       ? [{ label: 'Admin Command', path: '/admin', icon: <Icons.Admin /> }]
       : []),
@@ -251,6 +258,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     if (p === '/leads') return 'Leads Hub';
     if (p === '/domains') return 'Sending Domains';
     if (p === '/profile') return 'Account & Settings';
+    if (p === '/docs' || p === '/developers') return 'Developer Documentation';
     if (p === '/admin') return 'Operator Command';
     return 'Workspace';
   };
@@ -342,7 +350,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
       </aside>
 
-      {/* Mobile Responsive Slide-Out Drawer */}
+      {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 md:hidden flex">
           <div
@@ -405,9 +413,9 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
       )}
 
-      {/* Main Viewport & Top Header Bar */}
+      {/* Main Viewport Header */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-zinc-200/80 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20">
+        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-zinc-200/80 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20 no-print">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -433,9 +441,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* 
-              NOTIFICATION BELL & REAL-TIME ALERTS CENTER
-            */}
+            {/* Notification Bell */}
             <div className="relative" ref={notifMenuRef}>
               <button
                 onClick={() => setNotifMenuOpen(!notifMenuOpen)}
@@ -470,7 +476,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     )}
                   </div>
 
-                  {/* Browser Push Permission Banner */}
                   {typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted' && (
                     <div className="p-2.5 bg-blue-50/70 border border-blue-200/60 rounded-xl flex items-center justify-between text-xs text-blue-900">
                       <span className="text-[11px] font-medium">Get desktop alert popups?</span>
@@ -483,7 +488,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     </div>
                   )}
 
-                  {/* Notification Items List */}
                   <div className="max-h-80 overflow-y-auto space-y-1 p-1">
                     {notifications.length === 0 ? (
                       <p className="text-xs text-zinc-400 text-center py-8">No notifications recorded yet.</p>
@@ -524,7 +528,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               )}
             </div>
 
-            {/* AI Quick Switcher Dropdown */}
+            {/* AI Model Switcher */}
             <div className="relative" ref={aiMenuRef}>
               <button
                 onClick={() => setAiMenuOpen(!aiMenuOpen)}

@@ -21,6 +21,7 @@ import trackRoutes from './routes/track.routes';
 import townCrierRoutes from './routes/townCrier.routes';
 import townCrierPublicRoutes from './routes/public/townCrier.public.routes';
 import notificationRoutes from './routes/notification.routes';
+import apiKeyRoutes from './routes/apiKey.routes';
 
 const app = express();
 
@@ -91,6 +92,7 @@ app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/town-crier', requireAuth, townCrierRoutes);
 app.use('/api/notifications', requireAuth, notificationRoutes);
+app.use('/api/api-keys', requireAuth, apiKeyRoutes);
 app.use('/api/admin', requireAuth, adminRoutes);
 
 export default app;

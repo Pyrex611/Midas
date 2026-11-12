@@ -6,11 +6,10 @@ export interface GeneratedApiKey {
   keyHash: string;
 }
 
-export function generateApiKey(): GeneratedApiKey {
-  // Prefix tc_live_ + 32 random hex bytes (64 chars)
+export function generateApiKey(prefixType: 'midas' | 'tc' = 'midas'): GeneratedApiKey {
   const randomEntropy = crypto.randomBytes(32).toString('hex');
-  const plaintextKey = `tc_live_${randomEntropy}`;
-  const keyPrefix = plaintextKey.slice(0, 16); // e.g. tc_live_a1b2c3d4
+  const plaintextKey = prefixType === 'midas' ? `midas_live_${randomEntropy}` : `tc_live_${randomEntropy}`;
+  const keyPrefix = plaintextKey.slice(0, prefixType === 'midas' ? 19 : 16);
   const keyHash = hashApiKey(plaintextKey);
 
   return {

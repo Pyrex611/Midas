@@ -14,6 +14,7 @@ import { Domains } from './pages/Domains';
 import { Inbox } from './pages/Inbox';
 import { TownCrier } from './pages/TownCrier';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { DeveloperDocs } from './pages/DeveloperDocs';
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const { user, loading } = useAuth();
@@ -35,6 +36,8 @@ function AppRoutes() {
       <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
       <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+      <Route path="/docs" element={<ProtectedRoute><DeveloperDocs /></ProtectedRoute>} />
+      <Route path="/developers" element={<ProtectedRoute><DeveloperDocs /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
     </Routes>
   );

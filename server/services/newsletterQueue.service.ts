@@ -65,7 +65,9 @@ export class NewsletterQueueService {
       const itemsToProcess = await prisma.newsletterQueueItem.findMany({
         where: { id: { in: itemIds } },
         include: {
-          broadcast: true,
+          broadcast: {
+            include: { gong: true },
+          },
         },
       });
 
@@ -84,35 +86,47 @@ export class NewsletterQueueService {
             continue;
           }
 
-          const rawSenders = await prisma.sender.findMany({
-            where: {
-              userId: item.userId,
-              status: 'active',
-              domain: { status: 'active' },
-            },
-            include: { domain: true },
+          const userSettings = await prisma.userSettings.findUnique({
+            where: { userId: item.userId },
+            include: { dedicatedNewsletterSender: { include: { domain: true } } },
           });
 
-          if (rawSenders.length === 0) {
-            await prisma.newsletterQueueItem.update({
-              where: { id: item.id },
-              data: { status: 'PENDING' },
+          // Dedicated Sender Resolution: Check UserSettings dedicated sender, then fallback to active pool
+          let eligibleSender = userSettings?.dedicatedNewsletterSender;
+
+          if (!eligibleSender || eligibleSender.status !== 'active') {
+            const rawSenders = await prisma.sender.findMany({
+              where: {
+                userId: item.userId,
+                status: 'active',
+                domain: { status: 'active' },
+              },
+              include: { domain: true },
             });
-            summary.deferred++;
-            continue;
+
+            if (rawSenders.length === 0) {
+              await prisma.newsletterQueueItem.update({
+                where: { id: item.id },
+                data: { status: 'PENDING' },
+              });
+              summary.deferred++;
+              continue;
+            }
+
+            const activeSenders = await Promise.all(
+              rawSenders.map(s => senderService.ensureSenderDailyReset(s.id))
+            );
+
+            eligibleSender = activeSenders.find(s => {
+              if (!s) return false;
+              const fairShareCap = Math.max(5, Math.floor(s.dailyLimit * 0.5));
+              const isUnderCap = s.sentCountToday < fairShareCap;
+              const isCooledDown = !s.lastDispatchedAt || (Date.now() - new Date(s.lastDispatchedAt).getTime()) >= cooldownSeconds * 1000;
+              return isUnderCap && isCooledDown;
+            }) || activeSenders.find(s => s && s.sentCountToday < s.dailyLimit);
+          } else {
+            eligibleSender = await senderService.ensureSenderDailyReset(eligibleSender.id);
           }
-
-          const activeSenders = await Promise.all(
-            rawSenders.map(s => senderService.ensureSenderDailyReset(s.id))
-          );
-
-          const eligibleSender = activeSenders.find(s => {
-            if (!s) return false;
-            const fairShareCap = Math.max(5, Math.floor(s.dailyLimit * 0.5));
-            const isUnderCap = s.sentCountToday < fairShareCap;
-            const isCooledDown = !s.lastDispatchedAt || (Date.now() - new Date(s.lastDispatchedAt).getTime()) >= cooldownSeconds * 1000;
-            return isUnderCap && isCooledDown;
-          }) || activeSenders.find(s => s && s.sentCountToday < s.dailyLimit);
 
           if (!eligibleSender) {
             await prisma.newsletterQueueItem.update({
@@ -140,8 +154,6 @@ export class NewsletterQueueService {
             continue;
           }
 
-          const userSettings = await prisma.userSettings.findUnique({ where: { userId: item.userId } });
-
           const token = await this.ensureRecipientUnsubscribeToken(recipient.id, recipient.unsubscribeToken);
           const appBaseUrl = process.env.APP_URL || 'https://midas-aem.vercel.app';
           const unsubUrl = `${appBaseUrl.replace(/\/$/, '')}/api/public/town-crier/recipients/unsubscribe/${token}`;
@@ -160,6 +172,9 @@ export class NewsletterQueueService {
             }
           );
 
+          // Resolve template style: Broadcast override -> Gong channel default -> Card default
+          const chosenTemplateStyle = item.broadcast.templateStyle || item.broadcast.gong?.templateStyle || 'card';
+
           const result = await emailService.sendEmailNow(
             { ...eligibleSender.domain, senderLocalPart: eligibleSender.localPart },
             recipient.email,
@@ -177,6 +192,7 @@ export class NewsletterQueueService {
               brandColorHex: userSettings?.brandColorHex,
               logoUrl: userSettings?.logoUrl,
               brandingEnabled: userSettings?.brandingEnabled ?? true,
+              templateStyle: chosenTemplateStyle,
             }
           );
 
@@ -196,7 +212,6 @@ export class NewsletterQueueService {
                 data: { status: 'COMPLETED' },
               });
 
-              // Notification: Broadcast Delivery Completed
               notificationService.create({
                 userId: item.userId,
                 title: '📣 Newsletter Broadcast Completed',
@@ -243,7 +258,11 @@ export class NewsletterQueueService {
     if (!broadcast) throw new Error('Broadcast not found');
 
     const recipients = await prisma.newsletterRecipient.findMany({
-      where: { userId, status: 'SUBSCRIBED' },
+      where: {
+        userId,
+        status: 'SUBSCRIBED',
+        ...(broadcast.gongId ? { gongId: broadcast.gongId } : {}),
+      },
       select: { id: true },
     });
 

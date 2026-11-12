@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { userAPI, domainAPI } from '../services/api';
+import { userAPI, domainAPI, senderAPI, userSettingsAPI } from '../services/api';
 import { UserSettings } from '../components/UserSettings';
-import { Link, useNavigate } from 'react-router-dom';
+import { WebhookSettings } from '../components/settings/WebhookSettings';
+import { ApiKeySettings } from '../components/settings/ApiKeySettings';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 
 interface CampaignStat {
@@ -20,26 +22,36 @@ export const Profile: React.FC = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [campaigns, setCampaigns] = useState<CampaignStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(user?.name || '');
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'settings' | 'domains'>('profile');
 
-  // Domains count
+  const activeTab = (searchParams.get('tab') as any) || 'profile';
+  const setActiveTab = (tab: string) => setSearchParams({ tab });
+
+  // Domains & Dedicated Newsletter Sender
   const [domains, setDomains] = useState<any[]>([]);
+  const [allSenders, setAllSenders] = useState<any[]>([]);
+  const [dedicatedSenderId, setDedicatedSenderId] = useState<string>('');
+  const [savingSender, setSavingSender] = useState(false);
 
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const [profileRes, domainsRes] = await Promise.all([
+        const [profileRes, domainsRes, sendersRes, settingsRes] = await Promise.all([
           userAPI.getProfile(),
           domainAPI.getAll().catch(() => ({ data: [] })),
+          senderAPI.listAll().catch(() => ({ data: [] })),
+          userSettingsAPI.get().catch(() => ({ data: {} })),
         ]);
         setCampaigns(profileRes.data?.campaigns || []);
         setDomains(domainsRes.data || []);
+        setAllSenders(sendersRes.data || []);
+        setDedicatedSenderId(settingsRes.data?.dedicatedNewsletterSenderId || '');
         if (profileRes.data?.user?.name) {
           setNewName(profileRes.data.user.name);
         }
@@ -67,6 +79,21 @@ export const Profile: React.FC = () => {
       toast.error('Could not update display name', 'Save Error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveDedicatedSender = async (senderId: string) => {
+    setDedicatedSenderId(senderId);
+    setSavingSender(true);
+    try {
+      await userSettingsAPI.update({
+        dedicatedNewsletterSenderId: senderId || null,
+      });
+      toast.success('Dedicated newsletter sender isolated', 'Sender Bound');
+    } catch {
+      toast.error('Failed to update dedicated sender', 'Error');
+    } finally {
+      setSavingSender(false);
     }
   };
 
@@ -100,7 +127,7 @@ export const Profile: React.FC = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">Account & Workspace</h1>
-          <p className="text-xs text-zinc-500 mt-1">Manage personal credentials, global throttling, and sequence velocity.</p>
+          <p className="text-xs text-zinc-500 mt-1">Manage personal credentials, API keys, delivery throttling, and outbound webhooks.</p>
         </div>
 
         <button
@@ -113,16 +140,18 @@ export const Profile: React.FC = () => {
 
       {/* Tabs */}
       <div className="border-b border-zinc-200">
-        <nav className="flex space-x-8">
+        <nav className="flex space-x-8 overflow-x-auto">
           {[
             ['profile', 'Operator Profile'],
-            ['settings', 'Delivery Throttling'],
+            ['settings', 'Settings & AI Studio'],
+            ['apiKeys', 'Developer API Keys'],
+            ['webhooks', 'Webhooks (CRM Sync)'],
             ['domains', `Sending Infrastructure (${domains.length})`],
           ].map(([key, label]) => (
             <button
               key={key}
-              onClick={() => setActiveTab(key as any)}
-              className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors ${
+              onClick={() => setActiveTab(key)}
+              className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors whitespace-nowrap ${
                 activeTab === key ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-900'
               }`}
             >
@@ -135,7 +164,6 @@ export const Profile: React.FC = () => {
       {/* TAB 1: OPERATOR PROFILE */}
       {activeTab === 'profile' && (
         <div className="space-y-6">
-          {/* Identity Card */}
           <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-700 text-white font-black text-xl flex items-center justify-center shadow-sm">
@@ -152,7 +180,6 @@ export const Profile: React.FC = () => {
               </div>
             </div>
 
-            {/* Display Name Editor */}
             <div className="flex items-center gap-2 w-full sm:w-auto">
               {editingName ? (
                 <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -172,7 +199,7 @@ export const Profile: React.FC = () => {
                   </button>
                   <button
                     onClick={() => setEditingName(false)}
-                    className="px-3 py-1.5 bg-zinc-100 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-200"
+                    className="px-3.5 py-1.5 bg-zinc-100 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-200"
                   >
                     Cancel
                   </button>
@@ -188,7 +215,6 @@ export const Profile: React.FC = () => {
             </div>
           </div>
 
-          {/* Aggregated Sequences Performance */}
           <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -234,48 +260,82 @@ export const Profile: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 2: GLOBAL DELIVERY THROTTLING */}
+      {/* TAB 2: WORKSPACE SETTINGS & AI STUDIO */}
       {activeTab === 'settings' && <UserSettings />}
 
-      {/* TAB 3: SENDING INFRASTRUCTURE SNAPSHOT */}
+      {/* TAB 3: DEVELOPER API KEYS (RELOCATED FROM TOWN CRIER) */}
+      {activeTab === 'apiKeys' && <ApiKeySettings />}
+
+      {/* TAB 4: BI-DIRECTIONAL OUTBOUND WEBHOOKS */}
+      {activeTab === 'webhooks' && <WebhookSettings />}
+
+      {/* TAB 5: SENDING INFRASTRUCTURE SNAPSHOT */}
       {activeTab === 'domains' && (
-        <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="space-y-6">
+          <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
             <div>
-              <h3 className="text-base font-black text-zinc-900 tracking-tight">Active Sending Domains</h3>
-              <p className="text-xs text-zinc-500 mt-0.5">DNS identity and authenticated Mailgun domains linked to this account.</p>
+              <h3 className="text-base font-black text-zinc-900 tracking-tight">Dedicated Newsletter Sender (Domain Isolation)</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Assign a dedicated mailbox identity to send all Town Crier broadcasts and welcome autoresponders, completely isolating newsletters from cold sales sender rotation.
+              </p>
             </div>
-            <Link
-              to="/domains"
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
-            >
-              Manage Domains Hub →
-            </Link>
+
+            <div className="max-w-md">
+              <label className="block text-[10px] font-bold uppercase text-zinc-500 mb-1">Select Dedicated Newsletter Sender</label>
+              <select
+                value={dedicatedSenderId}
+                onChange={(e) => handleSaveDedicatedSender(e.target.value)}
+                disabled={savingSender}
+                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-mono font-bold focus:outline-none"
+              >
+                <option value="">-- None (Fair-Share 50% Rotation across all senders) --</option>
+                {allSenders.filter((s: any) => s.status === 'active' && s.domain?.status === 'active').map((s: any) => (
+                  <option key={s.id} value={s.id}>
+                    {s.localPart}@{s.domain?.domainName} ({s.displayName || 'No Name'})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {domains.length === 0 ? (
-            <div className="py-12 text-center text-xs text-zinc-400 bg-zinc-50 rounded-xl border border-zinc-100">
-              No sending domains connected yet. Authenticate a Mailgun domain to enable outreach.
+          <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-black text-zinc-900 tracking-tight">Active Sending Domains</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">DNS identity and authenticated Mailgun domains linked to this account.</p>
+              </div>
+              <Link
+                to="/domains"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+              >
+                Manage Domains Hub →
+              </Link>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-              {domains.map((d) => (
-                <div key={d.id} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl text-xs space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-bold text-zinc-900">{d.domainName}</span>
-                    <span className={`px-2 py-0.5 rounded-full font-bold text-[9px] ${
-                      d.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                    }`}>
-                      {d.status.toUpperCase()}
-                    </span>
+
+            {domains.length === 0 ? (
+              <div className="py-12 text-center text-xs text-zinc-400 bg-zinc-50 rounded-xl border border-zinc-100">
+                No sending domains connected yet. Authenticate a Mailgun domain to enable outreach.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                {domains.map((d) => (
+                  <div key={d.id} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-zinc-900">{d.domainName}</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold text-[9px] ${
+                        d.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                      }`}>
+                        {d.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400">
+                      Mailboxes: {d.senders?.length || 0} active · Bounce rate: {((d.bounceRate || 0) * 100).toFixed(1)}%
+                    </p>
                   </div>
-                  <p className="text-[11px] text-zinc-400">
-                    Mailboxes: {d.senders?.length || 0} active · Bounce rate: {((d.bounceRate || 0) * 100).toFixed(1)}%
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

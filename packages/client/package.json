@@ -1,0 +1,43 @@
+{
+  "name": "@midas-aem/client",
+  "version": "1.0.0",
+  "description": "Universal SDK and first-party React/Next.js components for Midas Autonomous Outbound & Town Crier Newsletters",
+  "author": "Pyrexx AI",
+  "license": "Apache-2.0",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.mjs",
+      "require": "./dist/react.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.45",
+    "react": "^18.2.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.3.3"
+  }
+}

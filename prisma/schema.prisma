@@ -30,10 +30,12 @@ model User {
   invitesSent    CampaignInvite[]
 
   apiKeys              ApiKey[]
+  gongs                Gong[]
   newsletterRecipients NewsletterRecipient[]
   newsletterBroadcasts NewsletterBroadcast[]
   newsletterQueueItems NewsletterQueueItem[]
   notifications        Notification[]
+  webhookSubscriptions WebhookSubscription[]
 
   @@map("users")
 }
@@ -100,6 +102,7 @@ model Sender {
 
   campaignLinks          CampaignSender[]
   preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferredSender")
+  dedicatedSettings      UserSettings[]   @relation("DedicatedNewsletterSender")
 
   @@unique([domainId, localPart])
   @@index([userId])
@@ -394,11 +397,14 @@ model UserSettings {
   logoUrl           String?  @map("logo_url")
   brandingEnabled   Boolean  @default(false) @map("branding_enabled")
 
+  dedicatedNewsletterSenderId String? @map("dedicated_newsletter_sender_id")
+  dedicatedNewsletterSender   Sender? @relation("DedicatedNewsletterSender", fields: [dedicatedNewsletterSenderId], references: [id], onDelete: SetNull)
+
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 }
 
-// --- TOWN CRIER NEWSLETTER & AUDIENCE MODELS ---
+// --- DEVELOPER API KEYS (SCOPED GLOBALLY) ---
 
 model ApiKey {
   id         String    @id @default(cuid())
@@ -407,7 +413,7 @@ model ApiKey {
   label      String
   keyPrefix  String    @map("key_prefix")
   keyHash    String    @map("key_hash")
-  scopes     String[]  @default(["town_crier:write"])
+  scopes     String[]  @default(["*"])
   lastUsedAt DateTime? @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
   createdAt  DateTime  @default(now()) @map("created_at")
@@ -416,12 +422,51 @@ model ApiKey {
   @@index([keyPrefix])
 }
 
+// --- TOWN CRIER "GONG" CHANNELS & NEWSLETTER MODELS ---
+
+model Gong {
+  id                   String                 @id @default(cuid())
+  userId               String                 @map("user_id") @db.Uuid
+  user                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                 String
+  slug                 String
+  description          String?
+  cadence              String                 @default("weekly")
+  templateStyle        String                 @default("card") @map("template_style") // card | editorial | minimal | plain
+  
+  // Welcome Autoresponder
+  welcomeEmailEnabled  Boolean                @default(false) @map("welcome_email_enabled")
+  welcomeSubject       String?                @map("welcome_subject")
+  welcomeBody          String?                @db.Text @map("welcome_body")
+  
+  // Embed Styling
+  embedTheme           String                 @default("minimal") @map("embed_theme") // minimal | card | dark | floating
+  accentColor          String                 @default("#2563EB") @map("accent_color")
+  headline             String                 @default("Join our newsletter")
+  subheadline          String                 @default("Get the latest updates delivered to your inbox.")
+  buttonText           String                 @default("Subscribe") @map("button_text")
+  successMessage       String                 @default("Thank you for subscribing!") @map("success_message")
+  tags                 String[]               @default([])
+
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+
+  recipients           NewsletterRecipient[]
+  broadcasts           NewsletterBroadcast[]
+
+  @@unique([userId, slug])
+  @@index([userId])
+}
+
 model NewsletterRecipient {
   id               String   @id @default(cuid())
   userId           String   @map("user_id") @db.Uuid
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gongId           String?  @map("gong_id")
+  gong             Gong?    @relation(fields: [gongId], references: [id], onDelete: SetNull)
   email            String
   name             String?
+  cadence          String   @default("weekly")
   status           String   @default("SUBSCRIBED") // SUBSCRIBED | UNSUBSCRIBED | BOUNCED
   source           String   @default("ui")         // ui | api | import | form_embed
   tags             String[] @default([])
@@ -432,21 +477,26 @@ model NewsletterRecipient {
 
   @@unique([userId, email])
   @@index([userId])
+  @@index([gongId])
 }
 
 model NewsletterBroadcast {
-  id          String                @id @default(cuid())
-  userId      String                @map("user_id") @db.Uuid
-  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject     String
-  body        String
-  status      String                @default("DRAFT") // DRAFT | QUEUED | SENDING | COMPLETED
-  tagFilter   String?               @map("tag_filter")
-  queuedAt    DateTime?             @map("queued_at")
-  createdAt   DateTime              @default(now()) @map("created_at")
-  queueItems  NewsletterQueueItem[]
+  id            String                @id @default(cuid())
+  userId        String                @map("user_id") @db.Uuid
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gongId        String?               @map("gong_id")
+  gong          Gong?                 @relation(fields: [gongId], references: [id], onDelete: SetNull)
+  subject       String
+  body          String
+  status        String                @default("DRAFT") // DRAFT | QUEUED | SENDING | COMPLETED
+  templateStyle String                @default("card") @map("template_style") // card | editorial | minimal | plain
+  tagFilter     String?               @map("tag_filter")
+  queuedAt      DateTime?             @map("queued_at")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  queueItems    NewsletterQueueItem[]
 
   @@index([userId])
+  @@index([gongId])
 }
 
 model NewsletterQueueItem {
@@ -479,6 +529,41 @@ model Notification {
 
   @@index([userId, isRead])
   @@index([userId, createdAt])
+}
+
+// --- BI-DIRECTIONAL OUTBOUND WEBHOOKS ---
+
+model WebhookSubscription {
+  id         String            @id @default(cuid())
+  userId     String            @map("user_id") @db.Uuid
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetUrl  String            @map("target_url")
+  secret     String            // whsec_...
+  events     String[]          @default(["*"])
+  isActive   Boolean           @default(true) @map("is_active")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  deliveries WebhookDelivery[]
+
+  @@index([userId])
+}
+
+model WebhookDelivery {
+  id             String              @id @default(cuid())
+  subscriptionId String              @map("subscription_id")
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  event          String
+  payload        Json
+  statusCode     Int?                @map("status_code")
+  responseBody   String?             @db.Text @map("response_body")
+  error          String?             @db.Text
+  attempts       Int                 @default(1)
+  status         String              @default("DELIVERED") // DELIVERED | FAILED
+  durationMs     Int?                @map("duration_ms")
+  createdAt      DateTime            @default(now()) @map("created_at")
+
+  @@index([subscriptionId, createdAt])
 }
 
 model CronLock {

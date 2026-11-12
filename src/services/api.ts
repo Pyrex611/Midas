@@ -61,6 +61,20 @@ export const notificationAPI = {
   markAllRead: () => api.post('/notifications/read-all'),
 };
 
+export const apiKeyAPI = {
+  list: () => api.get('/api-keys'),
+  create: (label: string, scopes?: string[]) => api.post('/api-keys', { label, scopes }),
+  revoke: (id: string) => api.delete(`/api-keys/${id}`),
+};
+
+export const webhookAPI = {
+  list: () => api.get('/user/webhooks'),
+  create: (data: { targetUrl: string; events: string[] }) => api.post('/user/webhooks', data),
+  delete: (id: string) => api.delete(`/user/webhooks/${id}`),
+  test: (id: string) => api.post(`/user/webhooks/${id}/test`),
+  getDeliveries: (id: string) => api.get(`/user/webhooks/${id}/deliveries`),
+};
+
 export const leadAPI = {
   upload: (file: File, verifyEmails: boolean = false, columnMapping?: string, campaignId?: string) => {
     const formData = new FormData();
@@ -204,19 +218,21 @@ export const senderAPI = {
 
 export const townCrierAPI = {
   getAnalytics: () => api.get('/town-crier/analytics'),
-  getApiKeys: () => api.get('/town-crier/api-keys'),
-  createApiKey: (label: string, scopes?: string[]) => api.post('/town-crier/api-keys', { label, scopes }),
-  revokeApiKey: (id: string) => api.delete(`/town-crier/api-keys/${id}`),
+  getApiKeys: () => api.get('/api-keys'),
+  createApiKey: (label: string, scopes?: string[]) => api.post('/api-keys', { label, scopes }),
+  revokeApiKey: (id: string) => api.delete(`/api-keys/${id}`),
 
   getBroadcasts: () => api.get('/town-crier/broadcasts'),
-  createBroadcast: (data: { subject: string; body: string; tagFilter?: string }) => api.post('/town-crier/broadcasts', data),
+  createBroadcast: (data: { subject: string; body: string; tagFilter?: string; gongId?: string }) =>
+    api.post('/town-crier/broadcasts', data),
   queueBroadcast: (id: string) => api.post(`/town-crier/broadcasts/${id}/queue`),
   deleteBroadcast: (id: string) => api.delete(`/town-crier/broadcasts/${id}`),
   triggerSweep: () => api.post('/town-crier/sweep'),
 
   getRecipients: (page = 1, pageSize = 20, status?: string, tag?: string) =>
     api.get('/town-crier/recipients', { params: { page, pageSize, status, tag } }),
-  addRecipient: (email: string, name?: string, tags?: string[]) => api.post('/town-crier/recipients', { email, name, tags }),
+  addRecipient: (email: string, name?: string, tags?: string[], gongId?: string) =>
+    api.post('/town-crier/recipients', { email, name, tags, gongId }),
   importRecipients: (file: File, tag?: string) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -286,4 +302,5 @@ export const inboxAPI = {
   sendReply: (leadId: string, body: string) => api.post(`/inbox/${leadId}/reply`, { body }),
 };
 
+export { api };
 export default api;
