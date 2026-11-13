@@ -137,7 +137,7 @@ export const AdminDashboard: React.FC = () => {
       toast.success('Operator clearance authorized for 60 minutes', 'Session Active');
       await fetchAll();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Passphrase rejected. Default is midas_operator_2026'), 'Access Denied');
+      toast.error(getErrorMessage(err, 'Passphrase rejected.'), 'Access Denied');
     } finally {
       setVerifyingPassphrase(false);
     }

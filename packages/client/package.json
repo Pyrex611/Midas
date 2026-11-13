@@ -1,12 +1,32 @@
 {
   "name": "@midas-aem/client",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "description": "Universal SDK and first-party React/Next.js components for Midas Autonomous Outbound & Town Crier Newsletters",
   "author": "Pyrexx AI",
   "license": "Apache-2.0",
+  "homepage": "https://midas-aem.vercel.app/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pyrex611/Midas.git",
+    "directory": "packages/client"
+  },
+  "bugs": {
+    "url": "https://github.com/Pyrex611/Midas/issues"
+  },
+  "keywords": [
+    "email-marketing",
+    "cold-email",
+    "newsletter",
+    "outreach-automation",
+    "sdk"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,7 +40,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",

@@ -14,6 +14,10 @@ import {
   deleteRecipient,
   getTownCrierAnalytics,
   exportRecipients,
+  listGongs,
+  createGong,
+  updateGong,
+  deleteGong,
 } from '../controllers/townCrier.controller';
 
 const router = Router();
@@ -26,6 +30,12 @@ router.get('/recipients/export', exportRecipients);
 router.get('/api-keys', listApiKeys);
 router.post('/api-keys', createApiKey);
 router.delete('/api-keys/:id', revokeApiKey);
+
+// Gong Channels (Clerk Authed) — was missing entirely; frontend was built against this contract
+router.get('/gongs', listGongs);
+router.post('/gongs', createGong);
+router.put('/gongs/:id', updateGong);
+router.delete('/gongs/:id', deleteGong);
 
 // Audience & Recipients Management
 router.get('/recipients', listRecipients);

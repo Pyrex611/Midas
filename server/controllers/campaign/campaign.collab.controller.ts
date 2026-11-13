@@ -14,14 +14,16 @@ export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, ne
       return res.status(400).json({ error: 'leadIds must be a non-empty array' });
     }
 
-    const campaign = await prisma.campaign.findUnique({
-      where: { id },
-      include: { leads: { select: { id: true } } },
-    });
+    const campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    await prisma.lead.updateMany({
-      where: { id: { in: leadIds } },
+    // SECURITY: requireCampaignRole already confirmed the caller has EDITOR+
+    // access to THIS campaign — but without scoping by `userId` here, any
+    // collaborator could attach another tenant's leadIds by guessing/
+    // enumerating cuids (cross-tenant IDOR). Leads a user adds must be
+    // leads that user owns, regardless of whose campaign they're joining.
+    const claimResult = await prisma.lead.updateMany({
+      where: { id: { in: leadIds }, userId },
       data: { campaignId: id, outreachStatus: 'PENDING' },
     });
 
@@ -35,7 +37,8 @@ export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, ne
     const reconciliation = await reconcileCampaignQueue(id, userId);
 
     res.json({
-      added: leadIds.length,
+      added: claimResult.count,
+      skipped: leadIds.length - claimResult.count,
       queued: reconciliation.queuedCount,
       message: reconciliation.message,
     });

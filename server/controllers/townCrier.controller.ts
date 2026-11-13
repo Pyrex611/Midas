@@ -393,3 +393,88 @@ export const triggerNewsletterSweep = async (req: AuthRequest, res: Response, ne
     res.status(400).json({ error: error.message });
   }
 };
+
+// --- Gong Channel CRUD (authenticated dashboard) ---
+
+export const listGongs = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const gongs = await prisma.gong.findMany({
+      where: { userId },
+      include: { _count: { select: { recipients: true, broadcasts: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ gongs });
+  } catch (error) { next(error); }
+};
+
+const GONG_WRITABLE_FIELDS = [
+  'description', 'cadence', 'templateStyle',
+  'welcomeEmailEnabled', 'welcomeSubject', 'welcomeBody',
+  'embedTheme', 'accentColor', 'headline', 'subheadline', 'buttonText', 'successMessage',
+] as const;
+
+function cleanSlug(raw: string): string {
+  return raw.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
+}
+
+export const createGong = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { name, slug } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Gong channel name is required' });
+
+    const data: any = {
+      userId,
+      name: name.trim(),
+      slug: cleanSlug(slug || name),
+    };
+    for (const field of GONG_WRITABLE_FIELDS) {
+      if (req.body[field] !== undefined) data[field] = req.body[field];
+    }
+
+    // NOTE: the drawer also sends `dedicatedSenderId`. There is no per-Gong
+    // sender column yet — only the account-wide UserSettings.dedicatedNewsletterSenderId.
+    // Intentionally NOT persisted here (not silently dropped — tracked as a
+    // fast-follow: requires a Gong.dedicatedSenderId migration + rewiring
+    // newsletterQueueService's sender resolution to check it before falling
+    // back to the account-wide default).
+
+    const gong = await prisma.gong.create({ data });
+    res.status(201).json({ success: true, gong });
+  } catch (error: any) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'A Gong with this slug already exists' });
+    next(error);
+  }
+};
+
+export const updateGong = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const data: Record<string, any> = {};
+    if (req.body.name?.trim()) data.name = req.body.name.trim();
+    if (req.body.slug) data.slug = cleanSlug(req.body.slug);
+    for (const field of GONG_WRITABLE_FIELDS) {
+      if (req.body[field] !== undefined) data[field] = req.body[field];
+    }
+
+    const result = await prisma.gong.updateMany({ where: { id, userId }, data });
+    if (result.count === 0) return res.status(404).json({ error: 'Gong channel not found' });
+
+    const gong = await prisma.gong.findUnique({ where: { id } });
+    res.json({ success: true, gong });
+  } catch (error: any) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'A Gong with this slug already exists' });
+    next(error);
+  }
+};
+
+export const deleteGong = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { id } = req.params;
+    await prisma.gong.deleteMany({ where: { id, userId } });
+    res.json({ success: true });
+  } catch (error) { next(error); }
+};

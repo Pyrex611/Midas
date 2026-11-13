@@ -218,6 +218,10 @@ export const senderAPI = {
 
 export const townCrierAPI = {
   getAnalytics: () => api.get('/town-crier/analytics'),
+  getGongs: () => api.get('/town-crier/gongs'),
+  createGong: (data: any) => api.post('/town-crier/gongs', data),
+  updateGong: (id: string, data: any) => api.put(`/town-crier/gongs/${id}`, data),
+  deleteGong: (id: string) => api.delete(`/town-crier/gongs/${id}`),
   getApiKeys: () => api.get('/api-keys'),
   createApiKey: (label: string, scopes?: string[]) => api.post('/api-keys', { label, scopes }),
   revokeApiKey: (id: string) => api.delete(`/api-keys/${id}`),

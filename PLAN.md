@@ -49,7 +49,7 @@
 ## 2. ACTIVE NEXT SPRINT: ECOSYSTEM EXPANSION & MULTI-LANGUAGE SDKS
 
 [ ] SPRINT C.2: NPM REGISTRY RELEASE & INTERACTIVE CLI SCAFFOLDER
-    ├─ [ ] Publish @pyrexxai/client (or @midas/client) to public npm registry.
+    ├─ [x] Publish @midas-aem/client to public npm registry.
     ├─ [ ] Build interactive terminal scaffolder (npx midas init / npx town-crier init).
     ├─ [ ] Auto-generate components/Newsletter.tsx in Next.js and Vite test projects.
     └─ [ ] Validate zero-CSP Server Action proxy generation.
