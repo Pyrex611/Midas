@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { senderAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { Icons } from '../../lib/icons';
 
 export interface Sender {
   id: string;
@@ -32,6 +34,8 @@ export const DomainSenderList: React.FC<DomainSenderListProps> = ({
   const [localPart, setLocalPart] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [addingSender, setAddingSender] = useState(false);
+  const [deletingSenderId, setDeletingSenderId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const handleAddSender = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,35 +56,40 @@ export const DomainSenderList: React.FC<DomainSenderListProps> = ({
     }
   };
 
-  const handleDeleteSender = async (senderId: string) => {
-    if (!confirm('Remove this mailbox sender? Campaigns using it will cease sending from this address.')) return;
+  const handleConfirmDelete = async () => {
+    if (!deletingSenderId) return;
+    setDeleting(true);
     try {
-      await senderAPI.delete(senderId);
+      await senderAPI.delete(deletingSenderId);
       toast.info('Sender mailbox removed from rotation', 'Removed');
+      setDeletingSenderId(null);
       onRefresh();
     } catch {
       toast.error('Could not remove sender', 'Error');
+    } finally {
+      setDeleting(false);
     }
   };
 
   return (
-    <div className="border-t border-zinc-100 pt-4">
+    <div className="border-t border-gold-500/35 pt-4">
       <div className="flex items-center justify-between mb-3">
-        <h4 className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Sending Mailboxes (Senders)</h4>
+        <h4 className="text-xs font-bold text-royal-800 uppercase tracking-wider">Sending Mailboxes (Senders)</h4>
         {sendTestPassedAt && (
           <button
             onClick={() => setFormOpen((prev) => !prev)}
-            className="text-xs text-blue-600 hover:text-blue-800 font-bold"
+            className="text-xs text-royal-700 hover:text-royal-950 font-bold flex items-center gap-1"
           >
-            {formOpen ? 'Cancel' : '+ Add Sender'}
+            {formOpen ? <Icons.Close className="text-[11px]" /> : <Icons.Plus className="text-[11px] text-gold-600" />}
+            <span>{formOpen ? 'Cancel' : 'Add Sender'}</span>
           </button>
         )}
       </div>
 
       {formOpen && (
-        <form onSubmit={handleAddSender} className="mb-4 p-4 bg-zinc-50 border border-zinc-200 rounded-xl flex flex-wrap items-end gap-3 animate-in fade-in duration-150">
+        <form onSubmit={handleAddSender} className="mb-4 p-4 bg-thistle-50 border border-gold-500/40 rounded-xl flex flex-wrap items-end gap-3 animate-in fade-in duration-150">
           <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Local Address</label>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Local Address</label>
             <div className="flex items-center">
               <input
                 type="text"
@@ -88,29 +97,29 @@ export const DomainSenderList: React.FC<DomainSenderListProps> = ({
                 onChange={(e) => setLocalPart(e.target.value)}
                 placeholder="sales"
                 required
-                className="w-28 px-2.5 py-1.5 border border-zinc-200 rounded-l-lg text-xs font-mono focus:outline-none"
+                className="w-28 px-2.5 py-1.5 bg-white border border-gold-500/35 rounded-l-lg text-xs font-mono focus:outline-none focus:border-gold-500"
               />
-              <span className="px-2.5 py-1.5 border border-l-0 border-zinc-200 rounded-r-lg bg-zinc-100 text-[11px] text-zinc-500 font-mono">
+              <span className="px-2.5 py-1.5 border border-l-0 border-gold-500/35 rounded-r-lg bg-thistle-100 text-[11px] text-royal-800 font-mono">
                 @{domainName}
               </span>
             </div>
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Display Name (Optional)</label>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Display Name (Optional)</label>
             <input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Alex Mercer"
-              className="px-2.5 py-1.5 border border-zinc-200 rounded-lg text-xs focus:outline-none"
+              className="px-2.5 py-1.5 bg-white border border-gold-500/35 rounded-lg text-xs focus:outline-none focus:border-gold-500"
             />
           </div>
 
           <button
             type="submit"
             disabled={addingSender}
-            className="px-4 py-1.5 bg-zinc-900 text-white rounded-lg text-xs font-bold hover:bg-zinc-800 disabled:opacity-50"
+            className="px-4 py-1.5 btn-royal rounded-lg text-xs font-bold"
           >
             {addingSender ? 'Creating...' : 'Save Sender'}
           </button>
@@ -118,30 +127,41 @@ export const DomainSenderList: React.FC<DomainSenderListProps> = ({
       )}
 
       {senders.length === 0 ? (
-        <p className="text-xs text-zinc-400 italic">
+        <p className="text-xs text-thistle-500 italic">
           {sendTestPassedAt ? 'No senders added yet. Add an address (e.g. sales@, alex@) to attach to campaigns.' : 'Pass the send test above before adding mailboxes.'}
         </p>
       ) : (
         <div className="space-y-2">
           {senders.map((sender) => (
-            <div key={sender.id} className="flex items-center justify-between p-3 bg-zinc-50 border border-zinc-200/60 rounded-xl text-xs">
+            <div key={sender.id} className="flex items-center justify-between p-3 bg-thistle-50/70 border border-gold-500/35 rounded-xl text-xs">
               <div>
-                <span className="font-mono font-bold text-zinc-900">{sender.localPart}@{domainName}</span>
-                {sender.displayName && <span className="text-zinc-500 ml-2 font-medium">"{sender.displayName}"</span>}
-                <span className="text-zinc-400 ml-3 text-[11px]">
+                <span className="font-mono font-bold text-royal-950">{sender.localPart}@{domainName}</span>
+                {sender.displayName && <span className="text-royal-800/75 ml-2 font-medium">"{sender.displayName}"</span>}
+                <span className="text-thistle-500 ml-3 text-[11px]">
                   {sender.sentCountToday}/{sender.dailyLimit} sent today · warmup day {sender.warmupDay}
                 </span>
               </div>
               <button
-                onClick={() => handleDeleteSender(sender.id)}
-                className="text-zinc-400 hover:text-rose-600 text-xs font-medium transition-colors"
+                onClick={() => setDeletingSenderId(sender.id)}
+                className="text-thistle-500 hover:text-rose-600 text-xs font-medium transition-colors flex items-center gap-1"
               >
-                Remove
+                <Icons.Trash />
+                <span>Remove</span>
               </button>
             </div>
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(deletingSenderId)}
+        onClose={() => setDeletingSenderId(null)}
+        onConfirm={handleConfirmDelete}
+        title="Remove Mailbox Sender"
+        description="Campaigns using this address will stop dispatching from it."
+        confirmLabel="Remove Sender"
+        loading={deleting}
+      />
     </div>
   );
 };

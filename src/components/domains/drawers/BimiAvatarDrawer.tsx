@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sheet } from '../../common/Sheet';
 import { domainAPI, getErrorMessage } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
+import { Icons } from '../../../lib/icons';
 
 interface BimiAvatarDrawerProps {
   domain: any | null;
@@ -116,26 +117,25 @@ export const BimiAvatarDrawer: React.FC<BimiAvatarDrawerProps> = ({
       width="xl"
     >
       <div className="space-y-5">
-        {/* Navigation Tabs */}
-        <div className="flex border-b border-zinc-200 gap-2 pb-2">
+        <div className="flex border-b border-gold-500/35 gap-2 pb-2 overflow-x-auto">
           <button
             type="button"
             onClick={() => setActiveSubTab('gmail_free')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
               activeSubTab === 'gmail_free'
-                ? 'bg-blue-600 text-white shadow-2xs'
-                : 'text-zinc-600 hover:bg-zinc-100'
+                ? 'bg-royal-700 text-white border border-gold-400/50 shadow-2xs'
+                : 'text-royal-800 hover:bg-thistle-100'
             }`}
           >
-            ⭐ 1. Gmail Instant Fix (Free, 2-Min)
+            1. Gmail Instant Fix (Free, 2-Min)
           </button>
           <button
             type="button"
             onClick={() => setActiveSubTab('svg_code')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
               activeSubTab === 'svg_code'
-                ? 'bg-blue-600 text-white shadow-2xs'
-                : 'text-zinc-600 hover:bg-zinc-100'
+                ? 'bg-royal-700 text-white border border-gold-400/50 shadow-2xs'
+                : 'text-royal-800 hover:bg-thistle-100'
             }`}
           >
             2. Pyrexx AI SVG Vector
@@ -143,17 +143,16 @@ export const BimiAvatarDrawer: React.FC<BimiAvatarDrawerProps> = ({
           <button
             type="button"
             onClick={() => setActiveSubTab('bimi')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
               activeSubTab === 'bimi'
-                ? 'bg-blue-600 text-white shadow-2xs'
-                : 'text-zinc-600 hover:bg-zinc-100'
+                ? 'bg-royal-700 text-white border border-gold-400/50 shadow-2xs'
+                : 'text-royal-800 hover:bg-thistle-100'
             }`}
           >
-            3. BIMI & DNS Setup
+            3. BIMI &amp; DNS Setup
           </button>
         </div>
 
-        {/* TAB 1: GMAIL INSTANT FREE AVATAR BYPASS */}
         {activeSubTab === 'gmail_free' && (
           <div className="space-y-4 text-xs">
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-2">
@@ -161,121 +160,99 @@ export const BimiAvatarDrawer: React.FC<BimiAvatarDrawerProps> = ({
                 Why your avatar isn't showing yet in Gmail
               </span>
               <p className="text-emerald-950 font-medium leading-relaxed">
-                Google <strong>strictly requires a Verified Mark Certificate (VMC)</strong> for BIMI logos to display in Gmail. Without a VMC (which costs ~$1,500/year), Gmail suppresses the BIMI DNS logo and shows a letter circle.
+                Google <strong>strictly requires a Verified Mark Certificate (VMC)</strong> for BIMI logos to display in Gmail. Without a VMC (~$1,500/year), Gmail suppresses the BIMI DNS logo.
               </p>
               <p className="text-emerald-900 font-bold">
-                Follow this free 2-minute method to get your Pyrexx AI logo into 100% of Gmail inboxes immediately:
+                Follow this free 2-minute method to display your logo in Gmail inboxes immediately:
               </p>
             </div>
 
-            <ol className="list-decimal pl-4 space-y-2.5 text-zinc-700 font-medium leading-relaxed">
+            <ol className="list-decimal pl-4 space-y-2.5 text-royal-950/80 font-medium leading-relaxed">
               <li>
-                Open an Incognito/Private window and visit{' '}
-                <a
-                  href="https://accounts.google.com/signup"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 font-bold underline"
-                >
-                  accounts.google.com/signup ↗
+                Open an Incognito window and visit{' '}
+                <a href="https://accounts.google.com/signup" target="_blank" rel="noreferrer" className="text-royal-700 font-bold underline">
+                  accounts.google.com/signup
                 </a>
               </li>
+              <li>Select <strong>"For my personal use"</strong>. Enter your name and birthday.</li>
               <li>
-                Select <strong>"For my personal use"</strong>. Enter your name and birthday.
-              </li>
-              <li>
-                When prompted to pick a Gmail address, click:{' '}
-                <span className="font-bold text-zinc-900 bg-zinc-100 px-1.5 py-0.5 rounded border border-zinc-200">
+                When prompted to pick a Gmail address, click{' '}
+                <span className="font-bold text-royal-950 bg-thistle-100 px-1.5 py-0.5 rounded border border-gold-500/35">
                   "Use my current email address instead"
                 </span>.
               </li>
               <li>
-                Enter your custom domain sender email (e.g.,{' '}
-                <code className="font-mono text-blue-700 font-bold">alex@{domain.domainName}</code>).
+                Enter your custom domain sender email (e.g., <code className="font-mono text-royal-700 font-bold">alex@{domain.domainName}</code>).
               </li>
-              <li>
-                Google will send a 6-digit confirmation code. Check your Midas{' '}
-                <strong>Unified Inbox</strong> to grab the code.
-              </li>
+              <li>Google will send a 6-digit confirmation code. Check your Midas <strong>Unified Inbox</strong> to grab the code.</li>
               <li>
                 Go to{' '}
-                <a
-                  href="https://myaccount.google.com"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 font-bold underline"
-                >
-                  myaccount.google.com ↗
+                <a href="https://myaccount.google.com" target="_blank" rel="noreferrer" className="text-royal-700 font-bold underline">
+                  myaccount.google.com
                 </a>
-                , click the <strong>Profile Picture</strong> icon, and upload the Pyrexx AI logo.
+                , click the <strong>Profile Picture</strong> icon, and upload your brand logo.
               </li>
             </ol>
 
-            <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl text-zinc-600 text-[11px]">
-              ✨ <strong>Immediate Effect:</strong> Every Gmail user receiving emails from this address will now see your official logo beside your messages in the inbox.
+            <div className="p-3 bg-thistle-50 border border-gold-500/35 rounded-xl text-royal-800 text-[11px] flex items-center gap-2">
+              <Icons.Sparkles className="text-gold-600" />
+              <span><strong>Immediate Effect:</strong> Gmail recipients will see your official logo beside messages from this address.</span>
             </div>
           </div>
         )}
 
-        {/* TAB 2: PYREXX AI COMPLIANT SVG TINY P/S ASSET */}
         {activeSubTab === 'svg_code' && (
           <div className="space-y-4 text-xs">
-            <p className="text-zinc-600 leading-relaxed">
-              BIMI strictly forbids raster images (PNG/JPEG) embedded inside SVG files. Here is the clean, validated vector code for Pyrexx AI, formatted to strict <strong>SVG Tiny 1.2 P/S</strong> specifications with circular safe-zone padding.
+            <p className="text-royal-950/75 leading-relaxed">
+              BIMI strictly forbids raster images embedded inside SVG files. Below is clean vector code formatted to <strong>SVG Tiny 1.2 P/S</strong> specifications.
             </p>
 
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-lg">
-              <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-900 border-b border-zinc-800">
-                <span className="text-[11px] font-mono font-bold text-zinc-400">bimi-logo.svg (SVG Tiny 1.2 P/S)</span>
+            <div className="rounded-2xl border border-gold-500/45 bg-royal-950 overflow-hidden shadow-lg">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-royal-800/70 border-b border-gold-500/35">
+                <span className="text-[11px] font-mono font-bold text-thistle-300">bimi-logo.svg (SVG Tiny 1.2 P/S)</span>
                 <button
                   type="button"
                   onClick={copySvgCode}
-                  className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border border-zinc-700/80 shadow-2xs"
+                  className="px-3 py-1 bg-royal-950 hover:bg-royal-700 text-thistle-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border border-gold-500/35"
                 >
-                  {copiedSvg ? (
-                    <>
-                      <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                      </svg>
-                      <span className="text-emerald-300">Copied SVG!</span>
-                    </>
-                  ) : (
-                    <span>1-Click Copy SVG</span>
-                  )}
+                  {copiedSvg ? <Icons.CheckCircle className="text-emerald-400" /> : <Icons.Copy className="text-gold-400" />}
+                  <span>{copiedSvg ? 'Copied SVG!' : 'Copy SVG'}</span>
                 </button>
               </div>
-              <pre className="p-4 text-zinc-200 font-mono text-[11px] overflow-x-auto whitespace-pre leading-relaxed max-h-60">
+              <pre className="p-4 text-thistle-100 font-mono text-[11px] overflow-x-auto whitespace-pre leading-relaxed max-h-60">
                 {pyrexxSvgSnippet}
               </pre>
             </div>
 
-            <p className="text-[11px] text-zinc-500">
-              Save this file as <code className="bg-zinc-100 px-1 py-0.5 rounded font-bold font-mono">bimi-logo.svg</code> and upload it to your public website at <code className="bg-zinc-100 px-1 py-0.5 rounded font-bold font-mono">https://{domain.domainName}/.well-known/bimi-logo.svg</code>.
+            <p className="text-[11px] text-thistle-500">
+              Save as <code className="bg-thistle-100 px-1 py-0.5 rounded font-bold font-mono">bimi-logo.svg</code> and host at <code className="bg-thistle-100 px-1 py-0.5 rounded font-bold font-mono">https://{domain.domainName}/.well-known/bimi-logo.svg</code>.
             </p>
           </div>
         )}
 
-        {/* TAB 3: BIMI & DMARC DNS CONFIGURATION */}
         {activeSubTab === 'bimi' && (
           <form onSubmit={handleSaveBimi} className="space-y-4">
-            <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2 text-xs">
+            <div className="p-4 bg-thistle-50 border border-gold-500/35 rounded-xl space-y-2 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase text-zinc-400">DMARC Policy Check</span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                <span className="text-[10px] font-bold uppercase text-thistle-500">DMARC Policy Check</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                   dmarcReport?.bimiReady
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-50 text-amber-800 border-gold-400/50'
                 }`}>
                   {checkingDmarc ? 'Inspecting DNS...' : `Policy: ${dmarcReport?.policy?.toUpperCase() || 'NONE'}`}
                 </span>
               </div>
-              <p className="text-zinc-600">
-                {dmarcReport?.bimiReady
-                  ? '✓ DMARC policy is strictly enforced (quarantine/reject). BIMI DNS verification can proceed for Apple Mail and Yahoo.'
-                  : '⚠ BIMI requires DMARC to be published with p=quarantine or p=reject. Update your _dmarc DNS TXT record to enable avatar support.'}
+              <p className="text-royal-950/80 flex items-center gap-1.5">
+                {dmarcReport?.bimiReady ? <Icons.CheckCircle className="text-emerald-600" /> : <Icons.Warning className="text-amber-700" />}
+                <span>
+                  {dmarcReport?.bimiReady
+                    ? 'DMARC policy is strictly enforced (quarantine/reject). BIMI DNS verification ready for Apple Mail and Yahoo.'
+                    : 'BIMI requires DMARC published with p=quarantine or p=reject. Update your _dmarc DNS TXT record first.'}
+                </span>
               </p>
               {dmarcReport?.record && (
-                <p className="font-mono text-[10px] text-zinc-400 bg-white p-2 rounded border border-zinc-100 truncate">
+                <p className="font-mono text-[10px] text-thistle-500 bg-white p-2 rounded border border-gold-500/30 truncate">
                   {dmarcReport.record}
                 </p>
               )}
@@ -283,52 +260,52 @@ export const BimiAvatarDrawer: React.FC<BimiAvatarDrawerProps> = ({
 
             <div className="flex items-center justify-between pt-2">
               <div>
-                <label className="block text-xs font-bold text-zinc-800">Enable BIMI Avatar for Domain</label>
-                <p className="text-[11px] text-zinc-400">Instructs mail clients to load your brand SVG logo.</p>
+                <label className="block text-xs font-bold text-royal-950">Enable BIMI Avatar for Domain</label>
+                <p className="text-[11px] text-thistle-500">Instructs mail clients to load your brand SVG logo.</p>
               </div>
               <input
                 type="checkbox"
                 checked={bimiEnabled}
                 disabled={!dmarcReport?.bimiReady}
                 onChange={(e) => setBimiEnabled(e.target.checked)}
-                className="h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-0 disabled:opacity-40"
+                className="h-4 w-4 rounded border-thistle-400 text-royal-700 focus:ring-0 disabled:opacity-40"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">SVG Tiny 1.2 Logo URL</label>
+              <label className="block text-xs font-bold text-royal-800 uppercase mb-1">SVG Tiny 1.2 Logo URL</label>
               <input
                 type="url"
                 value={bimiSvgUrl}
                 onChange={(e) => setBimiSvgUrl(e.target.value)}
                 placeholder={`https://${domain.domainName}/.well-known/bimi-logo.svg`}
-                className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+                className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-mono focus:outline-none focus:border-gold-500"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">VMC Certificate URL (Optional - For Gmail Blue Checkmark)</label>
+              <label className="block text-xs font-bold text-royal-800 uppercase mb-1">VMC Certificate URL (Optional)</label>
               <input
                 type="url"
                 value={bimiVmcUrl}
                 onChange={(e) => setBimiVmcUrl(e.target.value)}
                 placeholder={`https://${domain.domainName}/.well-known/bimi-vmc.pem`}
-                className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+                className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-mono focus:outline-none focus:border-gold-500"
               />
             </div>
 
-            <div className="pt-4 flex justify-end gap-3 border-t border-zinc-100">
+            <div className="pt-4 flex justify-end gap-3 border-t border-gold-500/35">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-bold text-zinc-600 hover:text-zinc-900"
+                className="px-4 py-2 text-xs font-bold text-thistle-500 hover:text-royal-950"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={savingBimi}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50 transition-colors shadow-xs"
+                className="px-5 py-2 btn-royal text-xs font-bold rounded-xl"
               >
                 {savingBimi ? 'Saving...' : 'Save BIMI Settings'}
               </button>

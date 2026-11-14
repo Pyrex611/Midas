@@ -1,0 +1,36 @@
+name: midas-ci-check
+
+on:
+  push:
+    branches: [main, vercel]
+  pull_request:
+    branches: [main, vercel]
+
+jobs:
+  typecheck-and-build:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/midas_ci
+      VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run dual TypeScript check
+        run: npm run typecheck
+
+      - name: Build server and client
+        run: npm run build
+
+      - name: Build @midas-aem/client package
+        run: cd packages/client && npm ci && npm run build

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { webhookAPI, getErrorMessage } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { Icons } from '../../lib/icons';
 
 interface WebhookSub {
   id: string;
@@ -17,16 +19,17 @@ export const WebhookSettings: React.FC = () => {
   const [subscriptions, setSubscriptions] = useState<WebhookSub[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // New Subscription Form State
   const [targetUrl, setTargetUrl] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<string[]>(['*']);
   const [creating, setCreating] = useState(false);
 
-  // Deliveries Inspection State
   const [inspectingSubId, setInspectingSubId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [loadingDeliveries, setLoadingDeliveries] = useState(false);
   const [pingingId, setPingingId] = useState<string | null>(null);
+
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchSubscriptions = async () => {
     try {
@@ -64,14 +67,18 @@ export const WebhookSettings: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Remove this webhook endpoint? Event deliveries will cease.')) return;
+  const handleConfirmDelete = async () => {
+    if (!deleteTargetId) return;
+    setDeleting(true);
     try {
-      await webhookAPI.delete(id);
+      await webhookAPI.delete(deleteTargetId);
       toast.info('Webhook endpoint removed', 'Deleted');
+      setDeleteTargetId(null);
       await fetchSubscriptions();
     } catch (err: any) {
       toast.error(getErrorMessage(err, 'Could not delete endpoint'), 'Error');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -110,35 +117,34 @@ export const WebhookSettings: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
-        <div>
+      <div className="p-6 card-midas rounded-2xl space-y-4">
+        <div className="pb-3 border-b border-gold-500/35">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-black text-zinc-900 tracking-tight">Bi-Directional CRM & Outbound Webhooks</h3>
-            <span className="text-[10px] uppercase font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md border border-blue-200/60">
-              Feature Rec A
+            <h3 className="text-base font-black text-royal-950 tracking-tight">Bi-Directional CRM &amp; Outbound Webhooks</h3>
+            <span className="text-[10px] uppercase font-bold bg-thistle-100 text-royal-800 px-2 py-0.5 rounded-md border border-gold-500/35">
+              HMAC-SHA256 Signed
             </span>
           </div>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            Receive real-time signed HTTPS events whenever prospects reply, subscribe to Gongs, or trigger deliverability alerts.
+          <p className="text-xs text-thistle-500 mt-0.5">
+            Receive real-time signed HTTPS events whenever prospects reply, subscribe to Gongs, click CTAs, or trip deliverability alerts.
           </p>
         </div>
 
-        {/* Add Webhook Form */}
-        <form onSubmit={handleCreate} className="space-y-3 p-4 bg-zinc-50 border border-zinc-200 rounded-xl text-xs">
+        <form onSubmit={handleCreate} className="space-y-3 p-4 bg-thistle-50/70 border border-gold-500/35 rounded-xl text-xs">
           <div>
-            <label className="block text-[10px] font-bold uppercase text-zinc-500 mb-1">Target Endpoint URL (HTTPS)</label>
+            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Target Endpoint URL (HTTPS)</label>
             <input
               type="url"
               value={targetUrl}
               onChange={(e) => setTargetUrl(e.target.value)}
               placeholder="https://your-crm.com/api/webhooks/midas or https://hooks.zapier.com/..."
               required
-              className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl font-mono text-xs focus:outline-none focus:border-blue-500"
+              className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl font-mono text-xs focus:outline-none focus:border-gold-500"
             />
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold uppercase text-zinc-500 mb-1">Subscribed Events</label>
+            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Subscribed Events</label>
             <div className="flex flex-wrap gap-2 pt-1">
               {[
                 ['*', 'All Events (*)'],
@@ -149,7 +155,7 @@ export const WebhookSettings: React.FC = () => {
               ].map(([ev, label]) => {
                 const checked = selectedEvents.includes(ev);
                 return (
-                  <label key={ev} className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-zinc-200 rounded-lg cursor-pointer">
+                  <label key={ev} className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gold-500/35 rounded-lg cursor-pointer">
                     <input
                       type="checkbox"
                       checked={checked}
@@ -163,9 +169,9 @@ export const WebhookSettings: React.FC = () => {
                           setSelectedEvents(next.length === 0 ? ['*'] : next);
                         }
                       }}
-                      className="rounded border-zinc-300 text-blue-600 focus:ring-0"
+                      className="rounded border-thistle-400 text-royal-700 focus:ring-0"
                     />
-                    <span className="font-medium text-zinc-800 text-[11px]">{label}</span>
+                    <span className="font-medium text-royal-950 text-[11px]">{label}</span>
                   </label>
                 );
               })}
@@ -176,28 +182,28 @@ export const WebhookSettings: React.FC = () => {
             <button
               type="submit"
               disabled={creating || !targetUrl.trim()}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs disabled:opacity-50 transition-colors shadow-xs"
+              className="px-4 py-2 btn-royal font-bold rounded-xl text-xs flex items-center gap-1.5"
             >
-              {creating ? 'Registering Endpoint...' : '+ Add Webhook Endpoint'}
+              <Icons.Plus className="text-gold-300" />
+              <span>{creating ? 'Registering Endpoint...' : 'Add Webhook Endpoint'}</span>
             </button>
           </div>
         </form>
 
-        {/* Existing Endpoints List */}
         <div className="space-y-3 pt-2">
           {loading ? (
-            <div className="py-8 text-center text-xs text-zinc-400">Loading subscriptions...</div>
+            <div className="py-8 text-center text-xs text-thistle-500">Loading subscriptions...</div>
           ) : subscriptions.length === 0 ? (
-            <div className="py-8 text-center text-xs text-zinc-400">No outbound webhook endpoints configured yet.</div>
+            <div className="py-8 text-center text-xs text-thistle-500">No outbound webhook endpoints configured yet.</div>
           ) : (
             subscriptions.map((sub) => (
-              <div key={sub.id} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3 text-xs">
+              <div key={sub.id} className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-xl space-y-3 text-xs">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <div>
-                    <p className="font-mono font-bold text-zinc-900 truncate max-w-lg">{sub.targetUrl}</p>
+                    <p className="font-mono font-bold text-royal-950 truncate max-w-lg">{sub.targetUrl}</p>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[10px] font-mono text-zinc-400">Signing Secret:</span>
-                      <code className="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-zinc-200 text-zinc-700 select-all">
+                      <span className="text-[10px] font-mono text-thistle-500">Signing Secret:</span>
+                      <code className="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-gold-500/35 text-royal-800 select-all">
                         {sub.secret}
                       </code>
                     </div>
@@ -207,51 +213,54 @@ export const WebhookSettings: React.FC = () => {
                     <button
                       onClick={() => handleTestPing(sub.id)}
                       disabled={pingingId === sub.id}
-                      className="px-3 py-1 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold rounded-lg text-[11px] shadow-2xs"
+                      className="px-3 py-1 bg-white border border-gold-500/35 hover:bg-thistle-100 text-royal-800 font-bold rounded-lg text-[11px] flex items-center gap-1"
                     >
-                      {pingingId === sub.id ? 'Pinging...' : '⚡ Test Ping'}
+                      <Icons.Bolt className="text-gold-600" />
+                      <span>{pingingId === sub.id ? 'Pinging...' : 'Test Ping'}</span>
                     </button>
                     <button
                       onClick={() => handleInspect(sub.id)}
-                      className="px-3 py-1 bg-white border border-zinc-200 hover:bg-zinc-100 text-blue-600 font-bold rounded-lg text-[11px] shadow-2xs"
+                      className="px-3 py-1 bg-white border border-gold-500/35 hover:bg-thistle-100 text-royal-700 font-bold rounded-lg text-[11px]"
                     >
                       Logs
                     </button>
                     <button
-                      onClick={() => handleDelete(sub.id)}
-                      className="text-zinc-400 hover:text-rose-600 font-bold text-xs p-1"
+                      onClick={() => setDeleteTargetId(sub.id)}
+                      className="text-thistle-500 hover:text-rose-600 font-bold text-xs p-1"
                     >
                       Delete
                     </button>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-1 pt-1 border-t border-zinc-200/60">
+                <div className="flex flex-wrap gap-1 pt-2 border-t border-gold-500/25">
                   {sub.events.map((ev) => (
-                    <span key={ev} className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-blue-50 text-blue-700">
+                    <span key={ev} className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-thistle-100 text-royal-800 border border-gold-500/25">
                       {ev}
                     </span>
                   ))}
                 </div>
 
-                {/* Live Delivery Inspection Log */}
                 {inspectingSubId === sub.id && (
-                  <div className="mt-3 p-3 bg-white border border-zinc-200 rounded-xl space-y-2 text-[11px] animate-in fade-in duration-100">
-                    <div className="flex items-center justify-between pb-1 border-b border-zinc-100">
-                      <span className="font-bold uppercase text-zinc-500 text-[10px]">Recent Delivery Attempts</span>
-                      <button onClick={() => setInspectingSubId(null)} className="text-zinc-400 hover:text-zinc-600 text-[10px]">✕ Close</button>
+                  <div className="mt-3 p-3 bg-white border border-gold-500/35 rounded-xl space-y-2 text-[11px] animate-in fade-in duration-100">
+                    <div className="flex items-center justify-between pb-1 border-b border-gold-500/25">
+                      <span className="font-bold uppercase text-thistle-500 text-[10px]">Recent Delivery Attempts</span>
+                      <button onClick={() => setInspectingSubId(null)} className="text-thistle-500 hover:text-royal-950 text-[10px] flex items-center gap-1">
+                        <Icons.Close />
+                        <span>Close</span>
+                      </button>
                     </div>
 
                     {loadingDeliveries ? (
-                      <p className="py-2 text-center text-zinc-400">Loading deliveries...</p>
+                      <p className="py-2 text-center text-thistle-500">Loading deliveries...</p>
                     ) : deliveries.length === 0 ? (
-                      <p className="py-2 text-center text-zinc-400">No delivery attempts recorded yet.</p>
+                      <p className="py-2 text-center text-thistle-500">No delivery attempts recorded yet.</p>
                     ) : (
                       deliveries.map((d) => (
-                        <div key={d.id} className="p-2 rounded-lg bg-zinc-50 border border-zinc-100 flex items-center justify-between font-mono text-[10px]">
+                        <div key={d.id} className="p-2 rounded-lg bg-thistle-50 border border-gold-500/25 flex items-center justify-between font-mono text-[10px]">
                           <div>
-                            <span className="font-bold text-zinc-800">{d.event}</span>
-                            <span className="text-zinc-400 ml-2">{new Date(d.createdAt).toLocaleTimeString()}</span>
+                            <span className="font-bold text-royal-950">{d.event}</span>
+                            <span className="text-thistle-500 ml-2">{new Date(d.createdAt).toLocaleTimeString()}</span>
                             {d.error && <p className="text-rose-600 mt-0.5">{d.error}</p>}
                           </div>
                           <div className="flex items-center gap-2">
@@ -260,7 +269,7 @@ export const WebhookSettings: React.FC = () => {
                             }`}>
                               HTTP {d.statusCode || 'ERR'}
                             </span>
-                            <span className="text-zinc-400">{d.durationMs}ms</span>
+                            <span className="text-thistle-500">{d.durationMs}ms</span>
                           </div>
                         </div>
                       ))
@@ -272,6 +281,16 @@ export const WebhookSettings: React.FC = () => {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTargetId)}
+        onClose={() => setDeleteTargetId(null)}
+        onConfirm={handleConfirmDelete}
+        title="Remove Webhook Endpoint"
+        description="Outbound CRM event deliveries to this target URL will stop immediately."
+        confirmLabel="Remove Endpoint"
+        loading={deleting}
+      />
     </div>
   );
 };

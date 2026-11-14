@@ -154,3 +154,4 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
       )}
     </div>
   );
+};
