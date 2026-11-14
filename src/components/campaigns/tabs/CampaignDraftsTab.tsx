@@ -1,6 +1,7 @@
 import React from 'react';
 import { DeliverabilityGrader } from '../DeliverabilityGrader';
 import { SpintaxSimulator } from '../SpintaxSimulator';
+import { Icons } from '../../../lib/icons';
 
 interface CampaignDraftsTabProps {
   campaignId: string;
@@ -25,22 +26,24 @@ export const CampaignDraftsTab: React.FC<CampaignDraftsTabProps> = ({
 }) => {
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Copywriting Variations ({drafts.length})</h3>
+      <div className="flex justify-between items-center pb-3 border-b border-gold-500/35">
+        <h3 className="text-xs font-bold text-thistle-500 uppercase tracking-wider">Copywriting Variations ({drafts.length})</h3>
         {canEdit && (
           <div className="flex gap-2">
             <button
               onClick={onGenerateAiDraft}
               disabled={generatingDraft}
-              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs disabled:opacity-50"
+              className="px-3.5 py-1.5 btn-royal text-xs font-bold rounded-xl flex items-center gap-1.5"
             >
-              {generatingDraft ? 'Synthesizing...' : '✨ Generate AI Variation'}
+              <Icons.Sparkles className="text-gold-300" />
+              <span>{generatingDraft ? 'Synthesizing...' : 'Generate AI Variation'}</span>
             </button>
             <button
               onClick={onOpenCustomDraftModal}
-              className="px-3.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold rounded-xl shadow-xs"
+              className="px-3.5 py-1.5 bg-white hover:bg-thistle-100 border border-gold-500/40 text-royal-800 text-xs font-bold rounded-xl glow-gold-hover flex items-center gap-1.5"
             >
-              + Custom Draft
+              <Icons.Plus className="text-gold-600" />
+              <span>Custom Draft</span>
             </button>
           </div>
         )}
@@ -48,14 +51,14 @@ export const CampaignDraftsTab: React.FC<CampaignDraftsTabProps> = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {drafts.map((draft: any) => (
-          <div key={draft.id} className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
+          <div key={draft.id} className="p-5 card-midas rounded-2xl space-y-4">
             <div className="flex justify-between items-start">
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-thistle-100 text-royal-800 border border-gold-500/35">
                 {draft.tone} ({draft.useCase}{draft.stepNumber ? ` #${draft.stepNumber}` : ''})
               </span>
               {canEdit && (
                 <div className="flex gap-3 text-xs font-bold">
-                  <button onClick={() => onEditDraft(draft)} className="text-blue-600 hover:underline">
+                  <button onClick={() => onEditDraft(draft)} className="text-royal-700 hover:underline">
                     Edit
                   </button>
                   <button onClick={() => onDeleteDraft(draft.id)} className="text-rose-600 hover:underline">
@@ -65,18 +68,17 @@ export const CampaignDraftsTab: React.FC<CampaignDraftsTabProps> = ({
               )}
             </div>
 
-            <h4 className="text-sm font-bold text-zinc-900">{draft.subject}</h4>
-            <p className="text-xs text-zinc-600 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
+            <h4 className="text-sm font-bold text-royal-950">{draft.subject}</h4>
+            <p className="text-xs text-royal-950/75 whitespace-pre-wrap font-sans line-clamp-4">{draft.body}</p>
 
-            {/* Per-Draft Real Analytics Display */}
-            <div className="p-2.5 bg-zinc-50 border border-zinc-200/80 rounded-xl flex items-center justify-between text-[11px] text-zinc-600">
-              <div>Sent: <strong className="text-zinc-900">{draft.sentCount || 0}</strong></div>
-              <div>Opens: <strong className="text-blue-700">{draft.openCount || 0} ({draft.openRate || 0}%)</strong></div>
-              <div>Clicks: <strong className="text-purple-700">{draft.clickCount || 0} ({draft.clickRate || 0}%)</strong></div>
+            <div className="p-2.5 bg-thistle-50/80 border border-gold-500/35 rounded-xl flex items-center justify-between text-[11px] text-thistle-500">
+              <div>Sent: <strong className="text-royal-950">{draft.sentCount || 0}</strong></div>
+              <div>Opens: <strong className="text-royal-700">{draft.openCount || 0} ({draft.openRate || 0}%)</strong></div>
+              <div>Clicks: <strong className="text-royal-600">{draft.clickCount || 0} ({draft.clickRate || 0}%)</strong></div>
               <div>Replies: <strong className="text-emerald-700">{draft.replyCount || 0} ({draft.replyRate || 0}%)</strong></div>
             </div>
 
-            <div className="space-y-3 pt-3 border-t border-zinc-100">
+            <div className="space-y-3 pt-3 border-t border-gold-500/30">
               <DeliverabilityGrader
                 campaignId={campaignId}
                 subject={draft.subject}

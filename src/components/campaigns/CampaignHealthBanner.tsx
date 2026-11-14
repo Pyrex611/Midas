@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icons } from '../../lib/icons';
 
 export interface HealthAlert {
   severity: 'error' | 'warning' | 'info';
@@ -36,19 +37,23 @@ export const CampaignHealthBanner: React.FC<CampaignHealthBannerProps> = ({
             key={idx}
             className={`p-4 rounded-2xl border shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-150 ${
               isError
-                ? 'bg-rose-50 border-rose-200 text-rose-950'
+                ? 'bg-rose-50 border-rose-300 text-rose-950'
                 : isWarning
-                ? 'bg-amber-50 border-amber-200 text-amber-950'
-                : 'bg-blue-50 border-blue-200 text-blue-950'
+                ? 'bg-amber-50 border-gold-500/50 text-amber-950'
+                : 'bg-white border-gold-500/40 text-royal-950'
             }`}
           >
             <div className="flex items-center gap-3">
               <div
-                className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 font-bold ${
-                  isError ? 'bg-rose-200 text-rose-800' : isWarning ? 'bg-amber-200 text-amber-800' : 'bg-blue-200 text-blue-800'
+                className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  isError
+                    ? 'bg-rose-200 text-rose-800'
+                    : isWarning
+                    ? 'bg-gold-200 text-amber-900'
+                    : 'bg-thistle-100 text-royal-700 border border-gold-500/35'
                 }`}
               >
-                {isError ? '!' : isWarning ? '⏸' : 'i'}
+                {isError || isWarning ? <Icons.Warning /> : <Icons.Bolt className="text-gold-600" />}
               </div>
               <div>
                 <p className="text-xs font-bold">{alert.title}</p>
@@ -63,9 +68,7 @@ export const CampaignHealthBanner: React.FC<CampaignHealthBannerProps> = ({
                 className={`px-4 py-1.5 rounded-xl text-xs font-bold shadow-xs transition-colors whitespace-nowrap self-end sm:self-center ${
                   isError
                     ? 'bg-rose-600 hover:bg-rose-700 text-white'
-                    : isWarning
-                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'btn-royal'
                 }`}
               >
                 {isDispatchingNow && alert.actionType === 'DISPATCH_NOW'

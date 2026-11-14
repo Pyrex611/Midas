@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { campaignAPI, senderAPI, getErrorMessage } from '../services/api';
 import { Sheet } from '../components/common/Sheet';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { SequenceCanvas } from '../components/campaigns/SequenceCanvas';
 import { LeadDrawer } from '../components/leads/LeadDrawer';
 import { UploadArea } from '../components/UploadArea';
@@ -17,6 +18,7 @@ import { CampaignAutomationTab } from '../components/campaigns/tabs/CampaignAuto
 import { CampaignSettingsTab } from '../components/campaigns/tabs/CampaignSettingsTab';
 import { DrilldownDrawer } from '../components/campaigns/DrilldownDrawer';
 import { useToast } from '../context/ToastContext';
+import { Icons } from '../lib/icons';
 
 type TabType = 'dashboard' | 'flow' | 'leads' | 'drafts' | 'automation' | 'settings';
 type DrilldownCategory = 'ALL' | 'CONTACTED' | 'OPENED' | 'CLICKED' | 'REPLIED' | 'BOUNCED' | 'UNSUBSCRIBED';
@@ -32,30 +34,24 @@ export const CampaignDetail: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
 
-  // Interactive Lead Drilldown Sheet State
   const [drilldownCategory, setDrilldownCategory] = useState<DrilldownCategory | null>(null);
   const [drilldownSearch, setDrilldownSearch] = useState('');
 
-  // Push-Notification Health Alert Banner State
   const [healthAlerts, setHealthAlerts] = useState<HealthAlert[]>([]);
   const [isDispatchingNow, setIsDispatchingNow] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
   const [isRepersonalizing, setIsRepersonalizing] = useState(false);
 
-  // In-Campaign Direct Upload Drawer
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(false);
 
-  // Modals State
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showStrategyModal, setShowStrategyModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
 
-  // Lead Inspector Drawer
   const [previewLead, setPreviewLead] = useState<any | null>(null);
   const [isLeadDrawerOpen, setIsLeadDrawerOpen] = useState(false);
 
-  // Draft Editor Drawer State
   const [isDraftDrawerOpen, setIsDraftDrawerOpen] = useState(false);
   const [editingDraft, setEditingDraft] = useState<any | null>(null);
   const [draftSubject, setDraftSubject] = useState('');
@@ -63,12 +59,13 @@ export const CampaignDetail: React.FC = () => {
   const [savingDraft, setSavingDraft] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
-  // Senders Rotation State
+  const [pendingDeleteDraftId, setPendingDeleteDraftId] = useState<string | null>(null);
+  const [deletingDraft, setDeletingDraft] = useState(false);
+
   const [userSenders, setUserSenders] = useState<any[]>([]);
   const [campaignSenderIds, setCampaignSenderIds] = useState<Set<string>>(new Set());
   const [updatingSender, setUpdatingSender] = useState(false);
 
-  // Automation State
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [savingAutoReply, setSavingAutoReply] = useState(false);
   const [sendHourUTC, setSendHourUTC] = useState(9);
@@ -85,11 +82,6 @@ export const CampaignDetail: React.FC = () => {
   const canEdit = role === 'OWNER' || role === 'EDITOR';
   const canDelete = role === 'OWNER';
 
-  /**
-   * FLICKER-FREE REFETCH:
-   * Only sets initialLoading on the absolute first mount.
-   * All subsequent revalidations run strictly in the background without unmounting the DOM.
-   */
   const fetchCampaign = useCallback(async () => {
     if (!id) return;
     if (isFirstLoadRef.current) {
@@ -135,7 +127,6 @@ export const CampaignDetail: React.FC = () => {
     fetchSenders();
   }, [id]);
 
-  // Actions
   const handleReconcileQueue = async () => {
     if (!id) return;
     setIsReconciling(true);
@@ -293,15 +284,18 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  const handleDeleteDraft = async (draftId: string) => {
-    if (!id) return;
-    if (!confirm('Are you sure you want to delete this draft variation?')) return;
+  const handleConfirmDeleteDraft = async () => {
+    if (!id || !pendingDeleteDraftId) return;
+    setDeletingDraft(true);
     try {
-      await campaignAPI.deleteDraft(id, draftId);
+      await campaignAPI.deleteDraft(id, pendingDeleteDraftId);
       toast.info('Draft variation deleted', 'Deleted');
+      setPendingDeleteDraftId(null);
       await fetchCampaign();
     } catch {
       toast.error('Could not delete draft', 'Error');
+    } finally {
+      setDeletingDraft(false);
     }
   };
 
@@ -395,9 +389,8 @@ export const CampaignDetail: React.FC = () => {
     }
   };
 
-  // ONLY show full loading indicator on cold first-time mount
   if (initialLoading && !campaign) {
-    return <div className="py-24 text-center text-xs text-zinc-400">Loading campaign workflow...</div>;
+    return <div className="py-24 text-center text-xs text-thistle-500">Loading campaign workflow...</div>;
   }
   if (!campaign) {
     return <div className="py-24 text-center text-rose-500">Campaign not found.</div>;
@@ -459,7 +452,6 @@ export const CampaignDetail: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* 1. Header Bar */}
       <CampaignHeader
         campaign={campaign}
         role={role}
@@ -477,7 +469,6 @@ export const CampaignDetail: React.FC = () => {
         isRepersonalizing={isRepersonalizing}
       />
 
-      {/* 2. Health Alerts Push Banner */}
       <CampaignHealthBanner
         alerts={healthAlerts}
         onAction={handleAlertAction}
@@ -486,9 +477,9 @@ export const CampaignDetail: React.FC = () => {
         isRepersonalizing={isRepersonalizing}
       />
 
-      {/* 3. Navigation Tabs */}
-      <div className="border-b border-zinc-200">
-        <nav className="flex space-x-8">
+      {/* Tabs with Golden Bottom Separator */}
+      <div className="border-b border-gold-500/40">
+        <nav className="flex space-x-8 overflow-x-auto">
           {[
             ['dashboard', 'Overview & Analytics'],
             ['flow', 'Sequence Flow'],
@@ -500,8 +491,10 @@ export const CampaignDetail: React.FC = () => {
             <button
               key={key}
               onClick={() => setActiveTab(key as TabType)}
-              className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors ${
-                activeTab === key ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-900'
+              className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors whitespace-nowrap ${
+                activeTab === key
+                  ? 'border-royal-700 text-royal-800'
+                  : 'border-transparent text-thistle-500 hover:text-royal-800'
               }`}
             >
               {label}
@@ -510,7 +503,6 @@ export const CampaignDetail: React.FC = () => {
         </nav>
       </div>
 
-      {/* TAB 0: OVERVIEW & ANALYTICS DASHBOARD */}
       {activeTab === 'dashboard' && (
         <CampaignOverviewTab
           analytics={analytics}
@@ -524,7 +516,6 @@ export const CampaignDetail: React.FC = () => {
         />
       )}
 
-      {/* TAB 1: VISUAL SEQUENCE FLOW */}
       {activeTab === 'flow' && (
         <div className="space-y-8">
           <SequenceCanvas
@@ -550,7 +541,7 @@ export const CampaignDetail: React.FC = () => {
               <button
                 onClick={handleSaveFollowUpSteps}
                 disabled={savingSteps}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs disabled:opacity-50"
+                className="px-5 py-2.5 btn-royal text-xs font-bold rounded-xl"
               >
                 {savingSteps ? 'Saving...' : 'Save Sequence Timeline'}
               </button>
@@ -559,34 +550,34 @@ export const CampaignDetail: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 2: LEADS LIST */}
       {activeTab === 'leads' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Prospects in this Sequence</span>
+            <span className="text-xs font-bold text-thistle-500 uppercase tracking-wider">Prospects in this Sequence</span>
             {canEdit && (
               <button
                 onClick={() => setIsUploadDrawerOpen(true)}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs"
+                className="px-3.5 py-1.5 btn-royal text-xs font-bold rounded-xl flex items-center gap-1.5"
               >
-                + Upload Leads to Campaign
+                <Icons.Plus className="text-gold-300" />
+                <span>Upload Leads to Campaign</span>
               </button>
             )}
           </div>
 
-          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-xs">
+          <div className="bg-white rounded-2xl border border-gold-500/40 overflow-hidden shadow-xs">
             {(!campaign.leads || campaign.leads.length === 0) ? (
-              <div className="py-20 text-center text-xs text-zinc-400 space-y-2">
+              <div className="py-20 text-center text-xs text-thistle-500 space-y-2">
                 <p>No leads attached to this sequence yet.</p>
                 {canEdit && (
-                  <button onClick={() => setIsUploadDrawerOpen(true)} className="text-blue-600 font-bold hover:underline">
+                  <button onClick={() => setIsUploadDrawerOpen(true)} className="text-royal-700 font-bold hover:underline">
                     Upload and map your first lead list
                   </button>
                 )}
               </div>
             ) : (
-              <table className="min-w-full divide-y divide-zinc-100 text-left text-xs">
-                <thead className="bg-zinc-50/75 text-zinc-500 font-bold uppercase tracking-wider">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left text-xs">
+                <thead className="bg-thistle-100/75 text-royal-800 font-bold uppercase tracking-wider border-b border-gold-500/35">
                   <tr>
                     <th className="py-3 px-4">Name</th>
                     <th className="py-3 px-4">Email</th>
@@ -594,7 +585,7 @@ export const CampaignDetail: React.FC = () => {
                     <th className="py-3 px-4">Outreach Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+                <tbody className="divide-y divide-gold-500/20 font-medium text-royal-950">
                   {campaign.leads.map((l: any) => (
                     <tr
                       key={l.id}
@@ -602,13 +593,13 @@ export const CampaignDetail: React.FC = () => {
                         setPreviewLead(l);
                         setIsLeadDrawerOpen(true);
                       }}
-                      className="hover:bg-zinc-50 cursor-pointer transition-colors"
+                      className="hover:bg-thistle-50/80 cursor-pointer transition-colors"
                     >
-                      <td className="py-3 px-4 font-bold text-zinc-900">{l.name}</td>
-                      <td className="py-3 px-4 font-mono text-zinc-500">{l.email}</td>
-                      <td className="py-3 px-4 text-zinc-600">{l.company || '—'}</td>
+                      <td className="py-3 px-4 font-bold text-royal-950">{l.name}</td>
+                      <td className="py-3 px-4 font-mono text-thistle-500">{l.email}</td>
+                      <td className="py-3 px-4 text-royal-950/75">{l.company || '—'}</td>
                       <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-zinc-100 text-zinc-700">
+                        <span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-thistle-100 text-royal-800 border border-gold-500/30">
                           {l.outreachStatus || l.status}
                         </span>
                       </td>
@@ -621,7 +612,6 @@ export const CampaignDetail: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 3: DRAFTS & COPYWRITING VARIATIONS */}
       {activeTab === 'drafts' && (
         <CampaignDraftsTab
           campaignId={campaign.id}
@@ -630,12 +620,11 @@ export const CampaignDetail: React.FC = () => {
           onGenerateAiDraft={handleGenerateAiDraft}
           onOpenCustomDraftModal={() => handleOpenDraftDrawer()}
           onEditDraft={handleOpenDraftDrawer}
-          onDeleteDraft={handleDeleteDraft}
+          onDeleteDraft={(draftId) => setPendingDeleteDraftId(draftId)}
           generatingDraft={generatingDraft}
         />
       )}
 
-      {/* TAB 4: AUTOMATION RULES */}
       {activeTab === 'automation' && (
         <CampaignAutomationTab
           canEdit={canEdit}
@@ -657,7 +646,6 @@ export const CampaignDetail: React.FC = () => {
         />
       )}
 
-      {/* TAB 5: SETTINGS & SENDER ROTATION */}
       {activeTab === 'settings' && (
         <CampaignSettingsTab
           campaign={campaign}
@@ -670,7 +658,6 @@ export const CampaignDetail: React.FC = () => {
         />
       )}
 
-      {/* DRAWERS & MODALS */}
       <DrilldownDrawer
         isOpen={Boolean(drilldownCategory)}
         onClose={() => {
@@ -719,35 +706,47 @@ export const CampaignDetail: React.FC = () => {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Subject Line</label>
+            <label className="block text-xs font-bold text-royal-800 uppercase mb-1">Subject Line</label>
             <input
               type="text"
               value={draftSubject}
               onChange={(e) => setDraftSubject(e.target.value)}
-              className="w-full px-3 py-2 border border-zinc-200 rounded-xl text-xs font-medium focus:outline-none focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gold-500/35 rounded-xl text-xs font-medium focus:outline-none focus:border-gold-500"
             />
           </div>
           <div>
-            <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Body Text</label>
+            <label className="block text-xs font-bold text-royal-800 uppercase mb-1">Body Text</label>
             <textarea
               rows={10}
               value={draftBody}
               onChange={(e) => setDraftBody(e.target.value)}
-              className="w-full p-3 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+              className="w-full p-3 border border-gold-500/35 rounded-xl text-xs font-mono focus:outline-none focus:border-gold-500"
             />
           </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
-            <button onClick={() => setIsDraftDrawerOpen(false)} className="px-3 py-1.5 text-xs text-zinc-600">Cancel</button>
+          <div className="flex justify-end gap-2 pt-3 border-t border-gold-500/35">
+            <button onClick={() => setIsDraftDrawerOpen(false)} className="px-3 py-1.5 text-xs text-thistle-500 hover:text-royal-950 font-bold">
+              Cancel
+            </button>
             <button
               onClick={handleSaveDraft}
               disabled={savingDraft}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50"
+              className="px-4 py-2 btn-royal text-xs font-bold rounded-xl"
             >
               {savingDraft ? 'Saving...' : 'Save Draft'}
             </button>
           </div>
         </div>
       </Sheet>
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingDeleteDraftId)}
+        onClose={() => setPendingDeleteDraftId(null)}
+        onConfirm={handleConfirmDeleteDraft}
+        title="Delete Draft Variation"
+        description="Are you sure you want to permanently delete this email draft variation?"
+        confirmLabel="Delete Draft"
+        loading={deletingDraft}
+      />
 
       <RenameCampaignModal isOpen={showRenameModal} onClose={() => setShowRenameModal(false)} campaign={campaign} onSuccess={() => fetchCampaign()} />
       <DeleteCampaignModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={handleDeleteCampaign} campaignName={campaign.name} />

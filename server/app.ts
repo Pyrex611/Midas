@@ -5,6 +5,7 @@ import { logger } from './config/logger';
 import { requireAuth } from './middleware/auth.middleware';
 import { requireAuthOrApiKey } from './middleware/dualAuth.middleware';
 import { requestTimeoutGuard } from './middleware/requestTimeoutGuard.middleware';
+import { createRateLimiter, limitMetadataSize } from './middleware/rateLimit.middleware';
 import cronRoutes from './routes/cron.routes';
 import leadRoutes from './routes/lead.routes';
 import campaignRoutes from './routes/campaign.routes';
@@ -73,14 +74,30 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use(requestTimeoutGuard(15000));
 
+// Public Rate Limiters
+const publicSubscribeLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyPrefix: 'tc_sub',
+  message: 'Subscription rate limit exceeded. Please wait a minute before retrying.',
+});
+
+const publicTelemetryLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 300,
+  keyPrefix: 'pub_tel',
+});
+
 // Public Webhooks, Tracking & Embeddable Scripts
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/config', configRoutes);
-app.use('/api/unsubscribe', unsubscribeRoutes);
-app.use('/api/track', trackRoutes);
+app.use('/api/unsubscribe', publicTelemetryLimiter, unsubscribeRoutes);
+app.use('/api/track', publicTelemetryLimiter, trackRoutes);
 
-// Public Town Crier Universal Subscriber API & Widget
+// Public Town Crier Universal Subscriber API & Widget (Rate-Limited + Metadata Bounded)
+app.post('/api/public/town-crier/subscribe', publicSubscribeLimiter, limitMetadataSize(16384));
+app.post('/api/public/town-crier/recipients/import', publicSubscribeLimiter);
 app.use('/api/public/town-crier', townCrierPublicRoutes);
 
 // Dual-Authed Core Routes (Accepts Clerk Session OR Scoped API Keys)

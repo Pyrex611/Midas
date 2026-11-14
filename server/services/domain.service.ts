@@ -21,13 +21,14 @@ export class DomainService {
   private sanitize(domain: any) {
     if (!domain) return domain;
     const { mailgunApiKeyEncrypted, ...rest } = domain;
-    return { ...rest, hasMailgunKey: !!mailgunApiKeyEncrypted };
+    const keyDecryptionFailed = Boolean(mailgunApiKeyEncrypted) && !tryDecrypt(mailgunApiKeyEncrypted);
+    return {
+      ...rest,
+      hasMailgunKey: !!mailgunApiKeyEncrypted,
+      keyDecryptionFailed,
+    };
   }
 
-  /**
-   * Authoritative DNS DMARC Policy Inspector (Initiative 4 / Sprint B.1):
-   * Queries _dmarc.<domain> via DNS TXT records and evaluates quarantine / reject enforcement.
-   */
   async checkDmarcPolicy(domainName: string): Promise<{
     policy: 'none' | 'quarantine' | 'reject' | 'missing';
     record?: string;
@@ -42,7 +43,6 @@ export class DomainService {
       const bimiReady = policy === 'quarantine' || policy === 'reject';
       return { policy, record: flat, bimiReady };
     } catch {
-      // If subdomain fails, query organizational parent root
       const parts = cleanDomain.split('.');
       if (parts.length > 2) {
         const rootDomain = parts.slice(-2).join('.');
@@ -236,7 +236,7 @@ export class DomainService {
     if (!domain.mailgunApiKeyEncrypted) throw new Error('No Mailgun API key is set for this domain');
 
     const key = tryDecrypt(domain.mailgunApiKeyEncrypted);
-    if (!key) throw new Error('Could not decrypt the stored Mailgun key — please reconnect this domain with the key again');
+    if (!key) throw new Error('Could not decrypt the stored Mailgun key (ENCRYPTION_KEY may have changed) — please reconnect this domain.');
 
     await this.sendTestEmail(domain.domainName, key, domain.mailgunRegion, testRecipientEmail);
 
@@ -303,7 +303,14 @@ export class DomainService {
   }
 
   getMailgunContextForDomain(domain: { mailgunApiKeyEncrypted?: string | null; mailgunRegion?: string | null }): { authHeader: string; baseUrl: string } {
-    const key = tryDecrypt(domain.mailgunApiKeyEncrypted) || process.env.MAILGUN_API_KEY;
+    if (domain.mailgunApiKeyEncrypted) {
+      const decrypted = tryDecrypt(domain.mailgunApiKeyEncrypted);
+      if (!decrypted) {
+        throw new Error('Stored Mailgun key could not be decrypted (ENCRYPTION_KEY mismatch) — reconnect the domain.');
+      }
+      return { authHeader: this.authHeaderFor(decrypted), baseUrl: this.baseUrlFor(domain.mailgunRegion) };
+    }
+    const key = process.env.MAILGUN_API_KEY;
     if (!key) throw new Error('No Mailgun API key available for this domain');
     return { authHeader: this.authHeaderFor(key), baseUrl: this.baseUrlFor(domain.mailgunRegion) };
   }

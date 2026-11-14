@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import prisma from '../lib/prisma';
-import { encrypt } from '../lib/encryption';
+import { encrypt, tryDecrypt } from '../lib/encryption';
 
 export const getSettings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -11,13 +11,16 @@ export const getSettings = async (req: AuthRequest, res: Response, next: NextFun
     });
 
     if (!settings) {
-      return res.json({ hasAiApiKey: false, brandingEnabled: false });
+      return res.json({ hasAiApiKey: false, aiKeyDecryptionFailed: false, brandingEnabled: false });
     }
 
     const { aiApiKeyEncrypted, ...safeSettings } = settings;
+    const aiKeyDecryptionFailed = Boolean(aiApiKeyEncrypted) && !tryDecrypt(aiApiKeyEncrypted);
+
     res.json({
       ...safeSettings,
       hasAiApiKey: Boolean(aiApiKeyEncrypted),
+      aiKeyDecryptionFailed,
     });
   } catch (error) {
     next(error);
@@ -45,6 +48,7 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       brandInitials,
       logoUrl,
       brandingEnabled,
+      dedicatedNewsletterSenderId,
     } = req.body;
 
     const data: Record<string, any> = {};
@@ -76,7 +80,6 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       data.customOptOutText = typeof customOptOutText === 'string' ? customOptOutText.trim() : null;
     }
 
-    // Branding Settings
     if (brandColorHex !== undefined) {
       data.brandColorHex = typeof brandColorHex === 'string' ? brandColorHex.trim() : null;
     }
@@ -90,7 +93,21 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       data.brandingEnabled = Boolean(brandingEnabled);
     }
 
-    // AI Provider & Model Configuration
+    if (dedicatedNewsletterSenderId !== undefined) {
+      if (!dedicatedNewsletterSenderId) {
+        data.dedicatedNewsletterSenderId = null;
+      } else {
+        const sender = await prisma.sender.findFirst({
+          where: { id: String(dedicatedNewsletterSenderId).trim(), userId },
+          select: { id: true },
+        });
+        if (!sender) {
+          return res.status(404).json({ error: 'Selected dedicated newsletter sender not found on your account' });
+        }
+        data.dedicatedNewsletterSenderId = sender.id;
+      }
+    }
+
     if (aiProvider !== undefined) {
       if (aiProvider !== null && !VALID_PROVIDERS.includes(aiProvider)) {
         return res.status(400).json({ error: `aiProvider must be one of: ${VALID_PROVIDERS.join(', ')}` });
@@ -122,6 +139,7 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
     res.json({
       ...safeSettings,
       hasAiApiKey: Boolean(aiApiKeyEncrypted),
+      aiKeyDecryptionFailed: false,
     });
   } catch (error) {
     next(error);

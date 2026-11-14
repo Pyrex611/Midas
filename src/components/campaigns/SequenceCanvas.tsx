@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icons } from '../../lib/icons';
 
 interface FollowUpStep {
   id?: string;
@@ -34,21 +35,21 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
       {/* Node 1: Initial Touchpoint */}
       <div className="flex items-start gap-4">
         <div className="flex flex-col items-center">
-          <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white font-black text-sm flex items-center justify-center shadow-md">
+          <div className="w-10 h-10 rounded-2xl bg-royal-700 text-gold-300 border border-gold-400/60 font-black text-sm flex items-center justify-center shadow-md">
             1
           </div>
-          <div className="w-0.5 h-16 bg-blue-200" />
+          <div className="w-0.5 h-16 bg-gold-500/45" />
         </div>
-        <div className="flex-1 p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">Step 1: Initial Cold Outreach</span>
-            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-bold border border-emerald-200/50">
+        <div className="flex-1 p-5 card-midas rounded-2xl space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className="text-xs font-bold text-royal-700 uppercase tracking-wider">Step 1: Initial Cold Outreach</span>
+            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-bold border border-emerald-200">
               {initialDrafts.length} Draft Variant(s) Ready
             </span>
           </div>
-          <p className="text-xs text-zinc-600">
+          <p className="text-xs text-royal-950/75">
             {initialDrafts[0]?.subject ? (
-              <span>Template: <strong className="text-zinc-900 font-medium font-sans">"{initialDrafts[0].subject}"</strong></span>
+              <span>Template: <strong className="text-royal-950 font-semibold font-sans">"{initialDrafts[0].subject}"</strong></span>
             ) : (
               'Outreach fires automatically based on mailbox warmup quotas and active sending hours.'
             )}
@@ -64,25 +65,27 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
         return (
           <div key={index} className="flex items-start gap-4">
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-2xl bg-zinc-900 text-white font-black text-sm flex items-center justify-center shadow-md">
+              <div className="w-10 h-10 rounded-2xl bg-royal-950 text-gold-400 border border-gold-500/40 font-black text-sm flex items-center justify-center shadow-md">
                 {step.stepNumber + 1}
               </div>
-              {index < steps.length - 1 && <div className="w-0.5 h-16 bg-zinc-200" />}
+              {index < steps.length - 1 && <div className="w-0.5 h-16 bg-gold-500/45" />}
             </div>
 
-            <div className="flex-1 p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="flex-1 p-5 card-midas rounded-2xl space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider">
+                  <span className="text-xs font-bold text-royal-800 uppercase tracking-wider">
                     Follow-Up Step #{step.stepNumber}
                   </span>
                   {hasDraft ? (
-                    <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded font-bold">
-                      ✓ {stepDrafts.length} Copy Draft Ready
+                    <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-bold inline-flex items-center gap-1">
+                      <Icons.CheckCircle className="text-[11px]" />
+                      <span>{stepDrafts.length} Copy Draft Ready</span>
                     </span>
                   ) : (
-                    <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200/60 px-2 py-0.5 rounded font-bold">
-                      ⚠ No Draft Attached
+                    <span className="text-[10px] bg-amber-50 text-amber-800 border border-gold-400/50 px-2 py-0.5 rounded font-bold inline-flex items-center gap-1">
+                      <Icons.Warning className="text-[11px]" />
+                      <span>No Draft Attached</span>
                     </span>
                   )}
                 </div>
@@ -90,7 +93,7 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
                 {canEdit && (
                   <button
                     onClick={() => onRemoveStep(index)}
-                    className="text-xs text-zinc-400 hover:text-rose-600 transition-colors"
+                    className="text-xs text-thistle-500 hover:text-rose-600 transition-colors font-semibold"
                   >
                     Remove Step
                   </button>
@@ -98,13 +101,13 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
               </div>
 
               {hasDraft && (
-                <div className="p-3 bg-zinc-50 border border-zinc-100 rounded-xl text-xs space-y-0.5">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase">Attached Copy Subject</p>
-                  <p className="font-semibold text-zinc-800 truncate font-sans">"{stepDrafts[0].subject}"</p>
+                <div className="p-3 bg-thistle-50/70 border border-gold-500/30 rounded-xl text-xs space-y-0.5">
+                  <p className="text-[10px] font-bold text-thistle-500 uppercase">Attached Copy Subject</p>
+                  <p className="font-semibold text-royal-950 truncate font-sans">"{stepDrafts[0].subject}"</p>
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-600">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-royal-950/75">
                 <span>Send after</span>
                 <input
                   type="number"
@@ -113,22 +116,23 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
                   value={step.delayDays}
                   disabled={!canEdit}
                   onChange={(e) => onUpdateDelay(index, Number(e.target.value))}
-                  className="w-16 px-2.5 py-1 bg-zinc-50 border border-zinc-200 rounded-lg text-center font-bold text-zinc-900 focus:outline-none"
+                  className="w-16 px-2.5 py-1 bg-thistle-50 border border-gold-500/40 rounded-lg text-center font-bold text-royal-950 focus:outline-none focus:border-gold-500"
                 />
                 <span>days if prospect has not replied.</span>
               </div>
 
               {canEdit && (
-                <div className="pt-2 border-t border-zinc-100 flex items-center justify-between">
-                  <span className="text-[11px] text-zinc-400">
+                <div className="pt-2 border-t border-gold-500/30 flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-[11px] text-thistle-500">
                     {hasDraft ? 'Generate additional tonal variations:' : 'Required: Generate a draft before step can dispatch'}
                   </span>
                   <button
                     onClick={() => onGenerateDraft(step.stepNumber)}
                     disabled={generatingDraftFor === step.stepNumber}
-                    className="text-xs font-bold text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                    className="text-xs font-bold text-royal-700 hover:text-royal-950 disabled:opacity-50 flex items-center gap-1.5"
                   >
-                    {generatingDraftFor === step.stepNumber ? '✨ Synthesizing Copy...' : '✨ Generate AI Follow-Up Draft'}
+                    <Icons.Sparkles className="text-gold-600" />
+                    <span>{generatingDraftFor === step.stepNumber ? 'Synthesizing Copy...' : 'Generate AI Follow-Up Draft'}</span>
                   </button>
                 </div>
               )}
@@ -137,17 +141,16 @@ export const SequenceCanvas: React.FC<SequenceCanvasProps> = ({
         );
       })}
 
-      {/* Add Step Connector */}
       {canEdit && (
         <div className="pl-14">
           <button
             onClick={onAddStep}
-            className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200/80 border border-zinc-200 text-xs font-bold text-zinc-700 rounded-xl transition-colors"
+            className="px-4 py-2 bg-white hover:bg-thistle-100 border border-gold-500/40 text-xs font-bold text-royal-800 rounded-xl glow-gold-hover flex items-center gap-1.5"
           >
-            + Add Follow-Up Stage
+            <Icons.Plus className="text-gold-600" />
+            <span>Add Follow-Up Stage</span>
           </button>
         </div>
       )}
     </div>
   );
-};

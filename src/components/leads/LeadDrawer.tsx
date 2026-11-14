@@ -3,6 +3,7 @@ import { Sheet } from '../common/Sheet';
 import { campaignAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { Lead } from '../../types/lead';
+import { Icons } from '../../lib/icons';
 
 interface LeadDrawerProps {
   isOpen: boolean;
@@ -27,7 +28,6 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
 
-  // Scheduled Email Edit State
   const [editingScheduledId, setEditingScheduledId] = useState<string | null>(null);
   const [editSubject, setEditSubject] = useState('');
   const [editBody, setEditBody] = useState('');
@@ -143,32 +143,33 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
       width="xl"
     >
       <div className="space-y-6">
-        {/* Attributes */}
-        <div className="flex flex-wrap gap-2 pb-4 border-b border-zinc-100">
-          <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-zinc-100 text-zinc-800">
+        <div className="flex flex-wrap gap-2 pb-4 border-b border-gold-500/35">
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-thistle-100 text-royal-950 border border-gold-500/30">
             Status: {lead.status}
           </span>
-          <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 text-blue-700">
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-royal-700 text-white">
             Outreach: {lead.outreachStatus || 'UNCONTACTED'}
           </span>
           {lead.verificationStatus && (
-            <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg ${
-              lead.verificationStatus === 'VALID' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+            <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg border ${
+              lead.verificationStatus === 'VALID'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-amber-50 text-amber-800 border-gold-400/50'
             }`}>
               {lead.verificationStatus}
             </span>
           )}
         </div>
 
-        {/* 1. UPCOMING SCHEDULED MESSAGES (With Resolved View, In-Place Edit & Send Now) */}
+        {/* Upcoming Scheduled Messages */}
         {scheduledEmails.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-700 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-gold-500 animate-pulse" />
                 Scheduled Dispatch ({scheduledEmails.length})
               </span>
-              <span className="text-[10px] text-zinc-400">Waiting in queue</span>
+              <span className="text-[10px] text-thistle-500">Waiting in queue</span>
             </div>
 
             {scheduledEmails.map((item) => {
@@ -176,9 +177,9 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
               const isSending = sendingNowId === item.id;
 
               return (
-                <div key={item.id} className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-3 text-xs">
-                  <div className="flex items-center justify-between pb-2 border-b border-amber-200/50">
-                    <span className="font-bold text-amber-900 text-[11px]">
+                <div key={item.id} className="p-4 rounded-2xl bg-amber-50/60 border border-gold-500/45 space-y-3 text-xs">
+                  <div className="flex items-center justify-between pb-2 border-b border-gold-500/35">
+                    <span className="font-bold text-amber-950 text-[11px]">
                       {isEditing ? 'Editing Raw Template (Mustache Mode)' : 'Resolved Live Preview (As Sent)'}
                     </span>
 
@@ -187,30 +188,31 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
                         <>
                           <button
                             onClick={() => handleStartEditScheduled(item)}
-                            className="px-2.5 py-1 bg-white hover:bg-zinc-100 text-zinc-700 font-bold rounded-lg border border-zinc-200 text-[10px] transition-colors"
+                            className="px-2.5 py-1 bg-white hover:bg-thistle-100 text-royal-800 font-bold rounded-lg border border-gold-500/35 text-[10px] transition-colors"
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => handleSendNow(item.id)}
                             disabled={isSending}
-                            className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[10px] transition-colors disabled:opacity-50 shadow-2xs"
+                            className="px-3 py-1 btn-royal font-bold rounded-lg text-[10px] flex items-center gap-1"
                           >
-                            {isSending ? 'Sending...' : 'Send Now ✈'}
+                            <Icons.Send className="text-gold-300 text-[11px]" />
+                            <span>{isSending ? 'Sending...' : 'Send Now'}</span>
                           </button>
                         </>
                       ) : (
                         <div className="flex gap-1.5">
                           <button
                             onClick={() => setEditingScheduledId(null)}
-                            className="px-2.5 py-1 text-zinc-500 hover:text-zinc-800 text-[10px]"
+                            className="px-2.5 py-1 text-thistle-500 hover:text-royal-950 text-[10px]"
                           >
                             Cancel
                           </button>
                           <button
                             onClick={() => handleSaveScheduled(item.id)}
                             disabled={savingScheduled}
-                            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-[10px] disabled:opacity-50"
+                            className="px-3 py-1 btn-royal font-bold rounded-lg text-[10px]"
                           >
                             {savingScheduled ? 'Saving...' : 'Save & Resolve'}
                           </button>
@@ -219,32 +221,31 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
                     </div>
                   </div>
 
-                  {/* Body Content: Either Raw Mustache when editing, or Resolved Preview when viewing */}
                   {isEditing ? (
                     <div className="space-y-2">
                       <div>
-                        <label className="block text-[10px] font-bold uppercase text-zinc-500 mb-1">Subject</label>
+                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Subject</label>
                         <input
                           type="text"
                           value={editSubject}
                           onChange={(e) => setEditSubject(e.target.value)}
-                          className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-500"
+                          className="w-full px-3 py-1.5 bg-white border border-gold-500/40 rounded-lg text-xs font-mono focus:outline-none focus:border-gold-500"
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold uppercase text-zinc-500 mb-1">Body Text</label>
+                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Body Text</label>
                         <textarea
                           rows={6}
                           value={editBody}
                           onChange={(e) => setEditBody(e.target.value)}
-                          className="w-full p-3 bg-white border border-zinc-200 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-500"
+                          className="w-full p-3 bg-white border border-gold-500/40 rounded-lg text-xs font-mono focus:outline-none focus:border-gold-500"
                         />
                       </div>
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      <p className="font-bold text-zinc-900">{item.resolvedSubject}</p>
-                      <p className="whitespace-pre-wrap leading-relaxed text-zinc-700 opacity-95">{item.resolvedBody}</p>
+                      <p className="font-bold text-royal-950">{item.resolvedSubject}</p>
+                      <p className="whitespace-pre-wrap leading-relaxed text-royal-950/80">{item.resolvedBody}</p>
                     </div>
                   )}
                 </div>
@@ -253,13 +254,13 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
           </div>
         )}
 
-        {/* 2. PAST CONVERSATION STREAM */}
+        {/* Past Conversation Stream */}
         <div>
-          <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3">Conversation Stream</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-thistle-500 mb-3">Conversation Stream</h3>
           {loading ? (
-            <div className="py-12 text-center text-xs text-zinc-400">Loading conversation history...</div>
+            <div className="py-12 text-center text-xs text-thistle-500">Loading conversation history...</div>
           ) : thread.length === 0 && scheduledEmails.length === 0 ? (
-            <div className="p-6 text-center rounded-xl bg-zinc-50 border border-zinc-100 text-xs text-zinc-500">
+            <div className="p-6 text-center rounded-xl bg-thistle-50 border border-gold-500/30 text-xs text-thistle-500">
               No emails sent or queued yet for this lead.
             </div>
           ) : (
@@ -269,15 +270,15 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
                   key={msg.id}
                   className={`p-4 rounded-2xl text-xs space-y-1.5 ${
                     msg.isIncoming
-                      ? 'bg-zinc-100/80 border border-zinc-200 text-zinc-900 mr-6'
-                      : 'bg-blue-600 text-white ml-6 shadow-sm'
+                      ? 'bg-thistle-50 border border-gold-500/40 text-royal-950 mr-6'
+                      : 'bg-royal-700 text-white border border-gold-400/50 ml-6 shadow-sm'
                   }`}
                 >
-                  <div className="flex items-center justify-between opacity-75 text-[10px]">
+                  <div className="flex items-center justify-between opacity-80 text-[10px] pb-1 border-b border-gold-500/30">
                     <span className="font-bold">{msg.isIncoming ? 'Prospect Reply' : 'Outbound Dispatch'}</span>
                     <span>{new Date(msg.sentAt).toLocaleString()}</span>
                   </div>
-                  <p className="font-bold">{msg.subject}</p>
+                  <p className="font-bold pt-0.5">{msg.subject}</p>
                   <p className="whitespace-pre-wrap leading-relaxed opacity-95">{msg.body}</p>
                 </div>
               ))}
@@ -285,43 +286,44 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
           )}
         </div>
 
-        {/* 3. AI REPLY COPILOT */}
+        {/* AI Reply Copilot */}
         {activeCampaignId && (
-          <div className="pt-4 border-t border-zinc-100">
+          <div className="pt-4 border-t border-gold-500/35">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-700">AI Response Copilot</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-royal-800">AI Response Copilot</span>
               {!replyDraft && (
                 <button
                   onClick={handleGenerateReply}
                   disabled={generating}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 btn-royal text-xs font-bold rounded-lg flex items-center gap-1.5"
                 >
-                  {generating ? 'Drafting...' : '✨ Generate Smart Reply'}
+                  <Icons.Sparkles className="text-gold-300" />
+                  <span>{generating ? 'Drafting...' : 'Generate Smart Reply'}</span>
                 </button>
               )}
             </div>
 
             {replyDraft && (
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl space-y-3">
+              <div className="p-4 bg-thistle-100/70 border border-gold-500/45 rounded-2xl space-y-3">
                 <div>
-                  <p className="text-[10px] font-bold uppercase text-blue-600">Subject</p>
-                  <p className="text-xs font-semibold text-zinc-900">{replyDraft.subject}</p>
+                  <p className="text-[10px] font-bold uppercase text-royal-700">Subject</p>
+                  <p className="text-xs font-semibold text-royal-950">{replyDraft.subject}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] font-bold uppercase text-blue-600">Body</p>
-                  <p className="text-xs text-zinc-800 whitespace-pre-wrap">{replyDraft.body}</p>
+                  <p className="text-[10px] font-bold uppercase text-royal-700">Body</p>
+                  <p className="text-xs text-royal-950/85 whitespace-pre-wrap">{replyDraft.body}</p>
                 </div>
-                <div className="flex justify-end gap-2 pt-2 border-t border-blue-200/60">
+                <div className="flex justify-end gap-2 pt-2 border-t border-gold-500/35">
                   <button
                     onClick={() => setReplyDraft(null)}
-                    className="px-3 py-1 text-xs text-zinc-600 hover:text-zinc-900"
+                    className="px-3 py-1 text-xs text-thistle-500 hover:text-royal-950 font-bold"
                   >
                     Discard
                   </button>
                   <button
                     onClick={handleSendReply}
                     disabled={sending}
-                    className="px-4 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    className="px-4 py-1.5 btn-royal text-xs font-bold rounded-lg"
                   >
                     {sending ? 'Sending...' : 'Approve & Send Reply'}
                   </button>

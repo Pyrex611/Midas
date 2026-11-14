@@ -4,6 +4,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { leadAPI, configAPI, campaignAPI } from '../services/api';
 import { useToast } from '../context/ToastContext';
+import { Icons } from '../lib/icons';
 
 interface Job {
   id: string;
@@ -46,11 +47,9 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
   const [verificationProvider, setVerificationProvider] = useState<string>('mock');
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Campaign routing
   const [availableCampaigns, setAvailableCampaigns] = useState<any[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>(campaignId || '');
 
-  // Staged File & Interactive Mapping Studio State
   const [stagedFile, setStagedFile] = useState<File | null>(null);
   const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
   const [sampleRows, setSampleRows] = useState<Record<string, string>[]>([]);
@@ -214,83 +213,79 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">COMPLETED</span>;
+        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">COMPLETED</span>;
       case 'FAILED':
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700">FAILED</span>;
+        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">FAILED</span>;
       case 'VERIFYING':
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 animate-pulse">VERIFYING</span>;
+        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-royal-700 text-gold-300 animate-pulse">VERIFYING</span>;
       case 'PROCESSING':
       case 'PENDING':
       default:
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 animate-pulse">PROCESSING</span>;
+        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-gold-400/50 animate-pulse">PROCESSING</span>;
     }
   };
 
   return (
-    <div className="bg-white border border-zinc-200 rounded-2xl p-6 shadow-xs space-y-6">
-      <div>
-        <h2 className="text-lg font-black text-zinc-900 tracking-tight">
+    <div className="card-midas rounded-2xl p-6 space-y-6">
+      <div className="pb-3 border-b border-gold-500/35">
+        <h2 className="text-lg font-black text-royal-950 tracking-tight">
           {campaignId ? 'Import Leads Directly to Sequence' : 'Lead Ingestion Studio'}
         </h2>
-        <p className="text-xs text-zinc-500 mt-0.5">
+        <p className="text-xs text-thistle-500 mt-0.5">
           {campaignId
             ? 'Import prospect lists directly into this campaign. Uploaded leads are automatically queued for outreach.'
             : 'Upload prospect lists with visual field matching. Deduplication and suppression rules apply automatically.'}
         </p>
       </div>
 
-      {/* Stage 1: File Dropzone */}
       {!stagedFile && (
         <div
           {...getRootProps()}
           className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
             isDragActive
-              ? 'border-blue-500 bg-blue-50/50 scale-[0.99]'
-              : 'border-zinc-200 hover:border-zinc-300 bg-zinc-50/50 hover:bg-zinc-50'
+              ? 'border-gold-500 bg-thistle-100/80 scale-[0.99]'
+              : 'border-gold-500/40 hover:border-gold-500 bg-thistle-50/60 hover:bg-thistle-100/40'
           }`}
         >
           <input {...getInputProps()} disabled={uploading} />
-          <div className="w-10 h-10 rounded-2xl bg-white border border-zinc-200 shadow-xs text-zinc-500 mx-auto flex items-center justify-center mb-3">
-            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-            </svg>
+          <div className="w-10 h-10 rounded-2xl bg-white border border-gold-500/40 shadow-xs text-royal-700 mx-auto flex items-center justify-center mb-3">
+            <Icons.Upload className="text-gold-600" />
           </div>
-          <p className="text-xs font-bold text-zinc-800">
+          <p className="text-xs font-bold text-royal-950">
             {uploading ? 'Processing file...' : isDragActive ? 'Drop file to analyze headers' : 'Drag & drop prospect CSV/XLSX, or click to browse'}
           </p>
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-[11px] text-thistle-500 mt-1">
             Headers will be auto-detected for interactive mapping before final insertion.
           </p>
         </div>
       )}
 
-      {/* Stage 2: Interactive Field Matching */}
       {stagedFile && (
-        <div className="p-5 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-5 animate-in fade-in duration-150">
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-200/80">
+        <div className="p-5 bg-thistle-50/70 border border-gold-500/45 rounded-2xl space-y-5 animate-in fade-in duration-150">
+          <div className="flex items-center justify-between pb-3 border-b border-gold-500/35">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600">Step 2: Field Matching</span>
-              <h3 className="text-sm font-bold text-zinc-900 mt-0.5">Map File Columns to Prospect Fields</h3>
-              <p className="text-xs text-zinc-500 font-mono">{stagedFile.name} ({(stagedFile.size / 1024).toFixed(1)} KB)</p>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-royal-700">Step 2: Field Matching</span>
+              <h3 className="text-sm font-bold text-royal-950 mt-0.5">Map File Columns to Prospect Fields</h3>
+              <p className="text-xs text-thistle-500 font-mono">{stagedFile.name} ({(stagedFile.size / 1024).toFixed(1)} KB)</p>
             </div>
             <button
               onClick={() => { setStagedFile(null); setDetectedHeaders([]); setSampleRows([]); }}
-              className="text-xs font-bold text-zinc-400 hover:text-rose-600 transition-colors"
+              className="text-xs font-bold text-thistle-500 hover:text-rose-600 transition-colors flex items-center gap-1"
             >
-              ✕ Change File
+              <Icons.Close />
+              <span>Change File</span>
             </button>
           </div>
 
-          {/* Optional Campaign Assignment (if on Dashboard) */}
           {allowCampaignSelection && !campaignId && (
-            <div className="p-3 bg-white border border-zinc-200 rounded-xl space-y-1">
-              <label className="block text-[10px] font-bold text-zinc-500 uppercase">
+            <div className="p-3 bg-white border border-gold-500/35 rounded-xl space-y-1">
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase">
                 Assign Upload Directly to a Campaign (Optional)
               </label>
               <select
                 value={selectedCampaignId}
                 onChange={(e) => setSelectedCampaignId(e.target.value)}
-                className="w-full px-3 py-1.5 border border-zinc-200 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none"
+                className="w-full px-3 py-1.5 border border-gold-500/35 rounded-lg text-xs font-medium text-royal-950 focus:outline-none focus:border-gold-500"
               >
                 <option value="">-- None (Stage as Global Leads) --</option>
                 {availableCampaigns.map(c => (
@@ -300,16 +295,15 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
             </div>
           )}
 
-          {/* Mapping Controls Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
             <div>
-              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">
                 Email Address <span className="text-rose-500">*</span>
               </label>
               <select
                 value={mapping.email}
                 onChange={(e) => setMapping({ ...mapping, email: e.target.value })}
-                className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl font-bold text-zinc-900 focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none focus:border-gold-500"
               >
                 <option value="">-- Select Email Column --</option>
                 {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -317,13 +311,13 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Name Resolution</label>
-              <div className="flex bg-zinc-200/70 p-1 rounded-xl mb-1.5">
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Name Resolution</label>
+              <div className="flex bg-thistle-200/70 p-1 rounded-xl mb-1.5">
                 <button
                   type="button"
                   onClick={() => setMapping({ ...mapping, nameMode: 'single' })}
                   className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                    mapping.nameMode === 'single' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-600'
+                    mapping.nameMode === 'single' ? 'bg-royal-700 text-white shadow-xs' : 'text-royal-800'
                   }`}
                 >
                   Full Name
@@ -332,7 +326,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
                   type="button"
                   onClick={() => setMapping({ ...mapping, nameMode: 'split' })}
                   className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                    mapping.nameMode === 'split' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-600'
+                    mapping.nameMode === 'split' ? 'bg-royal-700 text-white shadow-xs' : 'text-royal-800'
                   }`}
                 >
                   First + Last
@@ -343,7 +337,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
                 <select
                   value={mapping.nameCol}
                   onChange={(e) => setMapping({ ...mapping, nameCol: e.target.value })}
-                  className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-zinc-800 font-medium focus:outline-none"
+                  className="w-full px-3 py-2 bg-white border border-gold-500/35 rounded-xl text-royal-950 font-medium focus:outline-none"
                 >
                   <option value="">-- Full Name Column --</option>
                   {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -353,7 +347,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
                   <select
                     value={mapping.firstNameCol}
                     onChange={(e) => setMapping({ ...mapping, firstNameCol: e.target.value })}
-                    className="w-full px-2 py-2 bg-white border border-zinc-200 rounded-xl text-[11px] font-medium focus:outline-none"
+                    className="w-full px-2 py-2 bg-white border border-gold-500/35 rounded-xl text-[11px] font-medium focus:outline-none"
                   >
                     <option value="">First</option>
                     {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -361,7 +355,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
                   <select
                     value={mapping.lastNameCol}
                     onChange={(e) => setMapping({ ...mapping, lastNameCol: e.target.value })}
-                    className="w-full px-2 py-2 bg-white border border-zinc-200 rounded-xl text-[11px] font-medium focus:outline-none"
+                    className="w-full px-2 py-2 bg-white border border-gold-500/35 rounded-xl text-[11px] font-medium focus:outline-none"
                   >
                     <option value="">Last</option>
                     {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -371,11 +365,11 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Company / Account</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Company / Account</label>
               <select
                 value={mapping.companyCol}
                 onChange={(e) => setMapping({ ...mapping, companyCol: e.target.value })}
-                className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-zinc-800 font-medium focus:outline-none"
+                className="w-full px-3 py-2 bg-white border border-gold-500/35 rounded-xl text-royal-950 font-medium focus:outline-none"
               >
                 <option value="">-- Optional Company --</option>
                 {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -383,11 +377,11 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Job Title / Role</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Job Title / Role</label>
               <select
                 value={mapping.positionCol}
                 onChange={(e) => setMapping({ ...mapping, positionCol: e.target.value })}
-                className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl text-zinc-800 font-medium focus:outline-none"
+                className="w-full px-3 py-2 bg-white border border-gold-500/35 rounded-xl text-royal-950 font-medium focus:outline-none"
               >
                 <option value="">-- Optional Position --</option>
                 {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -395,13 +389,12 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
             </div>
           </div>
 
-          {/* Live Preview Table */}
           {sampleRows.length > 0 && (
-            <div className="space-y-2 pt-2 border-t border-zinc-200/80">
-              <span className="text-[10px] font-bold uppercase text-zinc-400">Live Sample Data Preview</span>
-              <div className="overflow-x-auto bg-white border border-zinc-200 rounded-xl">
-                <table className="min-w-full divide-y divide-zinc-100 text-left text-[11px]">
-                  <thead className="bg-zinc-50 font-bold text-zinc-500">
+            <div className="space-y-2 pt-2 border-t border-gold-500/35">
+              <span className="text-[10px] font-bold uppercase text-thistle-500">Live Sample Data Preview</span>
+              <div className="overflow-x-auto bg-white border border-gold-500/40 rounded-xl">
+                <table className="min-w-full divide-y divide-gold-500/25 text-left text-[11px]">
+                  <thead className="bg-thistle-100/75 font-bold text-royal-800 border-b border-gold-500/35">
                     <tr>
                       <th className="py-2 px-3">Resolved Email</th>
                       <th className="py-2 px-3">Resolved Name</th>
@@ -409,7 +402,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
                       <th className="py-2 px-3">Position</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+                  <tbody className="divide-y divide-gold-500/20 font-medium text-royal-950">
                     {sampleRows.map((sample, idx) => {
                       const emailVal = mapping.email ? sample[mapping.email] : '—';
                       let nameVal = '—';
@@ -425,10 +418,10 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
 
                       return (
                         <tr key={idx}>
-                          <td className="py-2 px-3 font-mono font-bold text-zinc-900">{emailVal}</td>
+                          <td className="py-2 px-3 font-mono font-bold text-royal-950">{emailVal}</td>
                           <td className="py-2 px-3">{nameVal}</td>
-                          <td className="py-2 px-3 text-zinc-500">{compVal}</td>
-                          <td className="py-2 px-3 text-zinc-500">{posVal}</td>
+                          <td className="py-2 px-3 text-thistle-500">{compVal}</td>
+                          <td className="py-2 px-3 text-thistle-500">{posVal}</td>
                         </tr>
                       );
                     })}
@@ -438,8 +431,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
             </div>
           )}
 
-          {/* Confirm Action */}
-          <div className="pt-3 border-t border-zinc-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="pt-3 border-t border-gold-500/35 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <input
                 id="verify-leads-checkbox"
@@ -447,9 +439,9 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
                 checked={verifyEmails}
                 disabled={!verificationAvailable || uploading}
                 onChange={(e) => setVerifyEmails(e.target.checked)}
-                className="h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-0 disabled:opacity-40"
+                className="h-4 w-4 rounded border-thistle-400 text-royal-700 focus:ring-0 disabled:opacity-40"
               />
-              <label htmlFor="verify-leads-checkbox" className="text-xs font-bold text-zinc-700 cursor-pointer">
+              <label htmlFor="verify-leads-checkbox" className="text-xs font-bold text-royal-950 cursor-pointer">
                 Verify Deliverability via {verificationProvider.toUpperCase()}
               </label>
             </div>
@@ -458,7 +450,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
               <button
                 type="button"
                 onClick={() => { setStagedFile(null); setDetectedHeaders([]); setSampleRows([]); }}
-                className="px-4 py-2 text-xs font-bold text-zinc-600 hover:text-zinc-900"
+                className="px-4 py-2 text-xs font-bold text-thistle-500 hover:text-royal-950"
               >
                 Cancel
               </button>
@@ -466,7 +458,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
                 type="button"
                 onClick={handleConfirmAndUpload}
                 disabled={uploading || !mapping.email}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-50"
+                className="px-5 py-2 btn-royal rounded-xl text-xs font-bold"
               >
                 {uploading ? 'Staging & Ingesting...' : 'Confirm Mapping & Ingest'}
               </button>
@@ -475,21 +467,20 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
         </div>
       )}
 
-      {/* Recent Ingestion Batches */}
       {jobs.length > 0 && (
-        <div className="space-y-3 pt-2 border-t border-zinc-100">
-          <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Recent Ingestion Batches</h3>
+        <div className="space-y-3 pt-4 border-t border-gold-500/35">
+          <h3 className="text-xs font-bold text-thistle-500 uppercase tracking-wider">Recent Ingestion Batches</h3>
           <div className="space-y-2">
             {jobs.map((job) => (
-              <div key={job.id} className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl flex items-center justify-between text-xs">
+              <div key={job.id} className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-xl flex items-center justify-between text-xs">
                 <div>
-                  <p className="font-bold text-zinc-900 font-mono">{job.filename}</p>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">
-                    Valid: <span className="font-bold text-zinc-800">{job.validLeads}</span> ·
-                    Catch-All: <span className="font-bold text-zinc-800">{job.catchAllLeads}</span> ·
-                    Invalid: <span className="font-bold text-zinc-800">{job.invalidLeads}</span> ·
-                    Suppressed: <span className="font-bold text-zinc-800">{job.blockedLeads}</span> ·
-                    Duplicates: <span className="font-bold text-zinc-800">{job.duplicates}</span>
+                  <p className="font-bold text-royal-950 font-mono">{job.filename}</p>
+                  <p className="text-[11px] text-thistle-500 mt-0.5">
+                    Valid: <span className="font-bold text-royal-950">{job.validLeads}</span> ·
+                    Catch-All: <span className="font-bold text-royal-950">{job.catchAllLeads}</span> ·
+                    Invalid: <span className="font-bold text-royal-950">{job.invalidLeads}</span> ·
+                    Suppressed: <span className="font-bold text-royal-950">{job.blockedLeads}</span> ·
+                    Duplicates: <span className="font-bold text-royal-950">{job.duplicates}</span>
                   </p>
                 </div>
                 <div>{getStatusBadge(job.status)}</div>
