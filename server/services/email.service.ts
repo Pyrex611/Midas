@@ -10,6 +10,11 @@ export class EmailService {
     return 'https://midas-aem.vercel.app';
   }
 
+  /**
+   * Auto-links bare URLs in text-converted HTML segments (outside existing tags/anchors),
+   * rewrites `<a href>` targets into signed click-tracking proxies (preserving mailto:, tel:,
+   * anchors, and unsubscribe links), and injects the 1x1 transparent open-tracking pixel.
+   */
   private instrumentHtmlTracking(
     html: string,
     outboundEmailId: string,
@@ -18,10 +23,37 @@ export class EmailService {
   ): string {
     const baseUrl = this.appBaseUrl();
 
-    // 1. Rewrite hyperlinks (exclude mailto:, tel:, #, and unsubscribe links)
-    const trackedHtml = html.replace(
+    // 1. Tag-aware bare URL auto-linking so plain-text-converted links are click-tracked
+    const parts = html.split(/(<[^>]+>)/g);
+    let insideAnchor = false;
+    const autoLinkedHtml = parts
+      .map((part) => {
+        if (part.startsWith('<')) {
+          if (/^<a\b/i.test(part)) insideAnchor = true;
+          else if (/^<\/a>/i.test(part)) insideAnchor = false;
+          return part;
+        }
+        if (insideAnchor) return part;
+        return part.replace(/https?:\/\/[^\s<>"')]+/gi, (rawUrl) => {
+          // Strip trailing sentence punctuation if present
+          const match = rawUrl.match(/^(.*?)([.,;:!?]+)?$/);
+          const cleanUrl = match?.[1] || rawUrl;
+          const trailing = match?.[2] || '';
+          if (
+            cleanUrl.includes('/api/unsubscribe/') ||
+            cleanUrl.includes('/api/public/town-crier/recipients/')
+          ) {
+            return rawUrl;
+          }
+          return `<a href="${cleanUrl}">${cleanUrl}</a>${trailing}`;
+        });
+      })
+      .join('');
+
+    // 2. Rewrite hyperlinks (exclude mailto:, tel:, #, and unsubscribe links)
+    const trackedHtml = autoLinkedHtml.replace(
       /<a\s+(?:[^>]*?\s+)?href=(["'])(.*?)\1/gi,
-      (match, quote, originalUrl) => {
+      (match, _quote, originalUrl) => {
         const cleanUrl = originalUrl.trim();
         if (
           cleanUrl.startsWith('mailto:') ||
@@ -45,7 +77,7 @@ export class EmailService {
       }
     );
 
-    // 2. Append Open Tracking Pixel
+    // 3. Append Open Tracking Pixel
     const openToken = encodeOpenToken({
       outboundEmailId,
       leadId,
@@ -81,13 +113,11 @@ export class EmailService {
 
       const { authHeader, baseUrl } = domainService.getMailgunContextForDomain(domain);
 
-      // 1. Wrap in branded card envelope or selected template style
       let finalHtml = html;
       if (brandOptions?.brandingEnabled || brandOptions?.templateStyle) {
         finalHtml = emailTemplateService.wrapInBrandTemplate(html, brandOptions);
       }
 
-      // 2. Instrument HTML with telemetry tracking
       if (trackingContext?.leadId) {
         finalHtml = this.instrumentHtmlTracking(
           finalHtml,
@@ -112,7 +142,6 @@ export class EmailService {
       formData.append('o:tracking-opens', 'yes');
       formData.append('h:Reply-To', fromEmail);
 
-      // RFC 8058 One-Click List-Unsubscribe
       if (unsubscribeUrl) {
         formData.append('h:List-Unsubscribe', `<${unsubscribeUrl}>`);
         formData.append('h:List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');

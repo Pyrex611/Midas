@@ -103,6 +103,7 @@ model Sender {
   campaignLinks          CampaignSender[]
   preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferredSender")
   dedicatedSettings      UserSettings[]   @relation("DedicatedNewsletterSender")
+  gongDedicatedChannels  Gong[]           @relation("GongDedicatedSender")
 
   @@unique([domainId, localPart])
   @@index([userId])
@@ -432,7 +433,9 @@ model Gong {
   slug                 String
   description          String?
   cadence              String                 @default("weekly")
-  templateStyle        String                 @default("card") @map("template_style") // card | editorial | minimal | plain
+  templateStyle        String                 @default("card") @map("template_style")
+  dedicatedSenderId    String?                @map("dedicated_sender_id")
+  dedicatedSender      Sender?                @relation("GongDedicatedSender", fields: [dedicatedSenderId], references: [id], onDelete: SetNull)
   
   // Welcome Autoresponder
   welcomeEmailEnabled  Boolean                @default(false) @map("welcome_email_enabled")
@@ -440,7 +443,7 @@ model Gong {
   welcomeBody          String?                @db.Text @map("welcome_body")
   
   // Embed Styling
-  embedTheme           String                 @default("minimal") @map("embed_theme") // minimal | card | dark | floating
+  embedTheme           String                 @default("minimal") @map("embed_theme")
   accentColor          String                 @default("#2563EB") @map("accent_color")
   headline             String                 @default("Join our newsletter")
   subheadline          String                 @default("Get the latest updates delivered to your inbox.")
@@ -456,6 +459,7 @@ model Gong {
 
   @@unique([userId, slug])
   @@index([userId])
+  @@index([dedicatedSenderId])
 }
 
 model NewsletterRecipient {
@@ -467,8 +471,8 @@ model NewsletterRecipient {
   email            String
   name             String?
   cadence          String   @default("weekly")
-  status           String   @default("SUBSCRIBED") // SUBSCRIBED | UNSUBSCRIBED | BOUNCED
-  source           String   @default("ui")         // ui | api | import | form_embed
+  status           String   @default("SUBSCRIBED")
+  source           String   @default("ui")
   tags             String[] @default([])
   metadata         Json?
   unsubscribeToken String?  @unique @map("unsubscribe_token")
@@ -488,8 +492,8 @@ model NewsletterBroadcast {
   gong          Gong?                 @relation(fields: [gongId], references: [id], onDelete: SetNull)
   subject       String
   body          String
-  status        String                @default("DRAFT") // DRAFT | QUEUED | SENDING | COMPLETED
-  templateStyle String                @default("card") @map("template_style") // card | editorial | minimal | plain
+  status        String                @default("DRAFT")
+  templateStyle String                @default("card") @map("template_style")
   tagFilter     String?               @map("tag_filter")
   queuedAt      DateTime?             @map("queued_at")
   createdAt     DateTime              @default(now()) @map("created_at")
@@ -506,7 +510,7 @@ model NewsletterQueueItem {
   recipientId String              @map("recipient_id")
   userId      String              @map("user_id") @db.Uuid
   user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status      String              @default("PENDING") // PENDING | PROCESSING | SENT | FAILED
+  status      String              @default("PENDING")
   error       String?
   createdAt   DateTime            @default(now()) @map("created_at")
 
@@ -521,7 +525,7 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   message   String
-  type      String   @default("INFO") // INFO | SUCCESS | WARNING | URGENT | INBOUND_REPLY
+  type      String   @default("INFO")
   link      String?
   isRead    Boolean  @default(false) @map("is_read")
   metadata  Json?
@@ -538,7 +542,7 @@ model WebhookSubscription {
   userId     String            @map("user_id") @db.Uuid
   user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   targetUrl  String            @map("target_url")
-  secret     String            // whsec_...
+  secret     String
   events     String[]          @default(["*"])
   isActive   Boolean           @default(true) @map("is_active")
   createdAt  DateTime          @default(now()) @map("created_at")
@@ -559,7 +563,7 @@ model WebhookDelivery {
   responseBody   String?             @db.Text @map("response_body")
   error          String?             @db.Text
   attempts       Int                 @default(1)
-  status         String              @default("DELIVERED") // DELIVERED | FAILED
+  status         String              @default("DELIVERED")
   durationMs     Int?                @map("duration_ms")
   createdAt      DateTime            @default(now()) @map("created_at")
 

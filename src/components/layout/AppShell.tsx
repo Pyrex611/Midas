@@ -255,20 +255,20 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-thistle-50 flex flex-col md:flex-row">
+    <div className="min-h-screen bg-thistle-canvas flex flex-col md:flex-row">
       {/* Desktop Persistent Sticky Sidebar */}
       <aside
-        className={`hidden md:flex flex-col h-screen sticky top-0 border-r border-thistle-200 bg-white transition-all duration-200 z-30 select-none ${
+        className={`hidden md:flex flex-col h-screen sticky top-0 border-r border-gold-500/40 bg-white/95 backdrop-blur-sm transition-all duration-200 z-30 select-none ${
           collapsed ? 'w-20' : 'w-64'
         }`}
       >
-        <div className="h-16 flex-shrink-0 px-6 border-b border-thistle-200/80 flex items-center justify-between">
+        <div className="h-16 flex-shrink-0 px-6 border-b border-gold-500/40 flex items-center justify-between">
           {!collapsed ? (
             <div className="flex items-center gap-2">
               <span className="text-xl font-black bg-gradient-to-r from-royal-700 via-royal-600 to-gold-500 bg-clip-text text-transparent tracking-wider">
                 MIDAS
               </span>
-              <span className="text-[10px] font-black uppercase tracking-wider bg-thistle-100 text-royal-700 border border-thistle-300 px-1.5 py-0.5 rounded-md">
+              <span className="text-[10px] font-black uppercase tracking-wider bg-thistle-100 text-royal-700 border border-gold-500/35 px-1.5 py-0.5 rounded-md">
                 PROD
               </span>
             </div>
@@ -300,22 +300,22 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 to={item.path}
                 className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-sm transition-all border ${
                   isActive
-                    ? 'bg-thistle-100/90 text-royal-800 border-gold-400/50 font-bold shadow-xs'
-                    : 'border-transparent text-royal-950/70 hover:bg-thistle-50 hover:text-royal-800 hover:border-thistle-200'
+                    ? 'bg-royal-700 text-white border-gold-400/60 font-bold shadow-sm'
+                    : 'border-transparent text-royal-950/75 hover:bg-thistle-100/80 hover:text-royal-800 hover:border-gold-500/35'
                 }`}
                 title={collapsed ? item.label : undefined}
               >
-                <span className={isActive ? 'text-gold-600' : 'text-thistle-500'}>{item.icon}</span>
+                <span className={isActive ? 'text-gold-300' : 'text-thistle-500'}>{item.icon}</span>
                 {!collapsed && <span className="truncate">{item.label}</span>}
               </Link>
             );
           })}
         </nav>
 
-        {/* Anchored Footer */}
-        <div className="flex-shrink-0 p-3 border-t border-thistle-200/80 bg-white space-y-2">
+        {/* Anchored Footer with Golden Top Separator */}
+        <div className="flex-shrink-0 p-3 border-t border-gold-500/40 bg-white space-y-2">
           {!collapsed && (
-            <div className="p-3 bg-royal-950 text-white rounded-xl border border-gold-500/30 glow-gold-hover">
+            <div className="p-3 bg-royal-950 text-white rounded-xl border border-gold-500/40 glow-gold-hover">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-300">
                   Deliverability Pulse
@@ -333,13 +333,15 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             to="/profile"
             className={`flex items-center gap-3 p-2.5 rounded-xl transition-colors border ${
               location.pathname === '/profile'
-                ? 'bg-thistle-100 border-gold-400/50 text-royal-800'
-                : 'border-transparent hover:bg-thistle-50 text-royal-950/80'
+                ? 'bg-royal-700 text-white border-gold-400/60'
+                : 'border-transparent hover:bg-thistle-100/70 text-royal-950/80 hover:border-gold-500/35'
             }`}
             title={collapsed ? 'Settings & Profile' : undefined}
           >
-            <span className="text-thistle-500"><Icons.Profile /></span>
-            {!collapsed && <span className="text-xs font-bold">Settings & Profile</span>}
+            <span className={location.pathname === '/profile' ? 'text-gold-300' : 'text-thistle-500'}>
+              <Icons.Profile />
+            </span>
+            {!collapsed && <span className="text-xs font-bold">Settings &amp; Profile</span>}
           </Link>
         </div>
       </aside>
@@ -352,9 +354,9 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             onClick={() => setMobileMenuOpen(false)}
           />
 
-          <div className="relative w-72 max-w-[80vw] h-[100dvh] bg-white shadow-2xl border-r border-thistle-300 flex flex-col justify-between z-10 animate-in slide-in-from-left duration-200">
+          <div className="relative w-72 max-w-[80vw] h-[100dvh] bg-white shadow-2xl border-r border-gold-500/40 flex flex-col justify-between z-10 animate-in slide-in-from-left duration-200">
             <div>
-              <div className="h-16 px-6 border-b border-thistle-200 flex items-center justify-between">
+              <div className="h-16 px-6 border-b border-gold-500/40 flex items-center justify-between">
                 <span className="text-xl font-black bg-gradient-to-r from-royal-700 to-gold-500 bg-clip-text text-transparent tracking-wider">
                   MIDAS
                 </span>
@@ -379,11 +381,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center gap-3 px-3.5 py-3 rounded-xl font-medium text-sm transition-all ${
                         isActive
-                          ? 'bg-thistle-100 text-royal-800 font-bold border border-gold-400/40'
-                          : 'text-royal-950/70 hover:bg-thistle-50 hover:text-royal-800'
+                          ? 'bg-royal-700 text-white font-bold border border-gold-400/50'
+                          : 'text-royal-950/75 hover:bg-thistle-100 hover:text-royal-800'
                       }`}
                     >
-                      <span className={isActive ? 'text-gold-600' : 'text-thistle-500'}>{item.icon}</span>
+                      <span className={isActive ? 'text-gold-300' : 'text-thistle-500'}>{item.icon}</span>
                       <span>{item.label}</span>
                     </Link>
                   );
@@ -391,8 +393,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               </nav>
             </div>
 
-            <div className="p-4 border-t border-thistle-200 space-y-3">
-              <div className="p-3 bg-royal-950 text-white rounded-xl border border-gold-500/30">
+            <div className="p-4 border-t border-gold-500/40 space-y-3">
+              <div className="p-3 bg-royal-950 text-white rounded-xl border border-gold-500/40">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-thistle-300">Deliverability Pulse</p>
                 <p className="text-xs font-bold text-white mt-0.5">{activeDomainsCount} Domains Active</p>
               </div>
@@ -400,19 +402,19 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               <Link
                 to="/profile"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 p-2 rounded-xl text-royal-950 font-bold text-xs hover:bg-thistle-50"
+                className="flex items-center gap-3 p-2 rounded-xl text-royal-950 font-bold text-xs hover:bg-thistle-100"
               >
                 <span className="text-thistle-500"><Icons.Profile /></span>
-                <span>Settings & Profile</span>
+                <span>Settings &amp; Profile</span>
               </Link>
             </div>
           </div>
         </div>
       )}
 
-      {/* Main Viewport Header */}
+      {/* Main Viewport Header with Golden Bottom Separator */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white/85 backdrop-blur-md border-b border-thistle-200 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20 no-print">
+        <header className="h-16 bg-white/85 backdrop-blur-md border-b border-gold-500/40 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20 no-print">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -422,17 +424,17 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               <Icons.Menu />
             </button>
 
-            <span className="text-xs font-black uppercase tracking-wider text-thistle-500 hidden sm:inline-block">
+            <span className="text-xs font-black uppercase tracking-wider text-royal-700 hidden sm:inline-block">
               {getBreadcrumbs()}
             </span>
 
             <button
               onClick={() => setCmdOpen(true)}
-              className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-thistle-50 hover:bg-thistle-100 border border-thistle-300 text-xs text-royal-700 glow-gold-hover ml-1"
+              className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-thistle-canvas hover:bg-thistle-100 border border-gold-500/35 text-xs text-royal-800 glow-gold-hover ml-1"
             >
-              <Icons.Search className="text-thistle-500" />
-              <span className="font-semibold">Quick Actions & Docs</span>
-              <kbd className="font-mono bg-white px-1.5 py-0.5 rounded text-[10px] font-bold text-royal-800 border border-thistle-200">
+              <Icons.Search className="text-gold-600" />
+              <span className="font-semibold">Quick Actions &amp; Docs</span>
+              <kbd className="font-mono bg-white px-1.5 py-0.5 rounded text-[10px] font-bold text-royal-800 border border-gold-500/35">
                 ⌘K
               </kbd>
             </button>
@@ -443,7 +445,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             <div className="relative" ref={notifMenuRef}>
               <button
                 onClick={() => setNotifMenuOpen(!notifMenuOpen)}
-                className="relative p-2 rounded-xl border border-thistle-200 bg-white hover:bg-thistle-50 text-royal-700 glow-gold-hover"
+                className="relative p-2 rounded-xl border border-gold-500/35 bg-white hover:bg-thistle-50 text-royal-700 glow-gold-hover"
                 title="Notifications & Live Alerts"
               >
                 <Icons.Bell />
@@ -456,11 +458,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               </button>
 
               {notifMenuOpen && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-thistle-300 p-2 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-2">
-                  <div className="px-3 py-2 border-b border-thistle-200 flex items-center justify-between">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-gold-500/45 p-2 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-2">
+                  <div className="px-3 py-2 border-b border-gold-500/30 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-black text-royal-950">Priority Notifications</p>
-                      <p className="text-[10px] text-thistle-500">Prospect replies & deliverability health</p>
+                      <p className="text-[10px] text-thistle-500">Prospect replies &amp; deliverability health</p>
                     </div>
                     {unreadNotifCount > 0 && (
                       <button
@@ -473,7 +475,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                   </div>
 
                   {typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted' && (
-                    <div className="p-2.5 bg-thistle-50 border border-thistle-200 rounded-xl flex items-center justify-between text-xs text-royal-950">
+                    <div className="p-2.5 bg-thistle-50 border border-gold-500/30 rounded-xl flex items-center justify-between text-xs text-royal-950">
                       <span className="text-[11px] font-medium">Get desktop alert popups?</span>
                       <button
                         onClick={requestDesktopNotificationPermission}
@@ -496,8 +498,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                             n.isRead
                               ? 'bg-white border-transparent hover:bg-thistle-50'
                               : n.type === 'URGENT'
-                              ? 'bg-rose-50/70 border-rose-200/80 hover:bg-rose-50'
-                              : 'bg-thistle-100/70 border-thistle-300 hover:bg-thistle-100'
+                              ? 'bg-rose-50/70 border-rose-300 hover:bg-rose-50'
+                              : 'bg-thistle-100/70 border-gold-500/40 hover:bg-thistle-100'
                           }`}
                         >
                           <div className="flex items-center justify-between">
@@ -528,7 +530,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             <div className="relative" ref={aiMenuRef}>
               <button
                 onClick={() => setAiMenuOpen(!aiMenuOpen)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-thistle-100/80 hover:bg-thistle-200/70 border border-thistle-300 text-xs font-bold text-royal-800 glow-gold-hover group"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-thistle-100/80 hover:bg-thistle-200/70 border border-gold-500/40 text-xs font-bold text-royal-800 glow-gold-hover group"
                 title="Active AI Provider & Model (Click to Switch)"
               >
                 <span className="text-gold-600">
@@ -541,8 +543,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               </button>
 
               {aiMenuOpen && (
-                <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-thistle-300 p-2 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-2">
-                  <div className="px-3 py-2 border-b border-thistle-200 flex items-center justify-between">
+                <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gold-500/45 p-2 z-50 animate-in fade-in zoom-in-95 duration-100 space-y-2">
+                  <div className="px-3 py-2 border-b border-gold-500/30 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-black text-royal-950">Active AI Model</p>
                       <p className="text-[10px] text-thistle-500">1-click switch active synthesis engine</p>
@@ -570,7 +572,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                                   onClick={() => handleQuickSwitchAI(integration.provider, m)}
                                   className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors text-left ${
                                     isCurrent
-                                      ? 'bg-royal-700 text-white font-bold border border-gold-400/40'
+                                      ? 'bg-royal-700 text-white font-bold border border-gold-400/50'
                                       : 'hover:bg-thistle-50 text-royal-950'
                                   }`}
                                 >
@@ -585,7 +587,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     )}
                   </div>
 
-                  <div className="pt-2 border-t border-thistle-200">
+                  <div className="pt-2 border-t border-gold-500/30">
                     <button
                       onClick={() => { setAiMenuOpen(false); navigate('/profile?tab=settings'); }}
                       className="w-full py-1.5 text-center text-xs font-bold text-royal-700 hover:bg-thistle-50 rounded-lg transition-colors flex items-center justify-center gap-1.5"

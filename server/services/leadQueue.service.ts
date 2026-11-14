@@ -3,7 +3,7 @@ import { logger } from '../config/logger';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { verificationService } from './verification';
-import { reconcileCampaignQueue } from '../controllers/campaign.controller';
+import { reconcileCampaignQueue } from './queueReconciliation.service';
 
 interface ParsedLeadRow {
   name: string;
@@ -327,7 +327,6 @@ export class LeadQueueService {
       },
     });
 
-    // If assigned to a campaign, run queue reconciliation immediately
     if (campaignId) {
       reconcileCampaignQueue(campaignId, userId).catch(err => {
         logger.error({ err, campaignId }, 'Failed to reconcile queue after lead ingestion');

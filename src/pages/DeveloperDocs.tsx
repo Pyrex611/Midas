@@ -20,9 +20,9 @@ function buildEnvelopePreviewHtml(style: EnvelopeStyle): string {
     return `<!DOCTYPE html><html><body style="margin:0;padding:24px;font-family:-apple-system,sans-serif;background:#fff;"><div style="max-width:520px;margin:0 auto;border-top:3px solid #4A2559;padding-top:16px;"><div style="font-size:13px;font-weight:800;color:#1F1124;margin-bottom:16px;">Pyrexx AI</div><div style="font-size:14px;line-height:1.65;color:#27272a;">${sampleBody}</div></div></body></html>`;
   }
   if (style === 'editorial') {
-    return `<!DOCTYPE html><html><body style="margin:0;padding:24px;background:#FCFAFD;font-family:Georgia,serif;"><div style="max-width:540px;margin:0 auto;background:#fff;border:1px solid #EDE2ED;border-radius:8px;overflow:hidden;"><div style="padding:24px 28px 14px;text-align:center;border-bottom:2px solid #D4AF37;"><div style="font-family:-apple-system,sans-serif;font-size:18px;font-weight:900;color:#1F1124;letter-spacing:-0.02em;text-transform:uppercase;">Pyrexx AI</div><div style="font-family:-apple-system,sans-serif;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#9E6E9E;margin-top:4px;">Official Publication Edition</div></div><div style="padding:28px;color:#27272a;font-size:15px;line-height:1.7;">${sampleBody}</div></div></body></html>`;
+    return `<!DOCTYPE html><html><body style="margin:0;padding:24px;background:#F3EBF6;font-family:Georgia,serif;"><div style="max-width:540px;margin:0 auto;background:#fff;border:1px solid rgba(212,175,55,0.45);border-radius:8px;overflow:hidden;"><div style="padding:24px 28px 14px;text-align:center;border-bottom:2px solid #D4AF37;"><div style="font-family:-apple-system,sans-serif;font-size:18px;font-weight:900;color:#1F1124;letter-spacing:-0.02em;text-transform:uppercase;">Pyrexx AI</div><div style="font-family:-apple-system,sans-serif;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#9E6E9E;margin-top:4px;">Official Publication Edition</div></div><div style="padding:28px;color:#27272a;font-size:15px;line-height:1.7;">${sampleBody}</div></div></body></html>`;
   }
-  return `<!DOCTYPE html><html><body style="margin:0;padding:24px;background:#FCFAFD;font-family:-apple-system,sans-serif;"><div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;border:1px solid #EDE2ED;box-shadow:0 4px 12px rgba(31,17,36,0.06);overflow:hidden;"><div style="padding:20px 24px 16px;border-bottom:1px solid #F7F1F7;display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:8px;background:#4A2559;color:#F3D98B;font-weight:800;font-size:11px;line-height:28px;text-align:center;">PX</div><span style="font-size:14px;font-weight:700;color:#1F1124;">Pyrexx AI</span></div><div style="padding:24px;color:#1F1124;font-size:14px;line-height:1.65;">${sampleBody}</div></div></body></html>`;
+  return `<!DOCTYPE html><html><body style="margin:0;padding:24px;background:#F3EBF6;font-family:-apple-system,sans-serif;"><div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;border:1px solid rgba(212,175,55,0.45);box-shadow:0 4px 12px rgba(31,17,36,0.06);overflow:hidden;"><div style="padding:20px 24px 16px;border-bottom:1px solid rgba(212,175,55,0.35);display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:8px;background:#4A2559;color:#F3D98B;font-weight:800;font-size:11px;line-height:28px;text-align:center;">PX</div><span style="font-size:14px;font-weight:700;color:#1F1124;">Pyrexx AI</span></div><div style="padding:24px;color:#1F1124;font-size:14px;line-height:1.65;">${sampleBody}</div></div></body></html>`;
 }
 
 const NAV_GROUPS = [
@@ -93,8 +93,8 @@ export const DeveloperDocs: React.FC = () => {
   }, [searchQuery]);
 
   const CodeBlock = ({ id, filename, code }: { id: string; filename: string; code: string }) => (
-    <div className="rounded-2xl border border-royal-800/80 bg-royal-950 overflow-hidden shadow-md">
-      <div className="flex justify-between items-center px-4 py-2 bg-royal-800/60 border-b border-royal-800 text-[11px] font-mono text-thistle-300">
+    <div className="rounded-2xl border border-gold-500/40 bg-royal-950 overflow-hidden shadow-md">
+      <div className="flex justify-between items-center px-4 py-2 bg-royal-800/70 border-b border-gold-500/30 text-[11px] font-mono text-thistle-300">
         <span className="flex items-center gap-2">
           <Icons.Terminal className="text-gold-400" />
           <span>{filename}</span>
@@ -102,7 +102,7 @@ export const DeveloperDocs: React.FC = () => {
         <button
           type="button"
           onClick={() => copyCode(code, id)}
-          className="px-2.5 py-1 rounded-lg bg-royal-950/70 hover:bg-royal-700 text-xs text-thistle-100 font-bold flex items-center gap-1.5 border border-gold-500/25 no-print transition-colors"
+          className="px-2.5 py-1 rounded-lg bg-royal-950/70 hover:bg-royal-700 text-xs text-thistle-100 font-bold flex items-center gap-1.5 border border-gold-500/35 no-print transition-colors"
         >
           <Icons.Copy className="text-gold-400" />
           <span>{copiedKey === id ? 'Copied' : 'Copy'}</span>
@@ -115,9 +115,9 @@ export const DeveloperDocs: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-thistle-50 text-royal-950 flex flex-col">
-      {/* Standalone Enterprise Docs Top Bar (Vercel / Claude Style) */}
-      <header className="h-16 sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-thistle-200 px-4 sm:px-8 flex items-center justify-between no-print">
+    <div className="min-h-screen bg-thistle-canvas text-royal-950 flex flex-col">
+      {/* Standalone Enterprise Docs Top Bar with Golden Bottom Separator */}
+      <header className="h-16 sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-gold-500/40 px-4 sm:px-8 flex items-center justify-between no-print">
         <div className="flex items-center gap-4">
           <button
             onClick={() => setMobileNavOpen(!mobileNavOpen)}
@@ -131,7 +131,7 @@ export const DeveloperDocs: React.FC = () => {
             <span className="text-xl font-black bg-gradient-to-r from-royal-700 via-royal-600 to-gold-500 bg-clip-text text-transparent tracking-wider">
               MIDAS
             </span>
-            <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-thistle-100 text-royal-800 border border-thistle-300">
+            <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-thistle-100 text-royal-800 border border-gold-500/35">
               Developers
             </span>
             <span className="hidden sm:inline-block text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-gold-200/70 text-royal-950 border border-gold-400/50">
@@ -150,13 +150,13 @@ export const DeveloperDocs: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Filter documentation..."
-              className="w-full pl-9 pr-3 py-1.5 bg-thistle-50 border border-thistle-300 rounded-xl text-xs text-royal-950 placeholder-thistle-500 focus:outline-none focus:border-gold-500"
+              className="w-full pl-9 pr-3 py-1.5 bg-thistle-canvas border border-gold-500/35 rounded-xl text-xs text-royal-950 placeholder-thistle-500 focus:outline-none focus:border-gold-500"
             />
           </div>
 
           <button
             onClick={() => window.print()}
-            className="px-3 py-1.5 rounded-xl border border-thistle-300 bg-white hover:bg-thistle-50 text-xs font-bold text-royal-800 glow-gold-hover flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-xl border border-gold-500/40 bg-white hover:bg-thistle-50 text-xs font-bold text-royal-800 glow-gold-hover flex items-center gap-1.5"
           >
             <Icons.Download className="text-gold-600" />
             <span className="hidden sm:inline">PDF</span>
@@ -174,11 +174,11 @@ export const DeveloperDocs: React.FC = () => {
 
       {/* Main 3-Column Documentation Layout */}
       <div className="max-w-[1440px] w-full mx-auto flex-1 flex">
-        {/* Column 1: Dedicated Docs Left Sidebar */}
+        {/* Column 1: Dedicated Docs Left Sidebar with Golden Right Separator */}
         <aside
           className={`${
             mobileNavOpen ? 'fixed inset-y-16 left-0 z-30 block shadow-2xl' : 'hidden'
-          } lg:block w-68 shrink-0 border-r border-thistle-200 bg-white/80 backdrop-blur-sm p-5 overflow-y-auto h-[calc(100vh-4rem)] sticky top-16 no-print`}
+          } lg:block w-68 shrink-0 border-r border-gold-500/40 bg-white/85 backdrop-blur-sm p-5 overflow-y-auto h-[calc(100vh-4rem)] sticky top-16 no-print`}
         >
           <div className="space-y-6">
             {filteredGroups.map((group) => (
@@ -199,8 +199,8 @@ export const DeveloperDocs: React.FC = () => {
                         }}
                         className={`block px-2.5 py-1.5 rounded-lg text-xs transition-all border ${
                           isActive
-                            ? 'bg-thistle-100 text-royal-800 font-bold border-gold-400/50'
-                            : 'border-transparent text-royal-950/75 hover:text-royal-800 hover:bg-thistle-50'
+                            ? 'bg-royal-700 text-white font-bold border-gold-400/60 shadow-xs'
+                            : 'border-transparent text-royal-950/75 hover:text-royal-800 hover:bg-thistle-100/70'
                         }`}
                       >
                         {item.label}
@@ -216,15 +216,15 @@ export const DeveloperDocs: React.FC = () => {
         {/* Column 2: Primary Documentation Canvas */}
         <main className="flex-1 min-w-0 px-5 sm:px-10 lg:px-14 py-10 space-y-14 max-w-4xl">
           {/* Section 1: Overview */}
-          <section id="overview" className="space-y-4 scroll-mt-24">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-thistle-100 border border-thistle-300 text-[11px] font-bold text-royal-800">
+          <section id="overview" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-white border border-gold-500/40 text-[11px] font-bold text-royal-800">
               <Icons.Book className="text-gold-600" />
               <span>MIDAS Infrastructure Reference</span>
             </div>
             <h1 className="text-3xl sm:text-4xl font-black text-royal-950 tracking-tight">
               Dual-Engine Outbound &amp; Audience SDK
             </h1>
-            <p className="text-sm text-royal-950/75 leading-relaxed">
+            <p className="text-sm text-royal-950/80 leading-relaxed">
               MIDAS is a deliverability-first orchestration layer that sits on top of Mailgun. It separates cold outreach sequences (horizontally rotated across secondary mailboxes with bounded 5-send sweeps and 20s cooldowns) from permission-based newsletters via <strong>Town Crier Gong</strong> channels.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
@@ -233,7 +233,7 @@ export const DeveloperDocs: React.FC = () => {
                   <Icons.Campaigns className="text-gold-600" />
                   <span>Cold Sequences Engine</span>
                 </div>
-                <p className="text-xs text-royal-950/70 leading-relaxed">
+                <p className="text-xs text-royal-950/75 leading-relaxed">
                   Multi-sender rotation, recursive Spintax anti-fingerprinting, CAN-SPAM scoring, and an AI State-Graph reply classifier.
                 </p>
               </div>
@@ -242,7 +242,7 @@ export const DeveloperDocs: React.FC = () => {
                   <Icons.TownCrier className="text-gold-600" />
                   <span>Town Crier &amp; Gongs</span>
                 </div>
-                <p className="text-xs text-royal-950/70 leading-relaxed">
+                <p className="text-xs text-royal-950/75 leading-relaxed">
                   Slug-addressed newsletter channels, Shadow-DOM modals, progressive profiling, and sub-60s welcome autoresponders.
                 </p>
               </div>
@@ -250,10 +250,10 @@ export const DeveloperDocs: React.FC = () => {
           </section>
 
           {/* Section 2: Quickstart */}
-          <section id="quickstart" className="space-y-4 scroll-mt-24">
+          <section id="quickstart" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">5-Minute SDK Quickstart</h2>
-            <p className="text-xs text-royal-950/75 leading-relaxed">
-              Install the zero-dependency universal SDK (`@midas-aem/client`) for Node.js, Next.js, and React:
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Install the zero-dependency universal SDK (<code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">@midas-aem/client</code>) for Node.js, Next.js, and React:
             </p>
             <CodeBlock id="install" filename="Terminal" code={`npm install @midas-aem/client`} />
             <CodeBlock
@@ -284,21 +284,21 @@ await midas.dispatchCampaign('campaign_cuid_123');`}
           </section>
 
           {/* Section 3: Auth Model */}
-          <section id="auth-model" className="space-y-4 scroll-mt-24">
+          <section id="auth-model" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Authentication Model &amp; Scopes</h2>
-            <p className="text-xs text-royal-950/75 leading-relaxed">
+            <p className="text-xs text-royal-950/80 leading-relaxed">
               MIDAS enforces three explicit authentication planes depending on caller context:
             </p>
-            <div className="rounded-2xl border border-thistle-200 bg-white overflow-hidden">
-              <table className="min-w-full divide-y divide-thistle-200 text-left text-xs">
-                <thead className="bg-thistle-100/70 text-royal-800 font-bold text-[10px] uppercase">
+            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left text-xs">
+                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr>
                     <th className="py-3 px-4">Plane</th>
                     <th className="py-3 px-4">Credential Format</th>
                     <th className="py-3 px-4">Supported Surfaces</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-thistle-100 text-royal-950/80">
+                <tbody className="divide-y divide-gold-500/20 text-royal-950/80">
                   <tr>
                     <td className="py-3 px-4 font-bold text-royal-800">Scoped API Key</td>
                     <td className="py-3 px-4 font-mono">Authorization: Bearer midas_live_...</td>
@@ -317,15 +317,15 @@ await midas.dispatchCampaign('campaign_cuid_123');`}
                 </tbody>
               </table>
             </div>
-            <div className="rounded-2xl border border-thistle-200 bg-white overflow-hidden">
-              <table className="min-w-full divide-y divide-thistle-200 text-left text-xs">
-                <thead className="bg-thistle-100/70 text-royal-800 font-bold text-[10px] uppercase">
+            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left text-xs">
+                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr>
                     <th className="py-2.5 px-4">Scope</th>
                     <th className="py-2.5 px-4">Permissions Granted</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-thistle-100 font-mono text-[11px]">
+                <tbody className="divide-y divide-gold-500/20 font-mono text-[11px]">
                   <tr><td className="py-2 px-4 font-bold text-royal-700">*</td><td className="py-2 px-4 font-sans">Super Admin across all workspace API endpoints</td></tr>
                   <tr><td className="py-2 px-4">campaigns:read / campaigns:write</td><td className="py-2 px-4 font-sans">Query, stage leads, and trigger campaign dispatches</td></tr>
                   <tr><td className="py-2 px-4">town_crier:read / write / send</td><td className="py-2 px-4 font-sans">Manage Gongs, ingest subscribers, and publish broadcasts</td></tr>
@@ -336,10 +336,10 @@ await midas.dispatchCampaign('campaign_cuid_123');`}
           </section>
 
           {/* Section 4: Drop-in Widget & React */}
-          <section id="dropin-widget" className="space-y-4 scroll-mt-24">
+          <section id="dropin-widget" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Universal Drop-In Script &amp; React SDK</h2>
-            <p className="text-xs text-royal-950/75 leading-relaxed">
-              Bind any HTML element via <code className="font-mono bg-thistle-100 px-1.5 py-0.5 rounded">data-town-crier-modal</code> and pass your Gong slug via <code className="font-mono bg-thistle-100 px-1.5 py-0.5 rounded">data-gong</code>, or use the CSP-safe React component from <code className="font-mono bg-thistle-100 px-1.5 py-0.5 rounded">@midas-aem/client/react</code>.
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Bind any HTML element via <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">data-town-crier-modal</code> and pass your Gong slug via <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">data-gong</code>, or use the CSP-safe React component from <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">@midas-aem/client/react</code>.
             </p>
             <CodeBlock
               id="html-modal"
@@ -380,10 +380,10 @@ export function NewsletterButton() {
           </section>
 
           {/* Section 5: Progressive Profiling */}
-          <section id="progressive" className="space-y-4 scroll-mt-24">
+          <section id="progressive" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Progressive Profiling Schemas</h2>
-            <p className="text-xs text-royal-950/75 leading-relaxed">
-              Capture structured lead attributes using <code className="font-mono bg-thistle-100 px-1.5 py-0.5 rounded">data-schema</code> with animated conditional follow-up fields:
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Capture structured lead attributes using <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">data-schema</code> with animated conditional follow-up fields:
             </p>
             <CodeBlock
               id="schema-demo"
@@ -408,10 +408,10 @@ export function NewsletterButton() {
           </section>
 
           {/* Section 6: Gong Slugs */}
-          <section id="gongs-channels" className="space-y-4 scroll-mt-24">
+          <section id="gongs-channels" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Gong Slugs &amp; Welcome Autoresponders</h2>
-            <p className="text-xs text-royal-950/75 leading-relaxed">
-              Every Gong channel is addressable by either its CUID or human-readable <code className="font-mono bg-thistle-100 px-1.5 py-0.5 rounded">slug</code> (e.g. <code className="font-mono">weekly-alpha</code>). When a subscriber joins a Gong with <code className="font-mono">welcomeEmailEnabled: true</code>, MIDAS automatically tags them <code className="font-mono">gong:&lt;slug&gt;</code> and dispatches the welcome email in under 60 seconds.
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Every Gong channel is addressable by either its CUID or human-readable <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">slug</code> (e.g. <code className="font-mono">weekly-alpha</code>). When a subscriber joins a Gong with <code className="font-mono">welcomeEmailEnabled: true</code>, MIDAS automatically tags them <code className="font-mono">gong:&lt;slug&gt;</code> and dispatches the welcome email in under 60 seconds.
             </p>
             <CodeBlock
               id="gong-curl"
@@ -429,14 +429,14 @@ export function NewsletterButton() {
           </section>
 
           {/* Section 7: Live Interactive Email Envelopes */}
-          <section id="email-envelopes" className="space-y-4 scroll-mt-24">
+          <section id="email-envelopes" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Live Interactive Email Envelopes</h2>
-            <p className="text-xs text-royal-950/75 leading-relaxed">
-              Inspect the 4 selectable HTML envelope styles rendered live below. Pass <code className="font-mono bg-thistle-100 px-1.5 py-0.5 rounded">templateStyle</code> when creating a Gong or publishing a broadcast (<code className="font-mono">card</code> is default).
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Inspect the 4 selectable HTML envelope styles rendered live below. Pass <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">templateStyle</code> when creating a Gong or publishing a broadcast (<code className="font-mono">card</code> is default).
             </p>
 
-            <div className="rounded-2xl border border-thistle-300 bg-white overflow-hidden shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-thistle-50 border-b border-thistle-200">
+            <div className="rounded-2xl border border-gold-500/45 bg-white overflow-hidden shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-thistle-50 border-b border-gold-500/35">
                 <div className="flex gap-1.5">
                   {(['card', 'editorial', 'minimal', 'plain'] as EnvelopeStyle[]).map((style) => (
                     <button
@@ -445,8 +445,8 @@ export function NewsletterButton() {
                       onClick={() => setPreviewEnvelope(style)}
                       className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all ${
                         previewEnvelope === style
-                          ? 'bg-royal-700 text-white shadow-xs'
-                          : 'bg-white text-royal-800 border border-thistle-200 hover:bg-thistle-100'
+                          ? 'bg-royal-700 text-white border border-gold-400/50 shadow-xs'
+                          : 'bg-white text-royal-800 border border-gold-500/30 hover:bg-thistle-100'
                       }`}
                     >
                       {style}
@@ -465,15 +465,15 @@ export function NewsletterButton() {
           </section>
 
           {/* Section 8-11: Full REST API Reference */}
-          <section id="api-campaigns" className="space-y-4 scroll-mt-24">
+          <section id="api-campaigns" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Campaigns &amp; Sequences</h2>
-            <p className="text-xs text-royal-950/75">Accepts Clerk Session OR <code className="font-mono">Bearer midas_live_...</code> (<code className="font-mono">campaigns:read</code> / <code className="font-mono">campaigns:write</code>).</p>
-            <div className="rounded-2xl border border-thistle-200 bg-white overflow-hidden text-xs">
-              <table className="min-w-full divide-y divide-thistle-200 text-left">
-                <thead className="bg-thistle-100/70 text-royal-800 font-bold text-[10px] uppercase">
+            <p className="text-xs text-royal-950/80">Accepts Clerk Session OR <code className="font-mono">Bearer midas_live_...</code> (<code className="font-mono">campaigns:read</code> / <code className="font-mono">campaigns:write</code>).</p>
+            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left">
+                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr><th className="py-2.5 px-4">Method &amp; Endpoint</th><th className="py-2.5 px-4">Description</th></tr>
                 </thead>
-                <tbody className="divide-y divide-thistle-100">
+                <tbody className="divide-y divide-gold-500/20">
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/campaigns</td><td className="py-2.5 px-4">List campaigns and caller collaboration role</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/campaigns</td><td className="py-2.5 px-4">Create campaign with strategy, context, and optional leadIds</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/campaigns/:id</td><td className="py-2.5 px-4">Fetch full analytics, leads, drafts, and follow-up timeline</td></tr>
@@ -486,14 +486,14 @@ export function NewsletterButton() {
             </div>
           </section>
 
-          <section id="api-leads" className="space-y-4 scroll-mt-24">
+          <section id="api-leads" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Leads &amp; Blocklist</h2>
-            <div className="rounded-2xl border border-thistle-200 bg-white overflow-hidden text-xs">
-              <table className="min-w-full divide-y divide-thistle-200 text-left">
-                <thead className="bg-thistle-100/70 text-royal-800 font-bold text-[10px] uppercase">
+            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left">
+                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr><th className="py-2.5 px-4">Method &amp; Endpoint</th><th className="py-2.5 px-4">Description</th></tr>
                 </thead>
-                <tbody className="divide-y divide-thistle-100">
+                <tbody className="divide-y divide-gold-500/20">
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/leads/upload</td><td className="py-2.5 px-4">Multipart CSV/XLSX upload with optional columnMapping &amp; verification</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/leads</td><td className="py-2.5 px-4">Paginated lead list with status &amp; campaignId filtering</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">PUT / DELETE /api/leads/:id</td><td className="py-2.5 px-4">Update whitelisted fields or remove a lead</td></tr>
@@ -503,14 +503,14 @@ export function NewsletterButton() {
             </div>
           </section>
 
-          <section id="api-domains" className="space-y-4 scroll-mt-24">
+          <section id="api-domains" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Domains, BIMI &amp; Senders</h2>
-            <div className="rounded-2xl border border-thistle-200 bg-white overflow-hidden text-xs">
-              <table className="min-w-full divide-y divide-thistle-200 text-left">
-                <thead className="bg-thistle-100/70 text-royal-800 font-bold text-[10px] uppercase">
+            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left">
+                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr><th className="py-2.5 px-4">Method &amp; Endpoint</th><th className="py-2.5 px-4">Description</th></tr>
                 </thead>
-                <tbody className="divide-y divide-thistle-100">
+                <tbody className="divide-y divide-gold-500/20">
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/domains</td><td className="py-2.5 px-4">Connect BYO Mailgun domain (US/EU) and run live send test</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/domains/:id/dmarc-bimi</td><td className="py-2.5 px-4">Inspect live _dmarc TXT policy readiness for BIMI avatars</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/domains/:id/bimi</td><td className="py-2.5 px-4">Configure SVG Tiny 1.2 P/S URL &amp; VMC certificate</td></tr>
@@ -520,27 +520,27 @@ export function NewsletterButton() {
             </div>
           </section>
 
-          <section id="api-inbox-ai" className="space-y-4 scroll-mt-24">
+          <section id="api-inbox-ai" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Unified Inbox &amp; AI Studio</h2>
-            <div className="rounded-2xl border border-thistle-200 bg-white overflow-hidden text-xs">
-              <table className="min-w-full divide-y divide-thistle-200 text-left">
-                <thead className="bg-thistle-100/70 text-royal-800 font-bold text-[10px] uppercase">
+            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left">
+                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr><th className="py-2.5 px-4">Method &amp; Endpoint</th><th className="py-2.5 px-4">Description</th></tr>
                 </thead>
-                <tbody className="divide-y divide-thistle-100">
+                <tbody className="divide-y divide-gold-500/20">
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/inbox</td><td className="py-2.5 px-4">Retrieve active prospect threads with sentiment insights</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/inbox/start | :leadId/reply</td><td className="py-2.5 px-4">Initiate direct conversation or send manual thread reply</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/ai/confirm | switch-active</td><td className="py-2.5 px-4">Verify and activate AI Gateway / OpenRouter / Gemini / OpenAI models</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/ai/confirm | switch-active</td><td className="py-2.5 px-4">Verify and activate AI Gateway / OpenRouter / Gemini / OpenAI / Ollama models</td></tr>
                 </tbody>
               </table>
             </div>
           </section>
 
           {/* Section 12: Webhooks & Payloads */}
-          <section id="webhooks" className="space-y-4 scroll-mt-24">
+          <section id="webhooks" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Outbound Webhook Payloads &amp; HMAC</h2>
-            <p className="text-xs text-royal-950/75 leading-relaxed">
-              Configure endpoints in <strong>Profile &rarr; Webhooks (CRM Sync)</strong>. Every request carries <code className="font-mono bg-thistle-100 px-1.5 py-0.5 rounded">X-Midas-Signature: t=&lt;unix&gt;,v1=&lt;hmac_sha256&gt;</code>.
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Configure endpoints in <strong>Profile &rarr; Webhooks (CRM Sync)</strong>. Every request carries <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">X-Midas-Signature: t=&lt;unix&gt;,v1=&lt;hmac_sha256&gt;</code>.
             </p>
             <CodeBlock
               id="wh-payloads"
@@ -586,7 +586,7 @@ export function verifyMidasWebhook(rawBody: string, signatureHeader: string, sec
           </section>
 
           {/* Section 13: CLI */}
-          <section id="cli" className="space-y-4 scroll-mt-24">
+          <section id="cli" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Standalone Developer CLI</h2>
             <CodeBlock
               id="cli-ref"
@@ -602,12 +602,12 @@ node cli/midas.js broadcast --gong gong_id --subject "Issue #42" --body "Weekly 
           {/* Section 14: Error Matrix */}
           <section id="errors" className="space-y-4 scroll-mt-24 pb-16">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Error &amp; Diagnostic Matrix</h2>
-            <div className="rounded-2xl border border-thistle-200 bg-white overflow-hidden text-xs">
-              <table className="min-w-full divide-y divide-thistle-200 text-left">
-                <thead className="bg-thistle-100/70 text-royal-800 font-bold text-[10px] uppercase">
+            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
+              <table className="min-w-full divide-y divide-gold-500/25 text-left">
+                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr><th className="py-2.5 px-4">HTTP</th><th className="py-2.5 px-4">Meaning &amp; Resolution</th></tr>
                 </thead>
-                <tbody className="divide-y divide-thistle-100">
+                <tbody className="divide-y divide-gold-500/20">
                   <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">400</td><td className="py-2 px-4">Validation error (missing email, invalid Gong slug, or Mailgun rejection).</td></tr>
                   <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">401</td><td className="py-2 px-4">Invalid/revoked <code className="font-mono">midas_live_</code> key or expired Clerk session.</td></tr>
                   <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">403</td><td className="py-2 px-4">API key lacks required scope (e.g. <code className="font-mono">campaigns:write</code>) or insufficient campaign role.</td></tr>
@@ -619,10 +619,10 @@ node cli/midas.js broadcast --gong gong_id --subject "Issue #42" --body "Weekly 
           </section>
         </main>
 
-        {/* Column 3: Right "On This Page" TOC */}
+        {/* Column 3: Right "On This Page" TOC with Golden Left Separator */}
         <aside className="hidden xl:block w-56 shrink-0 py-10 pr-6 sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto no-print">
           <p className="text-[10px] font-black uppercase tracking-widest text-thistle-500 mb-3">On This Page</p>
-          <ul className="space-y-1.5 text-xs border-l border-thistle-200 pl-3">
+          <ul className="space-y-1.5 text-xs border-l border-gold-500/40 pl-3">
             {NAV_GROUPS.flatMap((g) => g.items).map((item) => (
               <li key={item.id}>
                 <a
