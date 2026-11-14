@@ -10,12 +10,17 @@ export class MockProvider implements AIProvider {
 
   async complete(prompt: string, _system?: string): Promise<string> {
     logger.debug('[AI-ENGINE] MockProvider generating static fallback response');
-    
-    if (prompt.includes('Inbound Classification') || prompt.includes('classifyIntent')) {
+
+    if (
+      prompt.includes('Analyze this inbound B2B email response') ||
+      prompt.includes('Inbound Classification') ||
+      prompt.includes('classifyIntent')
+    ) {
       return JSON.stringify({
         intent: 'INTERESTED_INFO',
         sentiment: 'positive',
         confidence: 0.85,
+        extractedReturnDate: null,
         summary: 'Prospect is open to exploring details.',
         recommendedAction: 'SEND_COLLATERAL',
       });

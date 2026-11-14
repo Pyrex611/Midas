@@ -6,6 +6,7 @@ import { LeadDrawer } from '../components/leads/LeadDrawer';
 import { Pagination } from '../components/Pagination';
 import { AddToCampaignModal } from '../components/AddToCampaignModal';
 import { useToast } from '../context/ToastContext';
+import { Icons } from '../lib/icons';
 
 export const Leads: React.FC = () => {
   const { toast } = useToast();
@@ -17,11 +18,9 @@ export const Leads: React.FC = () => {
   const [pagination, setPagination] = useState({ page: 1, pageSize: 20, total: 0, totalPages: 0 });
   const [loading, setLoading] = useState(false);
 
-  // Inspector Drawer State
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Bulk Actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showAddToCampaignModal, setShowAddToCampaignModal] = useState(false);
 
@@ -86,7 +85,7 @@ export const Leads: React.FC = () => {
       await leadAPI.delete(id);
       toast.success('Lead removed', 'Deleted');
       fetchLeads(pagination.page);
-    } catch (err) {
+    } catch {
       toast.error('Failed to delete lead', 'Error');
     }
   };
@@ -98,18 +97,18 @@ export const Leads: React.FC = () => {
       toast.success(`Deleted ${count} leads`, 'Success');
       setSelectedIds(new Set());
       fetchLeads(pagination.page);
-    } catch (err) {
+    } catch {
       toast.error('Could not delete some leads', 'Error');
     }
   };
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* Top Header & Filters */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Top Header with Golden Bottom Separator */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-gold-500/40">
         <div>
-          <h1 className="text-2xl font-black text-zinc-900 tracking-tight">Leads Command Hub</h1>
-          <p className="text-xs text-zinc-500 mt-1">Manage, verify, and inspect prospective buyers across all active sequences.</p>
+          <h1 className="text-2xl font-black text-royal-950 tracking-tight">Leads Command Hub</h1>
+          <p className="text-xs text-thistle-500 mt-1">Manage, verify, and inspect prospective buyers across all active sequences.</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -119,7 +118,7 @@ export const Leads: React.FC = () => {
               const val = e.target.value;
               setSearchParams(val === 'all' ? {} : { campaign: val });
             }}
-            className="px-3 py-1.5 bg-white border border-zinc-200 rounded-xl text-xs font-semibold text-zinc-700 shadow-xs focus:outline-none"
+            className="px-3 py-1.5 bg-white border border-gold-500/40 rounded-xl text-xs font-semibold text-royal-950 shadow-xs focus:outline-none focus:border-gold-500"
           >
             <option value="all">All Campaigns</option>
             {campaigns.map((c) => (
@@ -129,7 +128,7 @@ export const Leads: React.FC = () => {
             ))}
           </select>
 
-          <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-200/50">
+          <span className="text-xs font-bold text-royal-800 bg-white px-3 py-1.5 rounded-xl border border-gold-500/40">
             {pagination.total} Total
           </span>
         </div>
@@ -137,42 +136,44 @@ export const Leads: React.FC = () => {
 
       {/* Floating Action Bar upon multi-selection */}
       {selectedIds.size > 0 && (
-        <div className="p-3 bg-zinc-900 text-white rounded-2xl shadow-xl flex items-center justify-between animate-in fade-in duration-150">
+        <div className="p-3 bg-royal-950 text-white rounded-2xl border border-gold-500/45 shadow-xl flex items-center justify-between animate-in fade-in duration-150">
           <span className="text-xs font-bold pl-2">{selectedIds.size} lead(s) selected</span>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowAddToCampaignModal(true)}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors"
+              className="px-3 py-1.5 btn-royal text-xs font-bold rounded-xl flex items-center gap-1.5"
             >
-              🚀 Add to Campaign
+              <Icons.Campaigns className="text-gold-300" />
+              <span>Add to Campaign</span>
             </button>
             <button
               onClick={handleBulkDelete}
-              className="px-3 py-1.5 bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-bold rounded-xl transition-colors"
+              className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-bold rounded-xl transition-colors flex items-center gap-1"
             >
-              Delete
+              <Icons.Trash />
+              <span>Delete</span>
             </button>
           </div>
         </div>
       )}
 
       {/* Modern Data Grid */}
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-xs overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gold-500/40 shadow-xs overflow-hidden">
         {loading ? (
-          <div className="py-24 text-center text-xs text-zinc-400">Loading leads data grid...</div>
+          <div className="py-24 text-center text-xs text-thistle-500">Loading leads data grid...</div>
         ) : leads.length === 0 ? (
-          <div className="py-24 text-center text-xs text-zinc-400">No leads match this filter criteria.</div>
+          <div className="py-24 text-center text-xs text-thistle-500">No leads match this filter criteria.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-zinc-100 text-left text-xs">
-              <thead className="bg-zinc-50/75 text-zinc-500 font-bold uppercase tracking-wider">
+            <table className="min-w-full divide-y divide-gold-500/25 text-left text-xs">
+              <thead className="bg-thistle-100/75 text-royal-800 font-bold uppercase tracking-wider border-b border-gold-500/35">
                 <tr>
                   <th className="p-4 w-10">
                     <input
                       type="checkbox"
                       checked={selectedIds.size === leads.length && leads.length > 0}
                       onChange={toggleSelectAll}
-                      className="rounded border-zinc-300 text-blue-600 focus:ring-0"
+                      className="rounded border-thistle-400 text-royal-700 focus:ring-0"
                     />
                   </th>
                   <th className="py-3 px-4">Contact</th>
@@ -183,43 +184,44 @@ export const Leads: React.FC = () => {
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+              <tbody className="divide-y divide-gold-500/20 font-medium text-royal-950">
                 {leads.map((lead) => (
                   <tr
                     key={lead.id}
                     onClick={() => handleRowClick(lead)}
-                    className="hover:bg-zinc-50/80 cursor-pointer transition-colors"
+                    className="hover:bg-thistle-50/80 cursor-pointer transition-colors"
                   >
                     <td className="p-4" onClick={(e) => toggleSelect(lead.id, e)}>
                       <input
                         type="checkbox"
                         checked={selectedIds.has(lead.id)}
                         onChange={() => {}}
-                        className="rounded border-zinc-300 text-blue-600 focus:ring-0"
+                        className="rounded border-thistle-400 text-royal-700 focus:ring-0"
                       />
                     </td>
                     <td className="py-3 px-4">
-                      <p className="font-bold text-zinc-900">{lead.name}</p>
-                      <p className="text-[11px] text-zinc-400 font-mono">{lead.email}</p>
+                      <p className="font-bold text-royal-950">{lead.name}</p>
+                      <p className="text-[11px] text-thistle-500 font-mono">{lead.email}</p>
                     </td>
-                    <td className="py-3 px-4 text-zinc-600">{lead.company || '—'}</td>
-                    <td className="py-3 px-4 text-zinc-500">{lead.position || '—'}</td>
+                    <td className="py-3 px-4 text-royal-950/75">{lead.company || '—'}</td>
+                    <td className="py-3 px-4 text-thistle-500">{lead.position || '—'}</td>
                     <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded-md font-semibold text-[10px] bg-zinc-100 text-zinc-700">
+                      <span className="px-2 py-0.5 rounded-md font-semibold text-[10px] bg-thistle-100 text-royal-800 border border-gold-500/30">
                         {lead.outreachStatus || 'PENDING'}
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-blue-50 text-blue-700">
+                      <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-royal-700 text-white">
                         {lead.status}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
                         onClick={(e) => handleDelete(lead.id, e)}
-                        className="text-zinc-400 hover:text-rose-600 text-xs transition-colors p-1"
+                        className="text-thistle-500 hover:text-rose-600 text-xs transition-colors p-1"
+                        title="Delete lead"
                       >
-                        Delete
+                        <Icons.Trash />
                       </button>
                     </td>
                   </tr>
@@ -229,8 +231,7 @@ export const Leads: React.FC = () => {
           </div>
         )}
 
-        {/* Pagination Bar */}
-        <div className="p-4 border-t border-zinc-100">
+        <div className="p-4 border-t border-gold-500/35">
           <Pagination
             currentPage={pagination.page}
             totalPages={pagination.totalPages}
@@ -239,7 +240,6 @@ export const Leads: React.FC = () => {
         </div>
       </div>
 
-      {/* Contextual Lead Slide-Over Inspector */}
       <LeadDrawer
         isOpen={drawerOpen}
         onClose={() => setDrawerOpen(false)}
@@ -248,7 +248,6 @@ export const Leads: React.FC = () => {
         onUpdate={() => fetchLeads(pagination.page)}
       />
 
-      {/* Add To Campaign Modal */}
       <AddToCampaignModal
         isOpen={showAddToCampaignModal}
         onClose={() => setShowAddToCampaignModal(false)}

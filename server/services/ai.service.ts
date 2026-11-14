@@ -15,6 +15,7 @@ import { GeminiProvider } from './ai/providers/gemini.provider';
 import { DeepSeekProvider } from './ai/providers/deepseek.provider';
 import { OpenRouterProvider } from './ai/providers/openrouter.provider';
 import { AIGatewayProvider } from './ai/providers/aigateway.provider';
+import { OllamaProvider } from './ai/providers/ollama.provider';
 
 export type { ReplyAnalysis, InboundClassification, InboundIntentCategory, ConfirmedProviderIntegration } from './ai/types';
 
@@ -79,6 +80,11 @@ export class AIService {
         return new DeepSeekProvider(
           overrides?.apiKey || process.env.DEEPSEEK_API_KEY || '',
           overrides?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat'
+        );
+      case 'ollama':
+        return new OllamaProvider(
+          overrides?.gatewayUrl || process.env.OLLAMA_URL || 'http://localhost:11434',
+          overrides?.model || process.env.OLLAMA_POWERFUL_MODEL || 'llama3.1:8b'
         );
       case 'mock':
       default:
@@ -281,7 +287,6 @@ export class AIService {
     const raw = await this.attemptComplete(prompt, system, provider, false);
     const parsed = this.extractJSON(raw);
 
-    // Assert subject and body are valid non-empty strings
     if (!parsed.subject?.trim() || !parsed.body?.trim()) {
       throw new Error(`AI model "${provider.name}" returned an empty subject or body. Use a fast instruction model like "openai/gpt-4o-mini" or "gemini-1.5-flash".`);
     }
