@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { campaignAPI } from '../services/api';
+import { campaignAPI, getErrorMessage } from '../services/api';
 import { CreateCampaignModal } from './CreateCampaignModal';
+import { useToast } from '../context/ToastContext';
+import { Icons } from '../lib/icons';
 
 interface Props {
   isOpen: boolean;
@@ -19,12 +21,12 @@ export const AddToCampaignModal: React.FC<Props> = ({
   onSuccess,
   onRefresh,
 }) => {
+  const { toast } = useToast();
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [adding, setAdding] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [localCampaigns, setLocalCampaigns] = useState(availableCampaigns);
 
-  // Sync with prop when it changes
   useEffect(() => {
     setLocalCampaigns(availableCampaigns);
   }, [availableCampaigns]);
@@ -35,10 +37,9 @@ export const AddToCampaignModal: React.FC<Props> = ({
     try {
       await campaignAPI.addLeads(selectedCampaignId, leadIds);
       onSuccess(selectedCampaignId);
-      onClose(); // close modal after success
-    } catch (error) {
-      console.error('Failed to add leads to campaign', error);
-      alert('Could not add leads to campaign');
+      onClose();
+    } catch (error: any) {
+      toast.error(getErrorMessage(error, 'Could not add leads to campaign'), 'Error');
     } finally {
       setAdding(false);
     }
@@ -47,20 +48,14 @@ export const AddToCampaignModal: React.FC<Props> = ({
   const refreshCampaigns = async () => {
     try {
       const res = await campaignAPI.getAll();
-      setLocalCampaigns(res.data);
+      setLocalCampaigns(res.data || []);
       if (onRefresh) onRefresh();
-    } catch (error) {
-      console.error('Failed to refresh campaigns', error);
-    }
+    } catch {}
   };
 
   const handleCreateSuccess = async () => {
     setShowCreateModal(false);
     await refreshCampaigns();
-    // Optionally, you could auto‑select the newly created campaign here,
-    // but for now we just refresh the list and leave selection to the user.
-    // The modal stays open so user can now select the new campaign.
-    // If you want it to close after creation, uncomment the next line:
     onClose();
   };
 
@@ -68,34 +63,30 @@ export const AddToCampaignModal: React.FC<Props> = ({
 
   return (
     <>
-      <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-        <div className="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
-          {/* Header with title and close button */}
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-medium text-gray-900">Add to Outreach Campaign</h3>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-royal-950/65 backdrop-blur-sm" onClick={onClose} />
+
+        <div className="relative w-full max-w-md bg-white border border-gold-500/45 rounded-3xl shadow-2xl p-6 z-10 animate-in zoom-in-95 duration-150">
+          <div className="flex justify-between items-center pb-3 mb-4 border-b border-gold-500/35">
+            <h3 className="text-base font-black text-royal-950">Add to Outreach Campaign</h3>
+            <button onClick={onClose} className="text-thistle-500 hover:text-royal-950 p-1">
+              <Icons.Close />
             </button>
           </div>
 
-          <p className="text-sm text-gray-600 mb-4">
-            {leadIds.length} lead(s) selected. Choose a campaign or create a new one.
+          <p className="text-xs text-royal-950/75 mb-4">
+            <strong>{leadIds.length}</strong> lead(s) selected. Choose an active sequence or create a new campaign.
           </p>
 
           {localCampaigns.length > 0 ? (
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select existing campaign
+              <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1.5">
+                Select Existing Campaign
               </label>
               <select
                 value={selectedCampaignId}
                 onChange={(e) => setSelectedCampaignId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-semibold text-royal-950 focus:outline-none focus:border-gold-500"
               >
                 <option value="">-- Choose a campaign --</option>
                 {localCampaigns.map((c) => (
@@ -106,28 +97,31 @@ export const AddToCampaignModal: React.FC<Props> = ({
               </select>
             </div>
           ) : (
-            <p className="text-sm text-yellow-600 mb-4">No campaigns found. Create one below.</p>
+            <p className="text-xs text-amber-800 bg-amber-50 border border-gold-400/50 rounded-xl p-3 mb-4">
+              No campaigns found. Create a new sequence below.
+            </p>
           )}
 
-          <div className="flex flex-col space-y-3">
+          <div className="flex flex-col space-y-2.5 pt-2 border-t border-gold-500/35">
             {localCampaigns.length > 0 && (
               <button
                 onClick={handleAddToExisting}
                 disabled={!selectedCampaignId || adding}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="w-full px-4 py-2 btn-royal rounded-xl text-xs font-bold"
               >
                 {adding ? 'Adding...' : 'Add to Selected Campaign'}
               </button>
             )}
             <button
               onClick={() => setShowCreateModal(true)}
-              className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+              className="w-full px-4 py-2 bg-thistle-100 hover:bg-thistle-200 border border-gold-500/40 text-royal-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
             >
-              + Create New Campaign
+              <Icons.Plus className="text-gold-600" />
+              <span>Create New Campaign</span>
             </button>
             <button
               onClick={onClose}
-              className="w-full px-4 py-2 bg-white border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              className="w-full px-4 py-2 text-xs font-bold text-thistle-500 hover:text-royal-950"
             >
               Cancel
             </button>

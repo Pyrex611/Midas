@@ -51,51 +51,51 @@ export const TownCrierAddRecipientDrawer: React.FC<TownCrierAddRecipientDrawerPr
     >
       <form onSubmit={handleAddRecipient} className="space-y-4">
         <div>
-          <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Subscriber Email *</label>
+          <label className="block text-xs font-bold text-royal-800 uppercase mb-1">Subscriber Email *</label>
           <input
             type="email"
             value={newEmail}
             onChange={(e) => setNewEmail(e.target.value)}
             placeholder="subscriber@domain.com"
             required
-            className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-mono focus:outline-none focus:border-gold-500"
           />
         </div>
 
         <div>
-          <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Subscriber Name (Optional)</label>
+          <label className="block text-xs font-bold text-royal-800 uppercase mb-1">Subscriber Name (Optional)</label>
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="John Doe"
-            className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs focus:outline-none focus:border-blue-500"
+            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs focus:outline-none focus:border-gold-500"
           />
         </div>
 
         <div>
-          <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">Tags (Comma-separated)</label>
+          <label className="block text-xs font-bold text-royal-800 uppercase mb-1">Tags (Comma-separated)</label>
           <input
             type="text"
             value={newTags}
             onChange={(e) => setNewTags(e.target.value)}
             placeholder="newsletter, web-signup"
-            className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none focus:border-blue-500"
+            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-mono focus:outline-none focus:border-gold-500"
           />
         </div>
 
-        <div className="pt-3 border-t border-zinc-100 flex justify-end gap-2">
+        <div className="pt-3 border-t border-gold-500/35 flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-xs font-bold text-zinc-600"
+            className="px-4 py-2 text-xs font-bold text-thistle-500 hover:text-royal-950"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={submittingRecipient}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold disabled:opacity-50 shadow-xs"
+            className="px-5 py-2 btn-royal rounded-xl text-xs font-bold"
           >
             {submittingRecipient ? 'Adding...' : 'Subscribe'}
           </button>

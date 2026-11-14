@@ -4,7 +4,6 @@ import Papa from 'papaparse';
 import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
-import { generateApiKey } from '../lib/apiKeys';
 import { newsletterQueueService } from '../services/newsletterQueue.service';
 import { logger } from '../config/logger';
 
@@ -81,76 +80,6 @@ export const exportRecipients = async (req: AuthRequest, res: Response, next: Ne
     }
 
     res.json(recipients);
-  } catch (error) { next(error); }
-};
-
-// --- API Key Management ---
-
-export const listApiKeys = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const keys = await prisma.apiKey.findMany({
-      where: { userId, revokedAt: null },
-      select: {
-        id: true,
-        label: true,
-        keyPrefix: true,
-        scopes: true,
-        lastUsedAt: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    res.json(keys);
-  } catch (error) { next(error); }
-};
-
-export const createApiKey = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const { label, scopes } = req.body;
-
-    if (!label || typeof label !== 'string' || !label.trim()) {
-      return res.status(400).json({ error: 'A label is required for this API Key' });
-    }
-
-    const { plaintextKey, keyPrefix, keyHash } = generateApiKey();
-
-    const created = await prisma.apiKey.create({
-      data: {
-        userId,
-        label: label.trim(),
-        keyPrefix,
-        keyHash,
-        scopes: Array.isArray(scopes) && scopes.length > 0 ? scopes : ['town_crier:write'],
-      },
-    });
-
-    res.status(201).json({
-      id: created.id,
-      label: created.label,
-      keyPrefix: created.keyPrefix,
-      plaintextKey,
-      createdAt: created.createdAt,
-      message: 'Save this API key safely. It will not be shown again.',
-    });
-  } catch (error) { next(error); }
-};
-
-export const revokeApiKey = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const { id } = req.params;
-
-    const key = await prisma.apiKey.findFirst({ where: { id, userId } });
-    if (!key) return res.status(404).json({ error: 'API Key not found' });
-
-    await prisma.apiKey.update({
-      where: { id },
-      data: { revokedAt: new Date() },
-    });
-
-    res.json({ success: true, message: 'API key revoked' });
   } catch (error) { next(error); }
 };
 

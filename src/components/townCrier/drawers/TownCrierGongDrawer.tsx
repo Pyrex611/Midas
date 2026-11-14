@@ -24,24 +24,20 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
   const [cadence, setCadence] = useState<'daily' | 'weekly' | 'biweekly' | 'monthly'>('weekly');
   const [templateStyle, setTemplateStyle] = useState<'card' | 'editorial' | 'minimal' | 'plain'>('card');
 
-  // Welcome Autoresponder
   const [welcomeEmailEnabled, setWelcomeEmailEnabled] = useState(false);
   const [welcomeSubject, setWelcomeSubject] = useState('');
   const [welcomeBody, setWelcomeBody] = useState('');
 
-  // Clerk-Style Embed Preferences
   const [embedTheme, setEmbedTheme] = useState<'minimal' | 'card' | 'dark' | 'floating'>('card');
-  const [accentColor, setAccentColor] = useState('#2563EB');
+  const [accentColor, setAccentColor] = useState('#4A2559');
   const [headline, setHeadline] = useState('Join our newsletter');
   const [subheadline, setSubheadline] = useState('Get the latest updates delivered directly to your inbox.');
   const [buttonText, setButtonText] = useState('Subscribe');
 
-  // Dedicated Sender Mailbox Selection & In-Place Creation
   const [activeSenders, setActiveSenders] = useState<any[]>([]);
   const [selectedSenderId, setSelectedSenderId] = useState('');
   const [verifiedDomains, setVerifiedDomains] = useState<any[]>([]);
 
-  // In-place sender creation form toggle
   const [isCreatingMailbox, setIsCreatingMailbox] = useState(false);
   const [newMailboxDomainId, setNewMailboxDomainId] = useState('');
   const [newMailboxLocalPart, setNewMailboxLocalPart] = useState('community');
@@ -79,7 +75,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
         setWelcomeSubject(editingGong.welcomeSubject || '');
         setWelcomeBody(editingGong.welcomeBody || '');
         setEmbedTheme(editingGong.embedTheme || 'card');
-        setAccentColor(editingGong.accentColor || '#2563EB');
+        setAccentColor(editingGong.accentColor || '#4A2559');
         setHeadline(editingGong.headline || 'Join our newsletter');
         setSubheadline(editingGong.subheadline || 'Get the latest updates delivered directly to your inbox.');
         setButtonText(editingGong.buttonText || 'Subscribe');
@@ -94,7 +90,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
         setWelcomeSubject('');
         setWelcomeBody('');
         setEmbedTheme('card');
-        setAccentColor('#2563EB');
+        setAccentColor('#4A2559');
         setHeadline('Join our newsletter');
         setSubheadline('Get the latest updates delivered directly to your inbox.');
         setButtonText('Subscribe');
@@ -146,10 +142,12 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
         headline: headline.trim(),
         subheadline: subheadline.trim(),
         buttonText: buttonText.trim(),
-        dedicatedSenderId: selectedSenderId || undefined,
+        dedicatedSenderId: selectedSenderId || null,
       };
 
-      const res = await townCrierAPI.createGong(payload);
+      const res = editingGong?.id
+        ? await townCrierAPI.updateGong(editingGong.id, payload)
+        : await townCrierAPI.createGong(payload);
       toast.success(`Gong channel "${name.trim()}" saved`, 'Gong Active');
       onClose();
       onSuccess(res.data?.gong || payload);
@@ -169,41 +167,40 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
       width="xl"
     >
       <form onSubmit={handleSaveGong} className="space-y-6 text-xs">
-        {/* Core Metadata */}
         <div className="space-y-3">
           <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Gong Channel Name *</label>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Gong Channel Name *</label>
             <input
               type="text"
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
-                if (!slug) setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'));
+                if (!editingGong && !slug) setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'));
               }}
               placeholder="e.g. Pyrexx AI Weekly Briefing"
               required
-              className="w-full px-3 py-2 border border-zinc-200 rounded-xl font-bold text-zinc-900 focus:outline-none focus:border-blue-500"
+              className="w-full px-3 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none focus:border-gold-500"
             />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Public URL Slug</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Public URL Slug</label>
               <input
                 type="text"
                 value={slug}
                 onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))}
                 placeholder="weekly-briefing"
-                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl font-mono text-zinc-700 focus:outline-none"
+                className="w-full px-3 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-mono text-royal-950 focus:outline-none focus:border-gold-500"
               />
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Publication Cadence</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Publication Cadence</label>
               <select
                 value={cadence}
                 onChange={(e) => setCadence(e.target.value as any)}
-                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-zinc-800 focus:outline-none"
+                className="w-full px-3 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none"
               >
                 <option value="daily">Daily Proclamation</option>
                 <option value="weekly">Weekly Digest</option>
@@ -214,9 +211,8 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
           </div>
         </div>
 
-        {/* Email Template Layout */}
-        <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-2">
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+        <div className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-2xl space-y-2">
+          <label className="block text-[10px] font-bold uppercase tracking-wider text-thistle-500">
             Default Newsletter Layout (Card Enabled by Default)
           </label>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -232,23 +228,22 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
                 onClick={() => setTemplateStyle(id as any)}
                 className={`p-2.5 rounded-xl border text-left transition-all ${
                   templateStyle === id
-                    ? 'border-blue-600 bg-blue-50/70 text-blue-900 shadow-2xs font-bold'
-                    : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
+                    ? 'border-gold-500 bg-thistle-100 text-royal-950 shadow-2xs font-bold'
+                    : 'border-gold-500/30 bg-white hover:bg-thistle-50 text-royal-800'
                 }`}
               >
                 <p className="text-xs">{label}</p>
-                <p className="text-[10px] text-zinc-400 font-normal mt-0.5">{desc}</p>
+                <p className="text-[10px] text-thistle-500 font-normal mt-0.5">{desc}</p>
               </button>
             ))}
           </div>
         </div>
 
-        {/* In-Place Dedicated Mailbox Selector & Creator */}
-        <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-3">
-          <div className="flex items-center justify-between">
+        <div className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-2xl space-y-3">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700">Dedicated Sending Mailbox</span>
-              <p className="text-[11px] text-zinc-500 mt-0.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-royal-700">Dedicated Sending Mailbox</span>
+              <p className="text-[11px] text-thistle-500 mt-0.5">
                 Isolates this newsletter's sending reputation from your cold prospecting mailboxes.
               </p>
             </div>
@@ -256,7 +251,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
             <button
               type="button"
               onClick={() => setIsCreatingMailbox((prev) => !prev)}
-              className="px-2.5 py-1 bg-white hover:bg-zinc-100 text-purple-700 border border-purple-200 rounded-lg text-[11px] font-bold transition-all shadow-2xs"
+              className="px-2.5 py-1 bg-white hover:bg-thistle-100 text-royal-800 border border-gold-500/40 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap"
             >
               {isCreatingMailbox ? 'Cancel Mailbox Form' : '+ Create Mailbox in Place'}
             </button>
@@ -267,7 +262,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
               <select
                 value={selectedSenderId}
                 onChange={(e) => setSelectedSenderId(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-zinc-200 rounded-xl font-mono text-xs font-bold text-zinc-800 focus:outline-none"
+                className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl font-mono text-xs font-bold text-royal-950 focus:outline-none"
               >
                 <option value="">-- Use Default Newsletter Sender (or 50% Fair-Share Pool) --</option>
                 {activeSenders.map((s) => (
@@ -278,16 +273,16 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
               </select>
             </div>
           ) : (
-            <div className="p-3 bg-white border border-purple-200 rounded-xl space-y-3 animate-in fade-in duration-100">
-              <span className="text-[10px] font-bold uppercase text-zinc-400">Quick-Provision New Mailbox</span>
+            <div className="p-3 bg-white border border-gold-500/45 rounded-xl space-y-3 animate-in fade-in duration-100">
+              <span className="text-[10px] font-bold uppercase text-thistle-500">Quick-Provision New Mailbox</span>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[9px] font-bold uppercase text-zinc-400 mb-0.5">Target Domain</label>
+                  <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Target Domain</label>
                   <select
                     value={newMailboxDomainId}
                     onChange={(e) => setNewMailboxDomainId(e.target.value)}
-                    className="w-full px-2 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg font-mono text-[11px]"
+                    className="w-full px-2 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg font-mono text-[11px]"
                   >
                     {verifiedDomains.map((d) => (
                       <option key={d.id} value={d.id}>{d.domainName}</option>
@@ -296,25 +291,25 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-[9px] font-bold uppercase text-zinc-400 mb-0.5">Local Address</label>
+                  <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Local Address</label>
                   <input
                     type="text"
                     value={newMailboxLocalPart}
                     onChange={(e) => setNewMailboxLocalPart(e.target.value)}
                     placeholder="community"
-                    className="w-full px-2 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg font-mono text-[11px] font-bold"
+                    className="w-full px-2 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg font-mono text-[11px] font-bold"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[9px] font-bold uppercase text-zinc-400 mb-0.5">Sender Display Name (Optional)</label>
+                <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Sender Display Name (Optional)</label>
                 <input
                   type="text"
                   value={newMailboxDisplayName}
                   onChange={(e) => setNewMailboxDisplayName(e.target.value)}
                   placeholder="e.g. Pyrexx Community"
-                  className="w-full px-2 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[11px]"
+                  className="w-full px-2 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg text-[11px]"
                 />
               </div>
 
@@ -323,7 +318,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
                   type="button"
                   onClick={handleInPlaceCreateSender}
                   disabled={provisioningSender || !newMailboxDomainId}
-                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[11px] font-bold transition-colors disabled:opacity-50 shadow-2xs"
+                  className="px-3 py-1.5 btn-royal rounded-lg text-[11px] font-bold"
                 >
                   {provisioningSender ? 'Provisioning...' : 'Provision & Attach'}
                 </button>
@@ -332,12 +327,11 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
           )}
         </div>
 
-        {/* Welcome Email Autoresponder */}
-        <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-3">
+        <div className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-2xl space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Preset Welcome Autoresponder</span>
-              <p className="text-[11px] text-zinc-500 mt-0.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-royal-700">Preset Welcome Autoresponder</span>
+              <p className="text-[11px] text-thistle-500 mt-0.5">
                 Automatically dispatches an onboarding email, lead magnet, or discount code within 60s of subscribing.
               </p>
             </div>
@@ -345,50 +339,49 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
               type="checkbox"
               checked={welcomeEmailEnabled}
               onChange={(e) => setWelcomeEmailEnabled(e.target.checked)}
-              className="h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-0"
+              className="h-4 w-4 rounded border-thistle-400 text-royal-700 focus:ring-0"
             />
           </div>
 
           {welcomeEmailEnabled && (
-            <div className="space-y-3 pt-2 border-t border-zinc-200/60 animate-in fade-in duration-100">
+            <div className="space-y-3 pt-2 border-t border-gold-500/30 animate-in fade-in duration-100">
               <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Welcome Email Subject</label>
+                <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Welcome Email Subject</label>
                 <input
                   type="text"
                   value={welcomeSubject}
                   onChange={(e) => setWelcomeSubject(e.target.value)}
                   placeholder="Welcome to the Inner Circle! Here is your download link"
                   required={welcomeEmailEnabled}
-                  className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-xl text-xs font-semibold focus:outline-none"
+                  className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs font-semibold focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Welcome Email Body (Supports Mustache & Spintax)</label>
+                <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Welcome Email Body (Supports Mustache &amp; Spintax)</label>
                 <textarea
                   rows={6}
                   value={welcomeBody}
                   onChange={(e) => setWelcomeBody(e.target.value)}
                   placeholder="Hi {{name}},\n\nThank you for subscribing! Access your guide here..."
                   required={welcomeEmailEnabled}
-                  className="w-full p-3 bg-white border border-zinc-200 rounded-xl text-xs font-mono focus:outline-none"
+                  className="w-full p-3 bg-white border border-gold-500/35 rounded-xl text-xs font-mono focus:outline-none"
                 />
               </div>
             </div>
           )}
         </div>
 
-        {/* Clerk-Style Embed Form Styling */}
-        <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-3">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Clerk-Style Embed Appearance</span>
+        <div className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-2xl space-y-3">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500">Embed Appearance</span>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Default Embed Theme</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Default Embed Theme</label>
               <select
                 value={embedTheme}
                 onChange={(e) => setEmbedTheme(e.target.value as any)}
-                className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-xl font-bold text-zinc-800 focus:outline-none"
+                className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl font-bold text-royal-950 focus:outline-none"
               >
                 <option value="minimal">Minimal (Inline Row)</option>
                 <option value="card">Card (Elevated Container)</option>
@@ -398,19 +391,19 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Brand Accent Color</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Brand Accent Color</label>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
-                  className="w-8 h-8 p-0.5 border border-zinc-200 rounded-lg cursor-pointer bg-white"
+                  className="w-8 h-8 p-0.5 border border-gold-500/35 rounded-lg cursor-pointer bg-white"
                 />
                 <input
                   type="text"
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
-                  className="flex-1 px-3 py-1.5 bg-white border border-zinc-200 rounded-xl font-mono text-xs font-bold"
+                  className="flex-1 px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl font-mono text-xs font-bold"
                 />
               </div>
             </div>
@@ -418,38 +411,38 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Form Headline</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Form Headline</label>
               <input
                 type="text"
                 value={headline}
                 onChange={(e) => setHeadline(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-xl text-xs"
+                className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Button Label</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Button Label</label>
               <input
                 type="text"
                 value={buttonText}
                 onChange={(e) => setButtonText(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-xl text-xs font-bold"
+                className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs font-bold"
               />
             </div>
           </div>
         </div>
 
-        <div className="pt-3 border-t border-zinc-100 flex justify-end gap-2">
+        <div className="pt-3 border-t border-gold-500/35 flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-zinc-600 font-bold hover:text-zinc-900"
+            className="px-4 py-2 text-thistle-500 font-bold hover:text-royal-950"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors shadow-xs"
+            className="px-5 py-2 btn-royal font-bold rounded-xl"
           >
             {saving ? 'Saving Gong...' : 'Save Gong Channel'}
           </button>

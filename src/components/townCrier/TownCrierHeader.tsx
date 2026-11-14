@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { townCrierAPI, getErrorMessage } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { Icons } from '../../lib/icons';
@@ -22,8 +22,23 @@ export const TownCrierHeader: React.FC<TownCrierHeaderProps> = ({
 }) => {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    if (exportMenuOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [exportMenuOpen]);
 
   const handleExportContacts = async (format: 'json' | 'csv') => {
+    setExportMenuOpen(false);
     try {
       toast.info(`Preparing ${format.toUpperCase()} export...`, 'Exporting');
       const res = await townCrierAPI.exportRecipients(format, 'all');
@@ -67,55 +82,63 @@ export const TownCrierHeader: React.FC<TownCrierHeaderProps> = ({
   };
 
   return (
-    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 border-b border-gold-500/40">
       <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">Town Crier</h1>
-          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200/60">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-2xl sm:text-3xl font-black text-royal-950 tracking-tight">Town Crier</h1>
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-thistle-100 text-royal-800 border border-gold-500/40">
             Newsletter Engine
           </span>
         </div>
-        <p className="text-xs text-zinc-500 mt-1">
-          Universal list marketing & newsletter channels. Gongs, welcome autoresponders, and isolated mailboxes.
+        <p className="text-xs text-thistle-500 mt-1">
+          Universal list marketing &amp; newsletter channels. Gongs, welcome autoresponders, and isolated mailboxes.
         </p>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={onOpenEmbedDrawer}
-          className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/60 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs"
+          className="px-3.5 py-2 bg-white hover:bg-thistle-100 text-royal-800 border border-gold-500/40 rounded-xl text-xs font-bold glow-gold-hover flex items-center gap-1.5"
         >
-          <Icons.Code className="w-4 h-4 text-blue-600" />
-          <span>Integrate SDK & Forms</span>
+          <Icons.Code className="text-gold-600" />
+          <span>Integrate SDK &amp; Forms</span>
         </button>
 
-        <div className="relative group">
-          <button className="px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5">
-            <Icons.Download className="w-4 h-4 text-zinc-500" />
+        <div className="relative" ref={exportMenuRef}>
+          <button
+            type="button"
+            onClick={() => setExportMenuOpen((prev) => !prev)}
+            className="px-3 py-2 bg-white hover:bg-thistle-100 text-royal-800 border border-gold-500/40 rounded-xl text-xs font-bold glow-gold-hover flex items-center gap-1.5"
+          >
+            <Icons.Download className="text-gold-600" />
             <span>Export Contacts ▾</span>
           </button>
-          <div className="absolute right-0 mt-1 w-36 bg-white border border-zinc-200 rounded-xl shadow-lg p-1 hidden group-hover:block z-30">
-            <button
-              onClick={() => handleExportContacts('csv')}
-              className="w-full text-left px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 rounded-lg"
-            >
-              Export as CSV
-            </button>
-            <button
-              onClick={() => handleExportContacts('json')}
-              className="w-full text-left px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 rounded-lg"
-            >
-              Export as JSON
-            </button>
-          </div>
+          {exportMenuOpen && (
+            <div className="absolute right-0 mt-1.5 w-40 bg-white border border-gold-500/45 rounded-xl shadow-xl p-1 z-30 animate-in fade-in zoom-in-95 duration-100">
+              <button
+                type="button"
+                onClick={() => handleExportContacts('csv')}
+                className="w-full text-left px-3 py-1.5 text-xs font-semibold text-royal-950 hover:bg-thistle-100 rounded-lg"
+              >
+                Export as CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExportContacts('json')}
+                className="w-full text-left px-3 py-1.5 text-xs font-semibold text-royal-950 hover:bg-thistle-100 rounded-lg"
+              >
+                Export as JSON
+              </button>
+            </div>
+          )}
         </div>
 
         {activeTab === 'broadcasts' && (
           <button
             onClick={onOpenComposer}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs flex items-center gap-1.5"
+            className="px-4 py-2 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
           >
-            <Icons.Plus className="w-4 h-4" />
+            <Icons.Plus className="text-gold-300" />
             <span>New Broadcast</span>
           </button>
         )}
@@ -123,10 +146,10 @@ export const TownCrierHeader: React.FC<TownCrierHeaderProps> = ({
         {activeTab === 'gongs' && (
           <button
             onClick={onOpenCreateGong}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs flex items-center gap-1.5"
+            className="px-4 py-2 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
           >
-            <Icons.TownCrier className="w-4 h-4" />
-            <span>+ New Gong Channel</span>
+            <Icons.TownCrier className="text-gold-300" />
+            <span>New Gong Channel</span>
           </button>
         )}
 
@@ -141,15 +164,17 @@ export const TownCrierHeader: React.FC<TownCrierHeaderProps> = ({
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-3.5 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-bold transition-colors"
+              className="px-3.5 py-2 bg-white hover:bg-thistle-100 border border-gold-500/40 text-royal-800 rounded-xl text-xs font-bold glow-gold-hover flex items-center gap-1.5"
             >
-              Import CSV
+              <Icons.Upload className="text-gold-600" />
+              <span>Import CSV</span>
             </button>
             <button
               onClick={onOpenAddRecipient}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+              className="px-4 py-2 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
             >
-              + Add Subscriber
+              <Icons.Plus className="text-gold-300" />
+              <span>Add Subscriber</span>
             </button>
           </>
         )}

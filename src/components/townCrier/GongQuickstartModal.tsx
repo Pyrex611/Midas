@@ -28,7 +28,7 @@ export const GongQuickstartModal: React.FC<GongQuickstartModalProps> = ({
   if (!gong) return null;
 
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://midas-aem.vercel.app';
-  const accent = gong.accentColor || '#2563EB';
+  const accent = gong.accentColor || '#4A2559';
 
   const copyCode = (code: string, label: string) => {
     navigator.clipboard.writeText(code);
@@ -43,15 +43,15 @@ export const GongQuickstartModal: React.FC<GongQuickstartModalProps> = ({
 <!-- 2. Modal Trigger Button bound to ${gong.name} -->
 <button 
   data-town-crier-modal 
-  data-key="tc_live_YOUR_API_KEY"
+  data-key="midas_live_YOUR_API_KEY"
   data-gong="${gong.slug}"
   data-fields="name,email,cadence"
   data-accent="${accent}">
   Subscribe to ${gong.name}
 </button>`;
 
-  const nextJsSnippet = `// In your Next.js Page (App Router)
-import { MidasClient } from '@/lib/townCrierClient';
+  const nextJsSnippet = `// In your Next.js App / Server Action
+import { MidasClient } from '@midas-aem/client';
 
 const midas = new MidasClient();
 
@@ -63,7 +63,7 @@ await midas.subscribe({
 });`;
 
   const curlSnippet = `curl -X POST "${origin}/api/public/town-crier/subscribe" \\
-  -H "Authorization: Bearer tc_live_YOUR_KEY" \\
+  -H "Authorization: Bearer midas_live_YOUR_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "email": "lead@company.com",
@@ -81,7 +81,6 @@ await midas.subscribe({
       width="xl"
     >
       <div className="space-y-5 text-xs">
-        {/* Channel Status Banner */}
         <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-emerald-950">
           <div>
             <div className="flex items-center gap-2">
@@ -89,25 +88,26 @@ await midas.subscribe({
               <p className="font-bold">Gong Ready to Ingest: /{gong.slug}</p>
             </div>
             <p className="text-[11px] opacity-80 mt-0.5">
-              Channel ID: <code className="font-mono bg-white/70 px-1 py-0.5 rounded text-emerald-900">{gong.id}</code>
+              Channel ID: <code className="font-mono bg-white/80 px-1 py-0.5 rounded text-emerald-900">{gong.id}</code>
               {gong.welcomeEmailEnabled && ' · Welcome autoresponder active (<60s delivery)'}
             </p>
           </div>
         </div>
 
-        {/* Snippet Framework Selector */}
-        <div className="flex border-b border-zinc-200 gap-2 pb-2">
+        <div className="flex border-b border-gold-500/35 gap-2 pb-2 overflow-x-auto">
           {[
             ['html', '1. Drop-In HTML Modal'],
-            ['nextjs', '2. Next.js / React Client'],
+            ['nextjs', '2. @midas-aem/client SDK'],
             ['curl', '3. cURL / Terminal API'],
           ].map(([tab, label]) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActiveSnippetTab(tab as any)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeSnippetTab === tab ? 'bg-blue-600 text-white shadow-2xs' : 'text-zinc-600 hover:bg-zinc-100'
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                activeSnippetTab === tab
+                  ? 'bg-royal-700 text-white border border-gold-400/50 shadow-2xs'
+                  : 'text-royal-800 hover:bg-thistle-100'
               }`}
             >
               {label}
@@ -117,21 +117,22 @@ await midas.subscribe({
 
         {activeSnippetTab === 'html' && (
           <div className="space-y-3">
-            <p className="text-zinc-600">
+            <p className="text-royal-950/75">
               Paste this button into your Webflow, Framer, WordPress, or custom site. Clicks auto-bind to <strong>{gong.name}</strong>:
             </p>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-lg">
-              <div className="flex justify-between items-center px-4 py-2 bg-zinc-900 border-b border-zinc-800 font-mono text-[11px] text-zinc-400">
+            <div className="rounded-2xl border border-gold-500/45 bg-royal-950 overflow-hidden shadow-lg">
+              <div className="flex justify-between items-center px-4 py-2 bg-royal-800/70 border-b border-gold-500/35 font-mono text-[11px] text-thistle-300">
                 <span>embed-button.html</span>
                 <button
                   type="button"
                   onClick={() => copyCode(htmlSnippet, 'HTML Embed Code')}
-                  className="text-xs text-zinc-300 hover:text-white font-bold"
+                  className="text-xs text-thistle-100 hover:text-gold-300 font-bold flex items-center gap-1"
                 >
-                  {copiedLabel === 'HTML Embed Code' ? '✓ Copied' : '1-Click Copy'}
+                  {copiedLabel === 'HTML Embed Code' ? <Icons.CheckCircle className="text-emerald-400" /> : <Icons.Copy className="text-gold-400" />}
+                  <span>{copiedLabel === 'HTML Embed Code' ? 'Copied' : 'Copy'}</span>
                 </button>
               </div>
-              <pre className="p-4 text-zinc-200 font-mono text-xs overflow-x-auto select-all">
+              <pre className="p-4 text-thistle-100 font-mono text-xs overflow-x-auto select-all">
                 {htmlSnippet}
               </pre>
             </div>
@@ -140,21 +141,22 @@ await midas.subscribe({
 
         {activeSnippetTab === 'nextjs' && (
           <div className="space-y-3">
-            <p className="text-zinc-600">
-              In Next.js, initialize the universal client to subscribe directly from Server Actions or route handlers:
+            <p className="text-royal-950/75">
+              Initialize the universal client (<code className="font-mono bg-thistle-100 px-1 rounded">npm install @midas-aem/client</code>) to subscribe directly from Server Actions or route handlers:
             </p>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-lg">
-              <div className="flex justify-between items-center px-4 py-2 bg-zinc-900 border-b border-zinc-800 font-mono text-[11px] text-zinc-400">
+            <div className="rounded-2xl border border-gold-500/45 bg-royal-950 overflow-hidden shadow-lg">
+              <div className="flex justify-between items-center px-4 py-2 bg-royal-800/70 border-b border-gold-500/35 font-mono text-[11px] text-thistle-300">
                 <span>subscribe.ts</span>
                 <button
                   type="button"
                   onClick={() => copyCode(nextJsSnippet, 'Next.js Snippet')}
-                  className="text-xs text-zinc-300 hover:text-white font-bold"
+                  className="text-xs text-thistle-100 hover:text-gold-300 font-bold flex items-center gap-1"
                 >
-                  {copiedLabel === 'Next.js Snippet' ? '✓ Copied' : '1-Click Copy'}
+                  {copiedLabel === 'Next.js Snippet' ? <Icons.CheckCircle className="text-emerald-400" /> : <Icons.Copy className="text-gold-400" />}
+                  <span>{copiedLabel === 'Next.js Snippet' ? 'Copied' : 'Copy'}</span>
                 </button>
               </div>
-              <pre className="p-4 text-zinc-200 font-mono text-xs overflow-x-auto select-all">
+              <pre className="p-4 text-thistle-100 font-mono text-xs overflow-x-auto select-all">
                 {nextJsSnippet}
               </pre>
             </div>
@@ -163,32 +165,33 @@ await midas.subscribe({
 
         {activeSnippetTab === 'curl' && (
           <div className="space-y-3">
-            <p className="text-zinc-600">
+            <p className="text-royal-950/75">
               Trigger a test subscription from your terminal to verify the channel and welcome autoresponder:
             </p>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-lg">
-              <div className="flex justify-between items-center px-4 py-2 bg-zinc-900 border-b border-zinc-800 font-mono text-[11px] text-zinc-400">
+            <div className="rounded-2xl border border-gold-500/45 bg-royal-950 overflow-hidden shadow-lg">
+              <div className="flex justify-between items-center px-4 py-2 bg-royal-800/70 border-b border-gold-500/35 font-mono text-[11px] text-thistle-300">
                 <span>terminal cURL</span>
                 <button
                   type="button"
                   onClick={() => copyCode(curlSnippet, 'cURL Command')}
-                  className="text-xs text-zinc-300 hover:text-white font-bold"
+                  className="text-xs text-thistle-100 hover:text-gold-300 font-bold flex items-center gap-1"
                 >
-                  {copiedLabel === 'cURL Command' ? '✓ Copied' : '1-Click Copy'}
+                  {copiedLabel === 'cURL Command' ? <Icons.CheckCircle className="text-emerald-400" /> : <Icons.Copy className="text-gold-400" />}
+                  <span>{copiedLabel === 'cURL Command' ? 'Copied' : 'Copy'}</span>
                 </button>
               </div>
-              <pre className="p-4 text-zinc-200 font-mono text-xs overflow-x-auto select-all">
+              <pre className="p-4 text-thistle-100 font-mono text-xs overflow-x-auto select-all">
                 {curlSnippet}
               </pre>
             </div>
           </div>
         )}
 
-        <div className="pt-3 border-t border-zinc-100 flex justify-end">
+        <div className="pt-3 border-t border-gold-500/35 flex justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+            className="px-5 py-2 btn-royal rounded-xl text-xs font-bold"
           >
             Done with Setup
           </button>

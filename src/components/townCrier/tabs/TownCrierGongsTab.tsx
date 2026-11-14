@@ -17,24 +17,25 @@ export const TownCrierGongsTab: React.FC<TownCrierGongsTabProps> = ({
   onOpenQuickstart,
 }) => {
   if (loading) {
-    return <div className="py-24 text-center text-xs text-zinc-400">Loading Gong channels...</div>;
+    return <div className="py-24 text-center text-xs text-thistle-500">Loading Gong channels...</div>;
   }
 
   if (gongs.length === 0) {
     return (
-      <div className="bg-white border border-zinc-200 rounded-2xl p-16 text-center space-y-3">
-        <div className="w-12 h-12 rounded-2xl bg-zinc-100 text-zinc-400 mx-auto flex items-center justify-center">
-          <Icons.TownCrier className="w-6 h-6" />
+      <div className="card-midas rounded-2xl p-16 text-center space-y-3">
+        <div className="w-12 h-12 rounded-2xl bg-thistle-100 text-royal-700 border border-gold-500/40 mx-auto flex items-center justify-center">
+          <Icons.TownCrier className="text-xl text-gold-600" />
         </div>
-        <h3 className="text-base font-bold text-zinc-900">No Gong Channels Created Yet</h3>
-        <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+        <h3 className="text-base font-bold text-royal-950">No Gong Channels Created Yet</h3>
+        <p className="text-xs text-thistle-500 max-w-sm mx-auto">
           Create publication channels (e.g. "Weekly Alpha", "Deal Alerts") with automated welcome lead magnets and dedicated isolated inboxes.
         </p>
         <button
           onClick={onOpenCreateGong}
-          className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 shadow-xs"
+          className="px-4 py-2 btn-royal rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
         >
-          + Create First Gong Channel
+          <Icons.Plus className="text-gold-300" />
+          <span>Create First Gong Channel</span>
         </button>
       </div>
     );
@@ -42,67 +43,73 @@ export const TownCrierGongsTab: React.FC<TownCrierGongsTabProps> = ({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Active Channels ({gongs.length})</span>
+      <div className="flex justify-between items-center pb-2 border-b border-gold-500/30">
+        <span className="text-xs font-bold text-thistle-500 uppercase tracking-wider">Active Channels ({gongs.length})</span>
         <button
           onClick={onOpenCreateGong}
-          className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+          className="px-3.5 py-1.5 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
         >
-          + New Gong Channel
+          <Icons.Plus className="text-gold-300" />
+          <span>New Gong Channel</span>
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {gongs.map((gong) => (
-          <div key={gong.id} className="p-5 bg-white border border-zinc-200 rounded-2xl shadow-xs space-y-4">
-            <div className="flex justify-between items-start">
+          <div key={gong.id} className="p-5 card-midas rounded-2xl space-y-4">
+            <div className="flex justify-between items-start gap-2">
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-zinc-900">{gong.name}</h3>
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-zinc-100 text-zinc-700">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-bold text-royal-950">{gong.name}</h3>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-thistle-100 text-royal-800 border border-gold-500/30">
                     /{gong.slug}
                   </span>
                 </div>
-                <p className="text-xs text-zinc-500 mt-0.5">{gong.description || 'No description provided.'}</p>
+                <p className="text-xs text-thistle-500 mt-0.5">{gong.description || 'No description provided.'}</p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => onOpenQuickstart(gong)}
-                  className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[10px] font-bold shadow-2xs transition-colors"
+                  className="px-2.5 py-1 bg-thistle-100 hover:bg-thistle-200 text-royal-800 border border-gold-500/40 rounded-lg text-[10px] font-bold transition-colors flex items-center gap-1"
                 >
-                  ⚡ Deploy Snippets
+                  <Icons.Bolt className="text-gold-600 text-[11px]" />
+                  <span>Deploy Snippets</span>
                 </button>
                 <button
                   onClick={() => onEditGong(gong)}
-                  className="text-xs font-bold text-zinc-600 hover:text-zinc-900"
+                  className="text-xs font-bold text-royal-700 hover:text-royal-950"
                 >
                   Edit
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-100 text-[11px] text-zinc-600">
-              <div className="p-2 bg-zinc-50 rounded-lg">
-                <span className="block text-[9px] uppercase font-bold text-zinc-400">Cadence</span>
-                <span className="font-bold text-zinc-800 uppercase">{gong.cadence || 'weekly'}</span>
+            <div className="grid grid-cols-3 gap-2 pt-3 border-t border-gold-500/30 text-[11px] text-royal-950">
+              <div className="p-2 bg-thistle-50/70 border border-gold-500/25 rounded-lg">
+                <span className="block text-[9px] uppercase font-bold text-thistle-500">Cadence</span>
+                <span className="font-bold text-royal-950 uppercase">{gong.cadence || 'weekly'}</span>
               </div>
-              <div className="p-2 bg-zinc-50 rounded-lg">
-                <span className="block text-[9px] uppercase font-bold text-zinc-400">Welcome Autoresponder</span>
-                <span className={`font-bold ${gong.welcomeEmailEnabled ? 'text-emerald-700' : 'text-zinc-500'}`}>
+              <div className="p-2 bg-thistle-50/70 border border-gold-500/25 rounded-lg">
+                <span className="block text-[9px] uppercase font-bold text-thistle-500">Welcome Email</span>
+                <span className={`font-bold ${gong.welcomeEmailEnabled ? 'text-emerald-700' : 'text-thistle-500'}`}>
                   {gong.welcomeEmailEnabled ? 'ACTIVE' : 'OFF'}
                 </span>
               </div>
-              <div className="p-2 bg-zinc-50 rounded-lg">
-                <span className="block text-[9px] uppercase font-bold text-zinc-400">Theme</span>
-                <span className="font-bold text-zinc-800 uppercase">{gong.embedTheme || 'card'}</span>
+              <div className="p-2 bg-thistle-50/70 border border-gold-500/25 rounded-lg">
+                <span className="block text-[9px] uppercase font-bold text-thistle-500">Sender</span>
+                <span className="font-bold text-royal-800 font-mono truncate block">
+                  {gong.dedicatedSender
+                    ? `${gong.dedicatedSender.localPart}@${gong.dedicatedSender.domain?.domainName}`
+                    : gong.embedTheme || 'Pool'}
+                </span>
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-1 text-[11px] text-zinc-400 font-mono">
-              <span>Channel ID: <code className="bg-zinc-100 px-1 py-0.5 rounded text-zinc-700">{gong.id}</code></span>
-              <span className="text-zinc-600 font-bold">{gong._count?.recipients || 0} Subscribers</span>
+            <div className="flex items-center justify-between pt-2 border-t border-gold-500/25 text-[11px] text-thistle-500 font-mono">
+              <span>Channel ID: <code className="bg-thistle-50 px-1 py-0.5 rounded border border-gold-500/30 text-royal-800">{gong.id}</code></span>
+              <span className="text-royal-950 font-bold">{gong._count?.recipients || 0} Subscribers</span>
             </div>
           </div>
         ))}
