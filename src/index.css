@@ -1,12 +1,78 @@
 @import "tailwindcss";
 
+@theme {
+  /* Royal Thistle & Plum Brand Palette */
+  --color-thistle-50: #FCFAFD;
+  --color-thistle-100: #F7F1F7;
+  --color-thistle-200: #EDE2ED;
+  --color-thistle-300: #D8BFD8;
+  --color-thistle-400: #C39BC3;
+  --color-thistle-500: #9E6E9E;
+  --color-royal-600: #6D3B82;
+  --color-royal-700: #4A2559;
+  --color-royal-800: #33183E;
+  --color-royal-950: #1F1124;
+
+  /* Metallic Gold Accent Tokens */
+  --color-gold-200: #FAF0CA;
+  --color-gold-300: #F3D98B;
+  --color-gold-400: #E5C158;
+  --color-gold-500: #D4AF37;
+  --color-gold-600: #B59024;
+}
+
 @layer base {
   body {
-    background-color: #f3f4f6;
-    color: #111827;
+    background-color: #FCFAFD;
+    color: #1F1124;
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* Enterprise Midas Card: Thistle Hairline at Rest -> Golden Halo Glow on Hover */
+  .card-midas {
+    background-color: #FFFFFF;
+    border: 1px solid #EDE2ED;
+    box-shadow: 0 1px 2px rgba(31, 17, 36, 0.04);
+    transition: border-color 180ms ease, box-shadow 220ms ease, transform 180ms ease;
+  }
+
+  .card-midas:hover {
+    border-color: rgba(212, 175, 55, 0.55);
+    box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.25), 0 8px 24px -4px rgba(212, 175, 55, 0.24);
+  }
+
+  /* Royal Plum Primary Action with Subtle Gold Ring Focus */
+  .btn-royal {
+    background: linear-gradient(135deg, #4A2559 0%, #6D3B82 100%);
+    color: #FFFFFF;
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    box-shadow: 0 2px 6px rgba(74, 37, 89, 0.18);
+    transition: all 180ms ease;
+  }
+
+  .btn-royal:hover:not(:disabled) {
+    background: linear-gradient(135deg, #33183E 0%, #5B2E6E 100%);
+    border-color: rgba(212, 175, 55, 0.75);
+    box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.2), 0 6px 18px -2px rgba(212, 175, 55, 0.32);
+  }
+
+  .btn-royal:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Golden Glow Utility for Interactive Buttons & Panels */
+  .glow-gold-hover {
+    transition: border-color 180ms ease, box-shadow 220ms ease;
+  }
+
+  .glow-gold-hover:hover {
+    border-color: rgba(212, 175, 55, 0.6);
+    box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.3), 0 6px 20px -4px rgba(212, 175, 55, 0.26);
   }
 }
 

@@ -42,72 +42,73 @@ import {
   sendScheduledEmailNow,
 } from '../controllers/campaign.controller';
 import { requireCampaignRole } from '../middleware/campaignAccess.middleware';
+import { requireScopeIfApiKey } from '../middleware/dualAuth.middleware';
 
 const router = Router();
 
 // Collaboration & Team Management
-router.get('/invites/my', getMyInvites);
-router.post('/invites/:token/accept', acceptInvite);
+router.get('/invites/my', requireScopeIfApiKey('campaigns:read'), getMyInvites);
+router.post('/invites/:token/accept', requireScopeIfApiKey('campaigns:write'), acceptInvite);
 
-router.post('/', createCampaign);
-router.get('/', getCampaigns);
+router.post('/', requireScopeIfApiKey('campaigns:write'), createCampaign);
+router.get('/', requireScopeIfApiKey('campaigns:read'), getCampaigns);
 
 // Automation & Configuration endpoints (EDITOR gated)
-router.put('/:id/auto-reply', requireCampaignRole('EDITOR'), updateAutoReply);
-router.put('/:id/active-hours', requireCampaignRole('EDITOR'), updateActiveHours);
-router.put('/:id/send-hour', requireCampaignRole('EDITOR'), updateSendHour);
-router.put('/:id/strategy', requireCampaignRole('EDITOR'), updateCampaignStrategy);
+router.put('/:id/auto-reply', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), updateAutoReply);
+router.put('/:id/active-hours', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), updateActiveHours);
+router.put('/:id/send-hour', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), updateSendHour);
+router.put('/:id/strategy', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), updateCampaignStrategy);
 
 // Campaign Lifecycle Actions
-router.post('/:id/pause', requireCampaignRole('EDITOR'), pauseCampaign);
-router.post('/:id/resume', requireCampaignRole('EDITOR'), resumeCampaign);
-router.post('/:id/reconcile-queue', requireCampaignRole('EDITOR'), reconcileQueueEndpoint);
-router.post('/:id/repersonalize-queue', requireCampaignRole('EDITOR'), repersonalizeCampaignQueue);
-router.get('/:id/health', requireCampaignRole('VIEWER'), getCampaignHealth);
-router.post('/:id/dispatch-now', requireCampaignRole('EDITOR'), dispatchCampaignNow);
+router.post('/:id/pause', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), pauseCampaign);
+router.post('/:id/resume', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), resumeCampaign);
+router.post('/:id/reconcile-queue', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), reconcileQueueEndpoint);
+router.post('/:id/repersonalize-queue', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), repersonalizeCampaignQueue);
+router.get('/:id/health', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), getCampaignHealth);
+router.post('/:id/dispatch-now', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), dispatchCampaignNow);
 
 // Follow-up Steps
-router.get('/:id/followup-steps', requireCampaignRole('VIEWER'), getFollowUpSteps);
-router.post('/:id/followup-steps', requireCampaignRole('EDITOR'), setFollowUpSteps);
-router.delete('/:id/followup-steps/:stepId', requireCampaignRole('EDITOR'), deleteFollowUpStep);
+router.get('/:id/followup-steps', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), getFollowUpSteps);
+router.post('/:id/followup-steps', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), setFollowUpSteps);
+router.delete('/:id/followup-steps/:stepId', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), deleteFollowUpStep);
 
 // Senders (Mailbox Rotation)
-router.get('/:id/senders', requireCampaignRole('VIEWER'), getCampaignSenders);
-router.post('/:id/senders', requireCampaignRole('EDITOR'), addSenderToCampaign);
-router.delete('/:id/senders/:senderId', requireCampaignRole('EDITOR'), removeSenderFromCampaign);
+router.get('/:id/senders', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), getCampaignSenders);
+router.post('/:id/senders', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), addSenderToCampaign);
+router.delete('/:id/senders/:senderId', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), removeSenderFromCampaign);
 
 // Pre-Flight Deliverability & Compliance Inspection
-router.post('/:id/drafts/grade', requireCampaignRole('VIEWER'), gradeCampaignDraft);
+router.post('/:id/drafts/grade', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), gradeCampaignDraft);
 
 // Campaign Lifecycle
-router.put('/:id', requireCampaignRole('EDITOR'), updateCampaign);
-router.delete('/:id', requireCampaignRole('OWNER'), deleteCampaign);
-router.get('/:id', requireCampaignRole('VIEWER'), getCampaignDetails);
+router.put('/:id', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), updateCampaign);
+router.delete('/:id', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('OWNER'), deleteCampaign);
+router.get('/:id', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), getCampaignDetails);
 
 // Leads in Campaign
-router.post('/:id/leads', requireCampaignRole('EDITOR'), addLeadsToCampaign);
-router.post('/:id/invites', requireCampaignRole('EDITOR'), createInvite);
+router.post('/:id/leads', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), addLeadsToCampaign);
+router.post('/:id/invites', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), createInvite);
 
 // Direct Lead Outreach & Thread Inspection
-router.get('/:campaignId/leads/:leadId/thread', requireCampaignRole('VIEWER'), getLeadEmailThread);
-router.get('/:campaignId/leads/:leadId/preview/:draftId', requireCampaignRole('VIEWER'), previewLeadWithDraft);
-router.post('/:campaignId/leads/:leadId/send', requireCampaignRole('EDITOR'), sendLeadEmail);
+router.get('/:campaignId/leads/:leadId/thread', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), getLeadEmailThread);
+router.get('/:campaignId/leads/:leadId/preview/:draftId', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), previewLeadWithDraft);
+router.post('/:campaignId/leads/:leadId/send', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), sendLeadEmail);
 
 // Scheduled Message Inline Editing & Send-Now Override
-router.put('/:campaignId/scheduled/:pendingId', requireCampaignRole('EDITOR'), updateScheduledEmail);
-router.post('/:campaignId/scheduled/:pendingId/send-now', requireCampaignRole('EDITOR'), sendScheduledEmailNow);
+router.put('/:campaignId/scheduled/:pendingId', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), updateScheduledEmail);
+router.post('/:campaignId/scheduled/:pendingId/send-now', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), sendScheduledEmailNow);
 
 // AI Reply Drafting
-router.get('/:campaignId/leads/:leadId/reply-draft', requireCampaignRole('VIEWER'), getReplyDraft);
-router.post('/:campaignId/leads/:leadId/generate-reply-draft', requireCampaignRole('EDITOR'), generateReplyDraft);
-router.post('/:campaignId/leads/:leadId/send-reply-draft', requireCampaignRole('EDITOR'), sendReplyDraft);
+router.get('/:campaignId/leads/:leadId/reply-draft', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), getReplyDraft);
+router.post('/:campaignId/leads/:leadId/generate-reply-draft', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), generateReplyDraft);
+router.post('/:campaignId/leads/:leadId/send-reply-draft', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), sendReplyDraft);
 
 // Draft Variations
-router.get('/:campaignId/drafts', requireCampaignRole('VIEWER'), getCampaignDrafts);
-router.put('/:campaignId/drafts/:draftId', requireCampaignRole('EDITOR'), updateDraft);
-router.delete('/:campaignId/drafts/:draftId', requireCampaignRole('EDITOR'), deleteDraft);
-router.post('/:campaignId/drafts/custom', requireCampaignRole('EDITOR'), createCustomDraft);
-router.post('/:campaignId/drafts/generate', requireCampaignRole('EDITOR'), generateCampaignDraft);
-router.post('/:campaignId/steps/:stepNumber/generate-draft', requireCampaignRole('EDITOR'), generateStepDraft);
+router.get('/:campaignId/drafts', requireScopeIfApiKey('campaigns:read'), requireCampaignRole('VIEWER'), getCampaignDrafts);
+router.put('/:campaignId/drafts/:draftId', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), updateDraft);
+router.delete('/:campaignId/drafts/:draftId', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), deleteDraft);
+router.post('/:campaignId/drafts/custom', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), createCustomDraft);
+router.post('/:campaignId/drafts/generate', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), generateCampaignDraft);
+router.post('/:campaignId/steps/:stepNumber/generate-draft', requireScopeIfApiKey('campaigns:write'), requireCampaignRole('EDITOR'), generateStepDraft);
 
 export default router;

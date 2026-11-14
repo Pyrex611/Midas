@@ -18,7 +18,7 @@ import { DeveloperDocs } from './pages/DeveloperDocs';
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const { user, loading } = useAuth();
-  if (loading) return <div className="text-center py-20 text-zinc-400 font-medium">Authenticating session...</div>;
+  if (loading) return <div className="text-center py-20 text-thistle-500 font-medium">Authenticating session...</div>;
   if (!user) return <Navigate to="/login" replace />;
   return <AppShell>{children}</AppShell>;
 };
@@ -28,6 +28,10 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      {/* Standalone Enterprise Developer Docs Shell (Vercel / Claude pattern) */}
+      <Route path="/docs" element={<DeveloperDocs />} />
+      <Route path="/developers" element={<DeveloperDocs />} />
+
       <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
       <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
       <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
@@ -36,8 +40,6 @@ function AppRoutes() {
       <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
       <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-      <Route path="/docs" element={<ProtectedRoute><DeveloperDocs /></ProtectedRoute>} />
-      <Route path="/developers" element={<ProtectedRoute><DeveloperDocs /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
     </Routes>
   );

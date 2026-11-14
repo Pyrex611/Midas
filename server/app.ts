@@ -3,12 +3,14 @@ import cors from 'cors';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import { requireAuth } from './middleware/auth.middleware';
+import { requireAuthOrApiKey } from './middleware/dualAuth.middleware';
 import { requestTimeoutGuard } from './middleware/requestTimeoutGuard.middleware';
 import cronRoutes from './routes/cron.routes';
 import leadRoutes from './routes/lead.routes';
 import campaignRoutes from './routes/campaign.routes';
 import domainRoutes from './routes/domain.routes';
 import webhookRoutes from './routes/webhooks.routes';
+import webhookSubscriptionRoutes from './routes/webhookSubscription.routes';
 import inboxRoutes from './routes/inbox.routes';
 import aiRoutes from './routes/ai.routes';
 import diagnosticRoutes from './routes/diagnostic.routes';
@@ -81,14 +83,17 @@ app.use('/api/track', trackRoutes);
 // Public Town Crier Universal Subscriber API & Widget
 app.use('/api/public/town-crier', townCrierPublicRoutes);
 
-// Protected Core Application Routes (Clerk Authed)
-app.use('/api/leads', requireAuth, leadRoutes);
-app.use('/api/campaigns', requireAuth, campaignRoutes);
+// Dual-Authed Core Routes (Accepts Clerk Session OR Scoped API Keys)
+app.use('/api/campaigns', requireAuthOrApiKey, campaignRoutes);
+app.use('/api/leads', requireAuthOrApiKey, leadRoutes);
+
+// Protected Dashboard Application Routes (Clerk Authed)
 app.use('/api/domains', requireAuth, domainRoutes);
 app.use('/api/inbox', requireAuth, inboxRoutes);
 app.use('/api/ai', requireAuth, aiRoutes);
 app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
+app.use('/api/user/webhooks', requireAuth, webhookSubscriptionRoutes);
 app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/town-crier', requireAuth, townCrierRoutes);
 app.use('/api/notifications', requireAuth, notificationRoutes);

@@ -7,6 +7,23 @@ import {
   TRANSPARENT_GIF_BUFFER,
   isBotScanner,
 } from '../lib/tracking';
+import { webhookDispatchService } from '../services/webhookDispatch.service';
+
+function safeWaitUntil(promise: Promise<any>): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vercel = require('@vercel/functions');
+    if (typeof vercel.waitUntil === 'function') {
+      vercel.waitUntil(promise);
+      return;
+    }
+  } catch {
+    // Local dev or non-Vercel Node runtime
+  }
+  promise.catch((err) => {
+    logger.warn({ err: err?.message || err }, '[TRACKING] Background telemetry write failed');
+  });
+}
 
 /**
  * GET /api/track/open/:token
@@ -27,35 +44,39 @@ export const trackOpen = async (req: Request, res: Response) => {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
   const isScanner = isBotScanner(userAgent);
 
-  try {
-    const email = await prisma.outboundEmail.findUnique({
-      where: { id: payload.outboundEmailId },
-      select: { id: true, sentAt: true, openedAt: true },
-    });
+  safeWaitUntil(
+    (async () => {
+      try {
+        const email = await prisma.outboundEmail.findUnique({
+          where: { id: payload.outboundEmailId },
+          select: { id: true, sentAt: true, openedAt: true },
+        });
 
-    if (email && !email.openedAt && !isScanner) {
-      await prisma.outboundEmail.update({
-        where: { id: email.id },
-        data: { openedAt: new Date() },
-      });
-    }
+        if (email && !email.openedAt && !isScanner) {
+          await prisma.outboundEmail.update({
+            where: { id: email.id },
+            data: { openedAt: new Date() },
+          });
+        }
 
-    await prisma.leadActivityEvent.create({
-      data: {
-        leadId: payload.leadId,
-        campaignId: payload.campaignId || null,
-        eventType: 'EMAIL_OPENED',
-        metadata: {
-          outboundEmailId: payload.outboundEmailId,
-          userAgent,
-          ip,
-          isScannerFiltered: isScanner,
-        },
-      },
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message, outboundEmailId: payload.outboundEmailId }, 'Failed to record open telemetry');
-  }
+        await prisma.leadActivityEvent.create({
+          data: {
+            leadId: payload.leadId,
+            campaignId: payload.campaignId || null,
+            eventType: 'EMAIL_OPENED',
+            metadata: {
+              outboundEmailId: payload.outboundEmailId,
+              userAgent,
+              ip,
+              isScannerFiltered: isScanner,
+            },
+          },
+        });
+      } catch (err: any) {
+        logger.warn({ err: err?.message, outboundEmailId: payload.outboundEmailId }, 'Failed to record open telemetry');
+      }
+    })()
+  );
 };
 
 /**
@@ -80,34 +101,52 @@ export const trackClick = async (req: Request, res: Response) => {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
   const isScanner = isBotScanner(userAgent);
 
-  try {
-    const email = await prisma.outboundEmail.findUnique({
-      where: { id: payload.outboundEmailId },
-      select: { id: true, clickedAt: true },
-    });
+  safeWaitUntil(
+    (async () => {
+      try {
+        const email = await prisma.outboundEmail.findUnique({
+          where: { id: payload.outboundEmailId },
+          select: { id: true, userId: true, clickedAt: true },
+        });
 
-    if (email && !email.clickedAt && !isScanner) {
-      await prisma.outboundEmail.update({
-        where: { id: email.id },
-        data: { clickedAt: new Date() },
-      });
-    }
+        if (email && !email.clickedAt && !isScanner) {
+          await prisma.outboundEmail.update({
+            where: { id: email.id },
+            data: { clickedAt: new Date() },
+          });
+        }
 
-    await prisma.leadActivityEvent.create({
-      data: {
-        leadId: payload.leadId,
-        campaignId: payload.campaignId || null,
-        eventType: 'EMAIL_CLICKED',
-        metadata: {
-          outboundEmailId: payload.outboundEmailId,
-          targetUrl: sanitizedUrl,
-          userAgent,
-          ip,
-          isScannerFiltered: isScanner,
-        },
-      },
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message, outboundEmailId: payload.outboundEmailId }, 'Failed to record click telemetry');
-  }
+        await prisma.leadActivityEvent.create({
+          data: {
+            leadId: payload.leadId,
+            campaignId: payload.campaignId || null,
+            eventType: 'EMAIL_CLICKED',
+            metadata: {
+              outboundEmailId: payload.outboundEmailId,
+              targetUrl: sanitizedUrl,
+              userAgent,
+              ip,
+              isScannerFiltered: isScanner,
+            },
+          },
+        });
+
+        if (email && !isScanner) {
+          await webhookDispatchService.dispatch({
+            userId: email.userId,
+            event: 'deal.booked',
+            payload: {
+              leadId: payload.leadId,
+              campaignId: payload.campaignId || null,
+              outboundEmailId: payload.outboundEmailId,
+              targetUrl: sanitizedUrl,
+              clickedAt: new Date().toISOString(),
+            },
+          });
+        }
+      } catch (err: any) {
+        logger.warn({ err: err?.message, outboundEmailId: payload.outboundEmailId }, 'Failed to record click telemetry');
+      }
+    })()
+  );
 };

@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { sequenceAgentService } from './sequenceAgent.service';
 import { notificationService } from './notification.service';
+import { webhookDispatchService } from './webhookDispatch.service';
 
 export class WebhooksService {
 
@@ -29,9 +30,7 @@ export class WebhooksService {
     const now = new Date(eventData.timestamp * 1000);
 
     try {
-      // -------------------------------------------------------------
       // BRANCH A: TOWN CRIER NEWSLETTER BROADCAST DELIVERABILITY
-      // -------------------------------------------------------------
       if (outboundEmailId.startsWith('tc_')) {
         const queueItemId = outboundEmailId.replace(/^tc_/, '');
         const queueItem = await prisma.newsletterQueueItem.findUnique({
@@ -76,9 +75,7 @@ export class WebhooksService {
         return;
       }
 
-      // -------------------------------------------------------------
       // BRANCH B: COLD CAMPAIGN OUTREACH DELIVERABILITY (OutboundEmail)
-      // -------------------------------------------------------------
       const email = await prisma.outboundEmail.findUnique({
         where: { id: outboundEmailId },
         include: { domain: true },
@@ -119,14 +116,26 @@ export class WebhooksService {
       status = 'paused_health_risk';
       logger.warn({ domainId, newBounceRate, newComplaintRate }, 'AUTO-PAUSE KILLSWITCH ACTIVATED FOR DOMAIN');
 
-      // Urgent Deliverability Notification Trigger
       notificationService.create({
         userId: domain.userId,
-        title: `🚨 Deliverability Circuit Breaker Tripped: ${domain.domainName}`,
+        title: `Deliverability Circuit Breaker Tripped: ${domain.domainName}`,
         message: `Sending has been automatically halted. Bounce rate is ${(newBounceRate * 100).toFixed(1)}% (threshold 5%) or complaint rate is ${(newComplaintRate * 100).toFixed(2)}% (threshold 0.3%).`,
         type: 'URGENT',
         link: '/domains',
         metadata: { domainId, newBounceRate, newComplaintRate },
+      }).catch(() => {});
+
+      webhookDispatchService.dispatch({
+        userId: domain.userId,
+        event: 'deliverability.circuit_tripped',
+        payload: {
+          domainId: domain.id,
+          domainName: domain.domainName,
+          bounceRate: newBounceRate,
+          complaintRate: newComplaintRate,
+          status,
+          trippedAt: new Date().toISOString(),
+        },
       }).catch(() => {});
     }
 
@@ -273,17 +282,43 @@ export class WebhooksService {
         }
       });
 
-      // Immediate Push Notification: Prospect Replied
+      await prisma.leadActivityEvent.create({
+        data: {
+          leadId: lead.id,
+          campaignId: originalEmail.campaignId || null,
+          eventType: 'EMAIL_REPLIED',
+          metadata: {
+            inboundEmailId: inboundEmail.id,
+            subject,
+            fromAddress: from,
+          },
+        },
+      }).catch(() => {});
+
       notificationService.create({
         userId: originalEmail.userId,
-        title: `📩 New Reply from ${lead.name}`,
+        title: `New Reply from ${lead.name}`,
         message: `${subject}: "${body.slice(0, 90).replace(/\s+/g, ' ')}..."`,
         type: 'INBOUND_REPLY',
         link: `/inbox`,
         metadata: { leadId: lead.id, emailId: inboundEmail.id },
       }).catch(() => {});
 
-      // Route through State-Graph Engine
+      webhookDispatchService.dispatch({
+        userId: originalEmail.userId,
+        event: 'lead.replied',
+        payload: {
+          leadId: lead.id,
+          leadEmail: lead.email,
+          leadName: lead.name,
+          campaignId: originalEmail.campaignId || null,
+          emailId: inboundEmail.id,
+          subject,
+          snippet: body.slice(0, 240),
+          repliedAt: inboundEmail.sentAt.toISOString(),
+        },
+      }).catch(() => {});
+
       if (originalEmail.campaignId) {
         sequenceAgentService.processInboundTransition(
           originalEmail.leadId,

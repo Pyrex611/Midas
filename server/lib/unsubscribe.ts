@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import prisma from './prisma';
 
-const APP_BASE_URL = process.env.APP_BASE_URL || 'https://midas-aem.vercel.app';
+const APP_BASE_URL = process.env.APP_URL || process.env.APP_BASE_URL || 'https://midas-aem.vercel.app';
 
 /** Generates a token the first time a lead needs one (self-healing for leads imported before unsubscribe tokens existed). */
 export async function ensureUnsubscribeToken(leadId: string, currentToken: string | null): Promise<string> {
