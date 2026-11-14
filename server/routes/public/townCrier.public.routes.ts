@@ -8,7 +8,9 @@ import { requireApiKey, requireApiKeyScope, ApiKeyRequest } from '../../middlewa
 import { emailService } from '../../services/email.service';
 import { personalisationService } from '../../services/personalisation.service';
 import { senderService } from '../../services/sender.service';
-import { reconcileCampaignQueue } from '../../controllers/campaign/campaign.queue.controller';
+import { newsletterQueueService } from '../../services/newsletterQueue.service';
+import { webhookDispatchService } from '../../services/webhookDispatch.service';
+import { reconcileCampaignQueue } from '../../services/queueReconciliation.service';
 import { logger } from '../../config/logger';
 
 const router = Router();
@@ -16,13 +18,27 @@ const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.use(cors({ origin: true, credentials: true }));
 
+function safeWaitUntil(promise: Promise<any>): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vercel = require('@vercel/functions');
+    if (typeof vercel.waitUntil === 'function') {
+      vercel.waitUntil(promise);
+      return;
+    }
+  } catch {
+    // Local dev or non-Vercel Node runtime
+  }
+  promise.catch((err) => {
+    logger.error({ err: err?.message || err }, '[TOWN-CRIER] Background task error');
+  });
+}
+
 /**
  * GET /api/public/town-crier/widget.js
  * Autonomous Shadow-DOM Injection Engine (Next.js SPA & Cross-Domain Hardened):
- * 1. Derives API origin dynamically from document.currentScript.src (defaults to https://midas-aem.vercel.app).
- * 2. Uses document-level click delegation to support dynamic Next.js client-side route transitions.
- * 3. Uses MutationObserver to auto-mount inline embeds rendered dynamically in SPAs.
- * 4. Supports data-gong attribute for channel attribution and welcome autoresponders.
+ * - Inline Shadow-DOM error banner (zero native alert() dialogs).
+ * - Guaranteed Escape keydown cleanup on all modal close paths.
  */
 router.get('/widget.js', (_req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
@@ -33,7 +49,6 @@ router.get('/widget.js', (_req: Request, res: Response) => {
 (function() {
   window.TownCrier = window.TownCrier || {};
 
-  // 1. Dynamic Origin Resolution: Resolves the actual MIDAS backend domain, not the host website's origin
   var defaultBackend = (function() {
     try {
       if (document.currentScript && document.currentScript.src) {
@@ -183,9 +198,9 @@ router.get('/widget.js', (_req: Request, res: Response) => {
     var endpoint = options.endpoint || (defaultBackend + '/api/public/town-crier/subscribe');
     var headline = escapeHtml(options.headline || 'Join Our Newsletter');
     var subheadline = escapeHtml(options.subheadline || 'Get high-signal insights and product updates delivered to your inbox.');
-    var accent = options.accent || '#2563EB';
+    var accent = options.accent || '#4A2559';
     var bg = options.bg || '#FFFFFF';
-    var text = options.text || '#18181B';
+    var text = options.text || '#1F1124';
     var radius = options.radius || '20px';
     var btnText = escapeHtml(options.buttonText || 'Subscribe');
     var btnTextColor = getContrastColor(accent);
@@ -196,28 +211,29 @@ router.get('/widget.js', (_req: Request, res: Response) => {
 
     var backdrop = document.createElement('div');
     backdrop.id = 'tc-modal-backdrop';
-    backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(9,9,11,0.7);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+    backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(31,17,36,0.72);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
 
     var host = document.createElement('div');
     var shadow = host.attachShadow({ mode: 'open' });
 
     var css = \`
       * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .tc-card { background: \${bg}; border-radius: \${radius}; padding: 32px; max-width: 440px; width: 100%; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.3); border: 1px solid rgba(0,0,0,0.1); position: relative; color: \${text}; max-height: 90vh; overflow-y: auto; }
+      .tc-card { background: \${bg}; border-radius: \${radius}; padding: 32px; max-width: 440px; width: 100%; box-shadow: 0 25px 50px -12px rgba(31,17,36,0.35); border: 1px solid rgba(212,175,55,0.45); position: relative; color: \${text}; max-height: 90vh; overflow-y: auto; }
       .tc-close { position: absolute; top: 16px; right: 16px; background: transparent; border: none; color: \${text}; opacity: 0.6; font-size: 16px; cursor: pointer; padding: 4px; }
       .tc-head { font-size: 18px; font-weight: 900; margin: 0 0 4px 0; letter-spacing: -0.02em; }
       .tc-sub { font-size: 13px; opacity: 0.75; margin: 0 0 18px 0; line-height: 1.45; }
       .tc-input { width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid #d4d4d8; font-size: 13px; outline: none; margin-bottom: 10px; background: #fff; color: #18181b; }
       .tc-input:focus { border-color: \${accent}; }
-      .tc-btn { width: 100%; padding: 11px; border-radius: 10px; border: none; background: \${accent}; color: \${btnTextColor}; font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity 0.15s; margin-top: 4px; }
-      .tc-btn:hover { opacity: 0.9; }
+      .tc-btn { width: 100%; padding: 11px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.4); background: \${accent}; color: \${btnTextColor}; font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity 0.15s; margin-top: 4px; }
+      .tc-btn:hover { opacity: 0.92; }
       .tc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
       .tc-pills { display: flex; gap: 6px; }
       .tc-pill { flex: 1; padding: 6px; border-radius: 8px; border: 1px solid #d4d4d8; background: #fff; font-size: 11px; font-weight: 600; cursor: pointer; color: #18181b; }
       .tc-pill.active { border-color: \${accent}; background: \${accent}; color: \${btnTextColor}; font-weight: 700; }
-      .tc-bool-toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #f4f4f5; border-radius: 10px; margin-bottom: 10px; cursor: pointer; font-size: 12px; font-weight: 600; color: #18181b; user-select: none; }
+      .tc-bool-toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #f7f1f7; border-radius: 10px; margin-bottom: 10px; cursor: pointer; font-size: 12px; font-weight: 600; color: #1F1124; user-select: none; }
       .tc-bool-expand { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; }
       .tc-bool-expand.open { max-height: 80px; }
+      .tc-error { display: none; padding: 10px 12px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px; color: #9f1239; font-size: 12px; font-weight: 600; margin-top: 10px; }
       .tc-success { display: none; padding: 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; text-align: center; color: #065f46; font-size: 13px; font-weight: 700; margin-top: 10px; }
     \`;
 
@@ -233,6 +249,7 @@ router.get('/widget.js', (_req: Request, res: Response) => {
           \${fieldsMarkup}
           <button type="submit" class="tc-btn" id="btn-submit">\${btnText}</button>
         </form>
+        <div class="tc-error" id="box-error"></div>
         <div class="tc-success" id="box-success">✓ Thank you for subscribing!</div>
       </div>
     \`;
@@ -261,23 +278,28 @@ router.get('/widget.js', (_req: Request, res: Response) => {
       }
     });
 
+    function escHandler(e) {
+      if (e.key === 'Escape') closeModal();
+    }
+
     function closeModal() {
+      document.removeEventListener('keydown', escHandler);
       if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
       document.body.style.overflow = '';
     }
 
+    document.addEventListener('keydown', escHandler);
     shadow.querySelector('#close-btn').onclick = closeModal;
     backdrop.onclick = function(e) { if (e.target === backdrop) closeModal(); };
-    document.addEventListener('keydown', function escHandler(e) {
-      if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', escHandler); }
-    });
 
     var form = shadow.querySelector('#tc-form');
+    var errBox = shadow.querySelector('#box-error');
     var firstEmail = shadow.querySelector('input[type="email"]');
     if (firstEmail) firstEmail.focus();
 
     form.onsubmit = async function(e) {
       e.preventDefault();
+      errBox.style.display = 'none';
       var btn = shadow.querySelector('#btn-submit');
       btn.disabled = true;
       btn.innerText = 'Subscribing...';
@@ -315,14 +337,14 @@ router.get('/widget.js', (_req: Request, res: Response) => {
         shadow.querySelector('#box-success').style.display = 'block';
         setTimeout(closeModal, 1800);
       } catch (err) {
-        alert(err.message || 'Subscription failed');
+        errBox.innerText = err.message || 'Subscription failed. Please try again.';
+        errBox.style.display = 'block';
         btn.disabled = false;
         btn.innerText = btnText;
       }
     };
   };
 
-  // 2. Document-Level Event Delegation: Catches clicks across dynamic Next.js SPA transitions
   document.addEventListener('click', function(e) {
     var btn = e.target && e.target.closest ? e.target.closest('[data-town-crier-modal]') : null;
     if (!btn) return;
@@ -338,15 +360,14 @@ router.get('/widget.js', (_req: Request, res: Response) => {
       schema: schema,
       headline: btn.getAttribute('data-headline') || 'Join our Newsletter',
       subheadline: btn.getAttribute('data-subheadline') || 'Get high-signal insights delivered to your inbox.',
-      accent: btn.getAttribute('data-accent') || '#2563EB',
+      accent: btn.getAttribute('data-accent') || '#4A2559',
       bg: btn.getAttribute('data-bg') || '#FFFFFF',
-      text: btn.getAttribute('data-text') || '#18181B',
+      text: btn.getAttribute('data-text') || '#1F1124',
       radius: btn.getAttribute('data-radius') || '20px',
       buttonText: btn.getAttribute('data-button') || 'Subscribe'
     });
   });
 
-  // 3. Inline Embed Initializer with Shadow DOM
   function initInlineWidgets() {
     document.querySelectorAll('[data-town-crier-embed], [data-town-crier-widget]').forEach(function(el) {
       if (el.getAttribute('data-tc-ready')) return;
@@ -355,7 +376,7 @@ router.get('/widget.js', (_req: Request, res: Response) => {
       var key = el.getAttribute('data-key');
       var gongId = el.getAttribute('data-gong') || el.getAttribute('data-gong-id') || '';
       var endpoint = el.getAttribute('data-endpoint') || (defaultBackend + '/api/public/town-crier/subscribe');
-      var accent = el.getAttribute('data-accent') || '#2563EB';
+      var accent = el.getAttribute('data-accent') || '#4A2559';
       var bg = el.getAttribute('data-bg') || '#FFFFFF';
       var radius = el.getAttribute('data-radius') || '14px';
       var layout = el.getAttribute('data-layout') || 'card';
@@ -370,17 +391,18 @@ router.get('/widget.js', (_req: Request, res: Response) => {
 
       var css = \`
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        .tc-embed-box { width: 100%; max-width: \${isHorizontal ? '100%' : '440px'}; background: \${bg}; border-radius: \${radius}; padding: \${isHorizontal ? '0' : '24px'}; \${isHorizontal ? '' : 'box-shadow: 0 4px 20px -2px rgba(0,0,0,0.08); border: 1px solid #e4e4e7;'} }
+        .tc-embed-box { width: 100%; max-width: \${isHorizontal ? '100%' : '440px'}; background: \${bg}; border-radius: \${radius}; padding: \${isHorizontal ? '0' : '24px'}; \${isHorizontal ? '' : 'box-shadow: 0 4px 20px -2px rgba(31,17,36,0.08); border: 1px solid rgba(212,175,55,0.4);'} }
         .tc-form-col { display: flex; flex-direction: column; gap: 8px; }
         .tc-form-row { display: flex; gap: 8px; flex-wrap: wrap; }
         .tc-input { width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid #d4d4d8; font-size: 13px; outline: none; background: #fff; color: #18181b; }
-        .tc-btn-sub { padding: 10px 18px; border-radius: 10px; border: none; background: \${accent}; color: \${btnTextColor}; font-size: 13px; font-weight: 700; cursor: pointer; }
+        .tc-btn-sub { padding: 10px 18px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.4); background: \${accent}; color: \${btnTextColor}; font-size: 13px; font-weight: 700; cursor: pointer; }
         .tc-pills { display: flex; gap: 6px; margin-bottom: 4px; }
         .tc-pill { flex: 1; padding: 6px; border-radius: 8px; border: 1px solid #d4d4d8; background: #fff; font-size: 11px; font-weight: 600; cursor: pointer; color: #18181b; }
         .tc-pill.active { border-color: \${accent}; background: \${accent}; color: \${btnTextColor}; font-weight: 700; }
-        .tc-bool-toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #f4f4f5; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 600; color: #18181b; }
+        .tc-bool-toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #f7f1f7; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 600; color: #1F1124; }
         .tc-bool-expand { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; }
         .tc-bool-expand.open { max-height: 80px; }
+        .tc-error { display: none; padding: 8px 10px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; color: #9f1239; font-size: 11px; font-weight: 600; margin-top: 6px; }
       \`;
 
       var fieldsMarkup = schema.map(function(f) { return renderFieldHtml(f, accent, btnTextColor); }).join('');
@@ -393,7 +415,8 @@ router.get('/widget.js', (_req: Request, res: Response) => {
             \${fieldsMarkup}
             <button type="submit" class="tc-btn-sub">\${btnText}</button>
           </form>
-          <p id="tc-ok" style="display:none;color:#10b981;font-size:12px;font-weight:700;margin-top:8px;">✓ You are subscribed!</p>
+          <div class="tc-error" id="tc-err"></div>
+          <p id="tc-ok" style="display:none;color:#059669;font-size:12px;font-weight:700;margin-top:8px;">✓ You are subscribed!</p>
         </div>
       \`;
 
@@ -418,8 +441,10 @@ router.get('/widget.js', (_req: Request, res: Response) => {
       });
 
       var form = shadow.querySelector('#tc-form');
+      var errEl = shadow.querySelector('#tc-err');
       form.onsubmit = async function(e) {
         e.preventDefault();
+        errEl.style.display = 'none';
         var emailVal = '';
         var nameVal = undefined;
         var meta = {};
@@ -451,13 +476,13 @@ router.get('/widget.js', (_req: Request, res: Response) => {
           form.style.display = 'none';
           shadow.querySelector('#tc-ok').style.display = 'block';
         } catch (err) {
-          alert(err.message || 'Subscription failed');
+          errEl.innerText = err.message || 'Subscription failed';
+          errEl.style.display = 'block';
         }
       };
     });
   }
 
-  // 4. MutationObserver for Dynamic SPA Route Transitions: Automatically mounts newly inserted inline embeds
   function setupSpaObserver() {
     initInlineWidgets();
     if (window.MutationObserver) {
@@ -625,7 +650,7 @@ router.post('/gongs', requireApiKeyScope('town_crier:write'), async (req: Reques
     welcomeSubject,
     welcomeBody,
     embedTheme = 'minimal',
-    accentColor = '#2563EB',
+    accentColor = '#4A2559',
     headline = 'Join our newsletter',
     buttonText = 'Subscribe',
   } = req.body;
@@ -668,7 +693,7 @@ router.post('/gongs/:id/broadcast', requireApiKeyScope('town_crier:send'), async
   const apiReq = req as ApiKeyRequest;
   const userId = apiReq.apiUser!.id;
   const { id } = req.params;
-  const { subject, body, templateStyle } = req.body;
+  const { subject, body, templateStyle, tagFilter } = req.body;
 
   if (!subject?.trim() || !body?.trim()) {
     return res.status(400).json({ error: 'Subject and body are required' });
@@ -676,9 +701,14 @@ router.post('/gongs/:id/broadcast', requireApiKeyScope('town_crier:send'), async
 
   try {
     const gong = await prisma.gong.findFirst({
-      where: { id, userId },
+      where: {
+        userId,
+        OR: [{ id }, { slug: id.toLowerCase().trim() }],
+      },
     });
     if (!gong) return res.status(404).json({ error: 'Gong channel not found' });
+
+    const cleanTag = tagFilter?.trim() || null;
 
     const broadcast = await prisma.newsletterBroadcast.create({
       data: {
@@ -687,13 +717,19 @@ router.post('/gongs/:id/broadcast', requireApiKeyScope('town_crier:send'), async
         subject: subject.trim(),
         body: body.trim(),
         templateStyle: templateStyle || gong.templateStyle || 'card',
+        tagFilter: cleanTag,
         status: 'QUEUED',
         queuedAt: new Date(),
       },
     });
 
     const recipients = await prisma.newsletterRecipient.findMany({
-      where: { userId, gongId: gong.id, status: 'SUBSCRIBED' },
+      where: {
+        userId,
+        gongId: gong.id,
+        status: 'SUBSCRIBED',
+        ...(cleanTag ? { tags: { has: cleanTag } } : {}),
+      },
       select: { id: true },
     });
 
@@ -706,6 +742,7 @@ router.post('/gongs/:id/broadcast', requireApiKeyScope('town_crier:send'), async
 
     if (queueItems.length > 0) {
       await prisma.newsletterQueueItem.createMany({ data: queueItems });
+      safeWaitUntil(newsletterQueueService.processNewsletterQueue());
     }
 
     res.status(201).json({
@@ -721,7 +758,8 @@ router.post('/gongs/:id/broadcast', requireApiKeyScope('town_crier:send'), async
 
 /**
  * POST /api/public/town-crier/subscribe
- * Resolves Gongs by CUID or Slug, automatically attaches channel tags, and triggers welcome autoresponders.
+ * Resolves Gongs by CUID or Slug (single AND bulk), auto-tags gong:<slug>,
+ * fires welcome autoresponder & outbound webhook inside safeWaitUntil.
  */
 router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Request, res: Response) => {
   const apiReq = req as ApiKeyRequest;
@@ -736,20 +774,47 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
         return email === p || email.endsWith('@' + p) || email.endsWith('.' + p);
       });
 
-    // 1. Bulk Subscriber Array
+    // 1. Bulk Subscriber Array (Resolves Gong Slugs -> Gong IDs safely)
     if (Array.isArray(payload.subscribers)) {
+      const userGongs = await prisma.gong.findMany({
+        where: { userId },
+        select: { id: true, slug: true },
+      });
+      const gongLookup = new Map<string, { id: string; slug: string }>();
+      for (const g of userGongs) {
+        gongLookup.set(g.id, g);
+        gongLookup.set(g.slug.toLowerCase(), g);
+      }
+
+      const defaultIdentifier = (payload.gongId || payload.gong || '').trim();
+      const defaultGong = defaultIdentifier
+        ? gongLookup.get(defaultIdentifier) || gongLookup.get(defaultIdentifier.toLowerCase()) || null
+        : null;
+
       const validSubscribers = payload.subscribers
-        .map((s: any) => ({
-          email: String(s.email || '').trim().toLowerCase(),
-          name: s.name ? String(s.name).trim() : null,
-          cadence: s.cadence || 'weekly',
-          tags: Array.isArray(s.tags) ? s.tags.map((t: any) => String(t).trim()) : ['api_bulk'],
-          userId,
-          gongId: payload.gongId || payload.gong || undefined,
-          source: 'api_bulk',
-          status: 'SUBSCRIBED',
-          unsubscribeToken: crypto.randomBytes(16).toString('hex'),
-        }))
+        .map((s: any) => {
+          const itemIdentifier = (s.gongId || s.gong || '').trim();
+          const resolvedGong = itemIdentifier
+            ? gongLookup.get(itemIdentifier) || gongLookup.get(itemIdentifier.toLowerCase()) || defaultGong
+            : defaultGong;
+
+          const baseTags = Array.isArray(s.tags) ? s.tags.map((t: any) => String(t).trim()) : ['api_bulk'];
+          if (resolvedGong && !baseTags.includes(`gong:${resolvedGong.slug}`)) {
+            baseTags.push(`gong:${resolvedGong.slug}`);
+          }
+
+          return {
+            email: String(s.email || '').trim().toLowerCase(),
+            name: s.name ? String(s.name).trim() : null,
+            cadence: s.cadence || 'weekly',
+            tags: baseTags,
+            userId,
+            gongId: resolvedGong?.id || null,
+            source: 'api_bulk',
+            status: 'SUBSCRIBED',
+            unsubscribeToken: crypto.randomBytes(16).toString('hex'),
+          };
+        })
         .filter((s: any) => s.email && s.email.includes('@') && !isSuppressed(s.email));
 
       let insertedCount = 0;
@@ -762,6 +827,19 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
         });
         insertedCount += r.count;
       }
+
+      safeWaitUntil(
+        webhookDispatchService.dispatch({
+          userId,
+          event: 'gong.subscribed',
+          payload: {
+            bulk: true,
+            processed: payload.subscribers.length,
+            inserted: insertedCount,
+            gongSlug: defaultGong?.slug || null,
+          },
+        })
+      );
 
       return res.status(201).json({ success: true, processed: payload.subscribers.length, inserted: insertedCount });
     }
@@ -776,7 +854,6 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
       return res.status(400).json({ error: 'This email is suppressed by workspace blocklist rules.' });
     }
 
-    // Dynamic Gong Resolution: Checks by ID OR Slug
     let targetGong: any = null;
     const gongIdentifier = (payload.gongId || payload.gong || '').trim();
     if (gongIdentifier) {
@@ -788,17 +865,19 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
             { slug: gongIdentifier.toLowerCase() },
           ],
         },
+        include: {
+          dedicatedSender: { include: { domain: true } },
+        },
       });
     }
 
     const unsubToken = crypto.randomBytes(16).toString('hex');
-    let cleanTags = Array.isArray(payload.tags)
+    const cleanTags = Array.isArray(payload.tags)
       ? payload.tags.map((t: any) => String(t).trim())
       : targetGong?.tags?.length
       ? [...targetGong.tags]
       : ['website_form'];
 
-    // Auto-append gong tag for instant segment filtering
     if (targetGong && !cleanTags.includes(`gong:${targetGong.slug}`)) {
       cleanTags.push(`gong:${targetGong.slug}`);
     }
@@ -834,71 +913,101 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
       },
     });
 
-    // 3. Preset Welcome Email Autoresponder
+    // 3. Preset Welcome Email Autoresponder (Protected by safeWaitUntil)
     if (targetGong && targetGong.welcomeEmailEnabled && targetGong.welcomeSubject && targetGong.welcomeBody) {
-      (async () => {
-        try {
-          const userSettings = await prisma.userSettings.findUnique({
-            where: { userId },
-            include: { dedicatedNewsletterSender: { include: { domain: true } } },
-          });
-
-          let eligibleSender = userSettings?.dedicatedNewsletterSender;
-
-          if (!eligibleSender || eligibleSender.status !== 'active') {
-            const senders = await prisma.sender.findMany({
-              where: { userId, status: 'active', domain: { status: 'active' } },
-              include: { domain: true },
+      safeWaitUntil(
+        (async () => {
+          try {
+            const userSettings = await prisma.userSettings.findUnique({
+              where: { userId },
+              include: { dedicatedNewsletterSender: { include: { domain: true } } },
             });
-            eligibleSender = senders[0] || null;
+
+            let eligibleSender: any = null;
+            if (
+              targetGong.dedicatedSender &&
+              targetGong.dedicatedSender.status === 'active' &&
+              targetGong.dedicatedSender.domain?.status === 'active'
+            ) {
+              eligibleSender = targetGong.dedicatedSender;
+            } else if (
+              userSettings?.dedicatedNewsletterSender &&
+              userSettings.dedicatedNewsletterSender.status === 'active' &&
+              userSettings.dedicatedNewsletterSender.domain?.status === 'active'
+            ) {
+              eligibleSender = userSettings.dedicatedNewsletterSender;
+            } else {
+              const senders = await prisma.sender.findMany({
+                where: { userId, status: 'active', domain: { status: 'active' } },
+                include: { domain: true },
+              });
+              eligibleSender = senders[0] || null;
+            }
+
+            if (eligibleSender) {
+              eligibleSender = await senderService.ensureSenderDailyReset(eligibleSender.id);
+              const appBaseUrl = process.env.APP_URL || 'https://midas-aem.vercel.app';
+              const unsubUrl = `${appBaseUrl.replace(/\/$/, '')}/api/public/town-crier/recipients/unsubscribe/${recipient.unsubscribeToken}`;
+
+              const { subject, body } = personalisationService.personalise(
+                recipient,
+                targetGong.welcomeSubject,
+                targetGong.welcomeBody,
+                null,
+                eligibleSender.displayName || userSettings?.companyName || 'The Team',
+                unsubUrl,
+                {
+                  companyName: userSettings?.companyName,
+                  physicalAddress: userSettings?.physicalAddress,
+                  customOptOutText: userSettings?.customOptOutText,
+                }
+              );
+
+              await emailService.sendEmailNow(
+                { ...eligibleSender.domain, senderLocalPart: eligibleSender.localPart },
+                recipient.email,
+                subject,
+                body.replace(/\n/g, '<br>'),
+                body,
+                `tc_welcome_${recipient.id}`,
+                eligibleSender.displayName || userSettings?.companyName || null,
+                undefined,
+                unsubUrl,
+                undefined,
+                {
+                  brandName: userSettings?.companyName,
+                  brandInitials: userSettings?.brandInitials,
+                  brandColorHex: userSettings?.brandColorHex,
+                  logoUrl: userSettings?.logoUrl,
+                  brandingEnabled: userSettings?.brandingEnabled ?? true,
+                  templateStyle: targetGong.templateStyle || 'card',
+                }
+              );
+              logger.info({ recipientId: recipient.id, gongId: targetGong.id }, '[GONG] Preset welcome email dispatched');
+            }
+          } catch (err: any) {
+            logger.error({ err: err?.message, recipientId: recipient.id }, '[GONG] Failed to dispatch welcome email');
           }
-
-          if (eligibleSender) {
-            eligibleSender = await senderService.ensureSenderDailyReset(eligibleSender.id);
-            const appBaseUrl = process.env.APP_URL || 'https://midas-aem.vercel.app';
-            const unsubUrl = `${appBaseUrl.replace(/\/$/, '')}/api/public/town-crier/recipients/unsubscribe/${recipient.unsubscribeToken}`;
-
-            const { subject, body } = personalisationService.personalise(
-              recipient,
-              targetGong.welcomeSubject,
-              targetGong.welcomeBody,
-              null,
-              eligibleSender.displayName || userSettings?.companyName || 'The Team',
-              unsubUrl,
-              {
-                companyName: userSettings?.companyName,
-                physicalAddress: userSettings?.physicalAddress,
-                customOptOutText: userSettings?.customOptOutText,
-              }
-            );
-
-            await emailService.sendEmailNow(
-              { ...eligibleSender.domain, senderLocalPart: eligibleSender.localPart },
-              recipient.email,
-              subject,
-              body.replace(/\n/g, '<br>'),
-              body,
-              `tc_welcome_${recipient.id}`,
-              eligibleSender.displayName || userSettings?.companyName || null,
-              undefined,
-              unsubUrl,
-              undefined,
-              {
-                brandName: userSettings?.companyName,
-                brandInitials: userSettings?.brandInitials,
-                brandColorHex: userSettings?.brandColorHex,
-                logoUrl: userSettings?.logoUrl,
-                brandingEnabled: userSettings?.brandingEnabled ?? true,
-                templateStyle: targetGong.templateStyle || 'card',
-              }
-            );
-            logger.info({ recipientId: recipient.id, gongId: targetGong.id }, '[GONG] Preset welcome email dispatched');
-          }
-        } catch (err: any) {
-          logger.error({ err: err?.message, recipientId: recipient.id }, '[GONG] Failed to dispatch welcome email');
-        }
-      })();
+        })()
+      );
     }
+
+    safeWaitUntil(
+      webhookDispatchService.dispatch({
+        userId,
+        event: 'gong.subscribed',
+        payload: {
+          recipientId: recipient.id,
+          email: recipient.email,
+          name: recipient.name,
+          cadence: recipient.cadence,
+          gongId: targetGong?.id || null,
+          gongSlug: targetGong?.slug || null,
+          tags: recipient.tags,
+          metadata: recipient.metadata,
+        },
+      })
+    );
 
     if (payload.campaignId && typeof payload.campaignId === 'string') {
       const campaign = await prisma.campaign.findFirst({
@@ -916,7 +1025,7 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
             outreachStatus: 'PENDING',
           },
         });
-        reconcileCampaignQueue(campaign.id, userId).catch(() => {});
+        safeWaitUntil(reconcileCampaignQueue(campaign.id, userId));
       }
     }
 

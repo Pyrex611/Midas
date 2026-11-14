@@ -227,14 +227,14 @@ export const townCrierAPI = {
   revokeApiKey: (id: string) => api.delete(`/api-keys/${id}`),
 
   getBroadcasts: () => api.get('/town-crier/broadcasts'),
-  createBroadcast: (data: { subject: string; body: string; tagFilter?: string; gongId?: string }) =>
+  createBroadcast: (data: { subject: string; body: string; tagFilter?: string; gongId?: string; templateStyle?: string }) =>
     api.post('/town-crier/broadcasts', data),
   queueBroadcast: (id: string) => api.post(`/town-crier/broadcasts/${id}/queue`),
   deleteBroadcast: (id: string) => api.delete(`/town-crier/broadcasts/${id}`),
   triggerSweep: () => api.post('/town-crier/sweep'),
 
-  getRecipients: (page = 1, pageSize = 20, status?: string, tag?: string) =>
-    api.get('/town-crier/recipients', { params: { page, pageSize, status, tag } }),
+  getRecipients: (page = 1, pageSize = 20, status?: string, tag?: string, gongId?: string) =>
+    api.get('/town-crier/recipients', { params: { page, pageSize, status, tag, gongId } }),
   addRecipient: (email: string, name?: string, tags?: string[], gongId?: string) =>
     api.post('/town-crier/recipients', { email, name, tags, gongId }),
   importRecipients: (file: File, tag?: string) => {

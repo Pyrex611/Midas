@@ -9,6 +9,7 @@ import { newsletterQueueService } from '../services/newsletterQueue.service';
 import { logger } from '../config/logger';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
+const VALID_TEMPLATE_STYLES = ['card', 'editorial', 'minimal', 'plain'] as const;
 
 // --- Audience Analytics & Metrics ---
 
@@ -162,10 +163,12 @@ export const listRecipients = async (req: AuthRequest, res: Response, next: Next
     const pageSize = parseInt(req.query.pageSize as string || '20', 10);
     const status = req.query.status as string;
     const tag = req.query.tag as string;
+    const gongId = req.query.gongId as string;
 
     const where: any = { userId };
     if (status && status !== 'all') where.status = status;
     if (tag && tag.trim()) where.tags = { has: tag.trim() };
+    if (gongId && gongId !== 'all') where.gongId = gongId;
 
     const [recipients, total] = await Promise.all([
       prisma.newsletterRecipient.findMany({
@@ -187,11 +190,23 @@ export const listRecipients = async (req: AuthRequest, res: Response, next: Next
 export const addRecipient = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { email, name, tags } = req.body;
+    const { email, name, tags, gongId } = req.body;
 
     const cleanEmail = (email || '').trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       return res.status(400).json({ error: 'A valid email address is required' });
+    }
+
+    let resolvedGongId: string | undefined;
+    if (gongId && typeof gongId === 'string' && gongId.trim()) {
+      const gong = await prisma.gong.findFirst({
+        where: {
+          userId,
+          OR: [{ id: gongId.trim() }, { slug: gongId.trim().toLowerCase() }],
+        },
+        select: { id: true },
+      });
+      if (gong) resolvedGongId = gong.id;
     }
 
     const unsubToken = crypto.randomBytes(16).toString('hex');
@@ -208,6 +223,7 @@ export const addRecipient = async (req: AuthRequest, res: Response, next: NextFu
         name: name ? String(name).trim() : undefined,
         status: 'SUBSCRIBED',
         tags: cleanTags.length > 0 ? cleanTags : undefined,
+        ...(resolvedGongId ? { gongId: resolvedGongId } : {}),
       },
       create: {
         userId,
@@ -216,6 +232,7 @@ export const addRecipient = async (req: AuthRequest, res: Response, next: NextFu
         source: 'ui',
         status: 'SUBSCRIBED',
         tags: cleanTags,
+        gongId: resolvedGongId || null,
         unsubscribeToken: unsubToken,
       },
     });
@@ -306,6 +323,7 @@ export const listBroadcasts = async (req: AuthRequest, res: Response, next: Next
     const broadcasts = await prisma.newsletterBroadcast.findMany({
       where: { userId },
       include: {
+        gong: { select: { id: true, name: true, slug: true } },
         _count: {
           select: { queueItems: true },
         },
@@ -335,19 +353,46 @@ export const listBroadcasts = async (req: AuthRequest, res: Response, next: Next
 export const createBroadcast = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { subject, body, tagFilter } = req.body;
+    const { subject, body, tagFilter, gongId, templateStyle } = req.body;
 
     if (!subject?.trim() || !body?.trim()) {
       return res.status(400).json({ error: 'Subject and body are required' });
     }
 
+    let resolvedGongId: string | null = null;
+    let defaultTemplateStyle: string = 'card';
+
+    if (gongId && typeof gongId === 'string' && gongId.trim()) {
+      const gong = await prisma.gong.findFirst({
+        where: {
+          userId,
+          OR: [{ id: gongId.trim() }, { slug: gongId.trim().toLowerCase() }],
+        },
+        select: { id: true, templateStyle: true },
+      });
+      if (!gong) {
+        return res.status(404).json({ error: 'Selected Gong channel not found' });
+      }
+      resolvedGongId = gong.id;
+      defaultTemplateStyle = gong.templateStyle || 'card';
+    }
+
+    const chosenStyle = VALID_TEMPLATE_STYLES.includes(templateStyle)
+      ? templateStyle
+      : defaultTemplateStyle;
+
     const broadcast = await prisma.newsletterBroadcast.create({
       data: {
         userId,
+        gongId: resolvedGongId,
         subject: subject.trim(),
         body: body.trim(),
         status: 'DRAFT',
+        templateStyle: chosenStyle,
         tagFilter: tagFilter?.trim() || null,
+      },
+      include: {
+        gong: { select: { id: true, name: true, slug: true } },
       },
     });
 
@@ -385,7 +430,7 @@ export const deleteBroadcast = async (req: AuthRequest, res: Response, next: Nex
   } catch (error) { next(error); }
 };
 
-export const triggerNewsletterSweep = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const triggerNewsletterSweep = async (_req: AuthRequest, res: Response) => {
   try {
     const summary = await newsletterQueueService.processNewsletterQueue();
     res.json({ success: true, summary });
@@ -401,7 +446,17 @@ export const listGongs = async (req: AuthRequest, res: Response, next: NextFunct
     const userId = req.user!.id;
     const gongs = await prisma.gong.findMany({
       where: { userId },
-      include: { _count: { select: { recipients: true, broadcasts: true } } },
+      include: {
+        dedicatedSender: {
+          select: {
+            id: true,
+            localPart: true,
+            displayName: true,
+            domain: { select: { domainName: true } },
+          },
+        },
+        _count: { select: { recipients: true, broadcasts: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     res.json({ gongs });
@@ -421,26 +476,44 @@ function cleanSlug(raw: string): string {
 export const createGong = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { name, slug } = req.body;
+    const { name, slug, dedicatedSenderId } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Gong channel name is required' });
+
+    let validSenderId: string | null = null;
+    if (dedicatedSenderId && typeof dedicatedSenderId === 'string' && dedicatedSenderId.trim()) {
+      const sender = await prisma.sender.findFirst({
+        where: { id: dedicatedSenderId.trim(), userId },
+        select: { id: true },
+      });
+      if (!sender) {
+        return res.status(404).json({ error: 'Selected dedicated mailbox sender was not found on your account' });
+      }
+      validSenderId = sender.id;
+    }
 
     const data: any = {
       userId,
       name: name.trim(),
       slug: cleanSlug(slug || name),
+      dedicatedSenderId: validSenderId,
     };
     for (const field of GONG_WRITABLE_FIELDS) {
       if (req.body[field] !== undefined) data[field] = req.body[field];
     }
 
-    // NOTE: the drawer also sends `dedicatedSenderId`. There is no per-Gong
-    // sender column yet — only the account-wide UserSettings.dedicatedNewsletterSenderId.
-    // Intentionally NOT persisted here (not silently dropped — tracked as a
-    // fast-follow: requires a Gong.dedicatedSenderId migration + rewiring
-    // newsletterQueueService's sender resolution to check it before falling
-    // back to the account-wide default).
-
-    const gong = await prisma.gong.create({ data });
+    const gong = await prisma.gong.create({
+      data,
+      include: {
+        dedicatedSender: {
+          select: {
+            id: true,
+            localPart: true,
+            displayName: true,
+            domain: { select: { domainName: true } },
+          },
+        },
+      },
+    });
     res.status(201).json({ success: true, gong });
   } catch (error: any) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'A Gong with this slug already exists' });
@@ -453,8 +526,25 @@ export const updateGong = async (req: AuthRequest, res: Response, next: NextFunc
     const userId = req.user!.id;
     const { id } = req.params;
     const data: Record<string, any> = {};
+
     if (req.body.name?.trim()) data.name = req.body.name.trim();
     if (req.body.slug) data.slug = cleanSlug(req.body.slug);
+
+    if (req.body.dedicatedSenderId !== undefined) {
+      if (!req.body.dedicatedSenderId) {
+        data.dedicatedSenderId = null;
+      } else {
+        const sender = await prisma.sender.findFirst({
+          where: { id: String(req.body.dedicatedSenderId).trim(), userId },
+          select: { id: true },
+        });
+        if (!sender) {
+          return res.status(404).json({ error: 'Selected dedicated mailbox sender was not found on your account' });
+        }
+        data.dedicatedSenderId = sender.id;
+      }
+    }
+
     for (const field of GONG_WRITABLE_FIELDS) {
       if (req.body[field] !== undefined) data[field] = req.body[field];
     }
@@ -462,7 +552,19 @@ export const updateGong = async (req: AuthRequest, res: Response, next: NextFunc
     const result = await prisma.gong.updateMany({ where: { id, userId }, data });
     if (result.count === 0) return res.status(404).json({ error: 'Gong channel not found' });
 
-    const gong = await prisma.gong.findUnique({ where: { id } });
+    const gong = await prisma.gong.findUnique({
+      where: { id },
+      include: {
+        dedicatedSender: {
+          select: {
+            id: true,
+            localPart: true,
+            displayName: true,
+            domain: { select: { domainName: true } },
+          },
+        },
+      },
+    });
     res.json({ success: true, gong });
   } catch (error: any) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'A Gong with this slug already exists' });

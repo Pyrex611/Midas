@@ -66,7 +66,13 @@ export class NewsletterQueueService {
         where: { id: { in: itemIds } },
         include: {
           broadcast: {
-            include: { gong: true },
+            include: {
+              gong: {
+                include: {
+                  dedicatedSender: { include: { domain: true } },
+                },
+              },
+            },
           },
         },
       });
@@ -91,10 +97,21 @@ export class NewsletterQueueService {
             include: { dedicatedNewsletterSender: { include: { domain: true } } },
           });
 
-          // Dedicated Sender Resolution: Check UserSettings dedicated sender, then fallback to active pool
-          let eligibleSender = userSettings?.dedicatedNewsletterSender;
+          // Priority 1: Per-Gong dedicated sender
+          // Priority 2: Account-wide dedicated newsletter sender
+          // Priority 3: Active pool fallback with 50% fair-share cap
+          let eligibleSender: any = null;
 
-          if (!eligibleSender || eligibleSender.status !== 'active') {
+          const gongSender = item.broadcast.gong?.dedicatedSender;
+          if (gongSender && gongSender.status === 'active' && gongSender.domain?.status === 'active') {
+            eligibleSender = await senderService.ensureSenderDailyReset(gongSender.id);
+          } else if (
+            userSettings?.dedicatedNewsletterSender &&
+            userSettings.dedicatedNewsletterSender.status === 'active' &&
+            userSettings.dedicatedNewsletterSender.domain?.status === 'active'
+          ) {
+            eligibleSender = await senderService.ensureSenderDailyReset(userSettings.dedicatedNewsletterSender.id);
+          } else {
             const rawSenders = await prisma.sender.findMany({
               where: {
                 userId: item.userId,
@@ -124,8 +141,6 @@ export class NewsletterQueueService {
               const isCooledDown = !s.lastDispatchedAt || (Date.now() - new Date(s.lastDispatchedAt).getTime()) >= cooldownSeconds * 1000;
               return isUnderCap && isCooledDown;
             }) || activeSenders.find(s => s && s.sentCountToday < s.dailyLimit);
-          } else {
-            eligibleSender = await senderService.ensureSenderDailyReset(eligibleSender.id);
           }
 
           if (!eligibleSender) {
@@ -135,6 +150,19 @@ export class NewsletterQueueService {
             });
             summary.deferred++;
             continue;
+          }
+
+          // Respect per-sender cooldown even for dedicated senders
+          if (eligibleSender.lastDispatchedAt) {
+            const msSinceLast = Date.now() - new Date(eligibleSender.lastDispatchedAt).getTime();
+            if (msSinceLast < cooldownSeconds * 1000) {
+              await prisma.newsletterQueueItem.update({
+                where: { id: item.id },
+                data: { status: 'PENDING' },
+              });
+              summary.deferred++;
+              continue;
+            }
           }
 
           const claimResult = await prisma.$queryRaw<{ id: string }[]>`
@@ -172,7 +200,6 @@ export class NewsletterQueueService {
             }
           );
 
-          // Resolve template style: Broadcast override -> Gong channel default -> Card default
           const chosenTemplateStyle = item.broadcast.templateStyle || item.broadcast.gong?.templateStyle || 'card';
 
           const result = await emailService.sendEmailNow(
@@ -214,7 +241,7 @@ export class NewsletterQueueService {
 
               notificationService.create({
                 userId: item.userId,
-                title: '📣 Newsletter Broadcast Completed',
+                title: 'Newsletter Broadcast Completed',
                 message: `"${item.broadcast.subject}" has finished sending to all queued subscribers.`,
                 type: 'SUCCESS',
                 link: '/town-crier',
@@ -257,17 +284,24 @@ export class NewsletterQueueService {
     });
     if (!broadcast) throw new Error('Broadcast not found');
 
+    const cleanTag = broadcast.tagFilter?.trim() || null;
+
     const recipients = await prisma.newsletterRecipient.findMany({
       where: {
         userId,
         status: 'SUBSCRIBED',
         ...(broadcast.gongId ? { gongId: broadcast.gongId } : {}),
+        ...(cleanTag ? { tags: { has: cleanTag } } : {}),
       },
       select: { id: true },
     });
 
     if (recipients.length === 0) {
-      throw new Error('No active subscribed recipients found for this broadcast');
+      throw new Error(
+        cleanTag
+          ? `No active subscribed recipients found matching tag "${cleanTag}"`
+          : 'No active subscribed recipients found for this broadcast'
+      );
     }
 
     const CHUNK_SIZE = 500;

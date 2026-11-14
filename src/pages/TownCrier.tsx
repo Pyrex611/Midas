@@ -33,14 +33,12 @@ export const TownCrier: React.FC = () => {
   const [loadingGongs, setLoadingGongs] = useState(false);
   const [editingGong, setEditingGong] = useState<any | null>(null);
 
-  // Supabase-Style Instant Quickstart Modal State
   const [quickstartGong, setQuickstartGong] = useState<any | null>(null);
 
   const [recipients, setRecipients] = useState<any[]>([]);
   const [pagination, setPagination] = useState({ page: 1, pageSize: 20, total: 0, totalPages: 0 });
   const [loadingAudience, setLoadingAudience] = useState(false);
 
-  // Drawers
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [isGongDrawerOpen, setIsGongDrawerOpen] = useState(false);
   const [isAddRecipientOpen, setIsAddRecipientOpen] = useState(false);
@@ -89,8 +87,13 @@ export const TownCrier: React.FC = () => {
     }
   };
 
+  // Load gongs on initial mount so Composer Drawer always has channels populated
   useEffect(() => {
     fetchAnalytics();
+    fetchGongs();
+  }, []);
+
+  useEffect(() => {
     if (activeTab === 'broadcasts') fetchBroadcasts();
     if (activeTab === 'gongs') fetchGongs();
     if (activeTab === 'audience') fetchRecipients(1);
@@ -115,18 +118,20 @@ export const TownCrier: React.FC = () => {
 
       <TownCrierAnalytics analytics={analytics} />
 
-      <div className="border-b border-zinc-200">
+      <div className="border-b border-gold-500/40">
         <nav className="flex space-x-8">
           {[
             ['broadcasts', 'Broadcasts'],
             ['gongs', `Gongs / Channels (${gongs.length})`],
-            ['audience', `Audience (${pagination.total || 0})`],
+            ['audience', `Audience (${pagination.total || analytics.totalSubscribers || 0})`],
           ].map(([key, label]) => (
             <button
               key={key}
               onClick={() => setActiveTab(key as Tab)}
               className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors ${
-                activeTab === key ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-900'
+                activeTab === key
+                  ? 'border-royal-700 text-royal-800'
+                  : 'border-transparent text-thistle-500 hover:text-royal-800'
               }`}
             >
               {label}
@@ -177,7 +182,6 @@ export const TownCrier: React.FC = () => {
         />
       )}
 
-      {/* Gong Setup & In-Place Mailbox Creation Drawer */}
       <TownCrierGongDrawer
         isOpen={isGongDrawerOpen}
         onClose={() => setIsGongDrawerOpen(false)}
@@ -189,24 +193,22 @@ export const TownCrier: React.FC = () => {
         }}
       />
 
-      {/* Supabase-Style Quickstart Modal: Shown Immediately on Gong Creation */}
       <GongQuickstartModal
         isOpen={Boolean(quickstartGong)}
         onClose={() => setQuickstartGong(null)}
         gong={quickstartGong}
       />
 
-      {/* Broadcast Composer */}
       <TownCrierComposerDrawer
         isOpen={isComposerOpen}
         onClose={() => setIsComposerOpen(false)}
+        gongs={gongs}
         onSuccess={() => {
           fetchBroadcasts();
           fetchAnalytics();
         }}
       />
 
-      {/* Add Single Subscriber */}
       <TownCrierAddRecipientDrawer
         isOpen={isAddRecipientOpen}
         onClose={() => setIsAddRecipientOpen(false)}
@@ -216,7 +218,6 @@ export const TownCrier: React.FC = () => {
         }}
       />
 
-      {/* Multi-Environment SDK & Modal Embed Drawer */}
       <TownCrierEmbedDrawer
         isOpen={isEmbedDrawerOpen}
         onClose={() => setIsEmbedDrawerOpen(false)}
