@@ -4,6 +4,7 @@ import { userAPI, domainAPI, senderAPI, userSettingsAPI } from '../services/api'
 import { UserSettings } from '../components/UserSettings';
 import { WebhookSettings } from '../components/settings/WebhookSettings';
 import { ApiKeySettings } from '../components/settings/ApiKeySettings';
+import { KnowledgeBasePanel } from '../components/knowledge/KnowledgeBasePanel';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { Icons } from '../lib/icons';
@@ -142,11 +143,10 @@ export const Profile: React.FC = () => {
         </div>
       )}
 
-      {/* Top Banner */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 border-b border-gold-500/40">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-royal-950 tracking-tight">Account &amp; Workspace</h1>
-          <p className="text-xs text-thistle-500 mt-1">Manage personal credentials, API keys, delivery throttling, and outbound webhooks.</p>
+          <p className="text-xs text-thistle-500 mt-1">Manage personal credentials, Knowledge Base, API keys, delivery throttling, and webhooks.</p>
         </div>
 
         <button
@@ -157,11 +157,11 @@ export const Profile: React.FC = () => {
         </button>
       </div>
 
-      {/* Tabs with Golden Bottom Separator */}
       <div className="border-b border-gold-500/40">
         <nav className="flex space-x-8 overflow-x-auto">
           {[
             ['profile', 'Operator Profile'],
+            ['knowledge', 'Knowledge Base'],
             ['settings', 'Settings & AI Studio'],
             ['apiKeys', 'Developer API Keys'],
             ['webhooks', 'Webhooks (CRM Sync)'],
@@ -182,7 +182,6 @@ export const Profile: React.FC = () => {
         </nav>
       </div>
 
-      {/* TAB 1: OPERATOR PROFILE */}
       {activeTab === 'profile' && (
         <div className="space-y-6">
           <div className="card-midas rounded-2xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
@@ -280,6 +279,7 @@ export const Profile: React.FC = () => {
         </div>
       )}
 
+      {activeTab === 'knowledge' && <KnowledgeBasePanel />}
       {activeTab === 'settings' && <UserSettings />}
       {activeTab === 'apiKeys' && <ApiKeySettings />}
       {activeTab === 'webhooks' && <WebhookSettings />}
@@ -316,7 +316,7 @@ export const Profile: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-gold-500/30">
               <div>
                 <h3 className="text-base font-black text-royal-950 tracking-tight">Active Sending Domains</h3>
-                <p className="text-xs text-thistle-500 mt-0.5">DNS identity and authenticated Mailgun domains linked to this account.</p>
+                <p className="text-xs text-thistle-500 mt-0.5">DNS identity and authenticated domains linked to this account.</p>
               </div>
               <Link
                 to="/domains"
@@ -329,7 +329,7 @@ export const Profile: React.FC = () => {
 
             {domains.length === 0 ? (
               <div className="py-12 text-center text-xs text-thistle-500 bg-thistle-50 rounded-xl border border-gold-500/30">
-                No sending domains connected yet. Authenticate a Mailgun domain to enable outreach.
+                No sending domains connected yet. Authenticate a Mailgun, Resend, or SMTP domain to enable outreach.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">

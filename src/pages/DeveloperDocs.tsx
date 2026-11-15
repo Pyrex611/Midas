@@ -30,7 +30,8 @@ const NAV_GROUPS = [
     group: 'Getting Started',
     items: [
       { id: 'overview', label: 'Architecture Overview' },
-      { id: 'quickstart', label: '5-Minute SDK Quickstart' },
+      { id: 'quickstart', label: '5-Minute SDK & Sandbox' },
+      { id: 'python-sdk', label: 'Python SDK (midas-aem)' },
       { id: 'auth-model', label: 'Authentication & Scopes' },
     ],
   },
@@ -48,15 +49,16 @@ const NAV_GROUPS = [
     items: [
       { id: 'api-campaigns', label: 'Campaigns & Sequences' },
       { id: 'api-leads', label: 'Leads & Blocklist' },
-      { id: 'api-domains', label: 'Domains, BIMI & Senders' },
-      { id: 'api-inbox-ai', label: 'Inbox & AI Studio' },
+      { id: 'api-domains', label: 'Domains, DNS & Multi-ESP' },
+      { id: 'api-inbox-ai', label: 'Inbox, KB & Artifacts' },
     ],
   },
   {
-    group: 'Webhooks, CLI & Errors',
+    group: 'Webhooks, Automation & CLI',
     items: [
       { id: 'webhooks', label: 'Webhook Payloads & HMAC' },
-      { id: 'cli', label: 'Standalone CLI' },
+      { id: 'ecosystems', label: 'Zapier, Make & n8n' },
+      { id: 'cli', label: 'Standalone CLI & Scaffolder' },
       { id: 'errors', label: 'Error & Status Matrix' },
     ],
   },
@@ -116,7 +118,6 @@ export const DeveloperDocs: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-thistle-canvas text-royal-950 flex flex-col">
-      {/* Standalone Enterprise Docs Top Bar with Golden Bottom Separator */}
       <header className="h-16 sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-gold-500/40 px-4 sm:px-8 flex items-center justify-between no-print">
         <div className="flex items-center gap-4">
           <button
@@ -135,7 +136,7 @@ export const DeveloperDocs: React.FC = () => {
               Developers
             </span>
             <span className="hidden sm:inline-block text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-gold-200/70 text-royal-950 border border-gold-400/50">
-              v2.5
+              v2.6
             </span>
           </Link>
         </div>
@@ -172,9 +173,7 @@ export const DeveloperDocs: React.FC = () => {
         </div>
       </header>
 
-      {/* Main 3-Column Documentation Layout */}
       <div className="max-w-[1440px] w-full mx-auto flex-1 flex">
-        {/* Column 1: Dedicated Docs Left Sidebar with Golden Right Separator */}
         <aside
           className={`${
             mobileNavOpen ? 'fixed inset-y-16 left-0 z-30 block shadow-2xl' : 'hidden'
@@ -213,9 +212,7 @@ export const DeveloperDocs: React.FC = () => {
           </div>
         </aside>
 
-        {/* Column 2: Primary Documentation Canvas */}
         <main className="flex-1 min-w-0 px-5 sm:px-10 lg:px-14 py-10 space-y-14 max-w-4xl">
-          {/* Section 1: Overview */}
           <section id="overview" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-white border border-gold-500/40 text-[11px] font-bold text-royal-800">
               <Icons.Book className="text-gold-600" />
@@ -225,7 +222,7 @@ export const DeveloperDocs: React.FC = () => {
               Dual-Engine Outbound &amp; Audience SDK
             </h1>
             <p className="text-sm text-royal-950/80 leading-relaxed">
-              MIDAS is a deliverability-first orchestration layer that sits on top of Mailgun. It separates cold outreach sequences (horizontally rotated across secondary mailboxes with bounded 5-send sweeps and 20s cooldowns) from permission-based newsletters via <strong>Town Crier Gong</strong> channels.
+              MIDAS is a deliverability-first orchestration layer that sits across Mailgun, Resend (newsletters), and Custom SMTP. It separates cold outreach sequences (rotated across mailboxes with bounded 5-send sweeps and 20s cooldowns) from permission-based newsletters via <strong>Town Crier Gong</strong> channels.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               <div className="p-4 rounded-2xl card-midas space-y-1.5">
@@ -234,7 +231,7 @@ export const DeveloperDocs: React.FC = () => {
                   <span>Cold Sequences Engine</span>
                 </div>
                 <p className="text-xs text-royal-950/75 leading-relaxed">
-                  Multi-sender rotation, recursive Spintax anti-fingerprinting, CAN-SPAM scoring, and an AI State-Graph reply classifier.
+                  Multi-sender rotation, recursive Spintax, Company Knowledge Base grounding, tracked Artifacts, and AI State-Graph reply handling.
                 </p>
               </div>
               <div className="p-4 rounded-2xl card-midas space-y-1.5">
@@ -249,46 +246,61 @@ export const DeveloperDocs: React.FC = () => {
             </div>
           </section>
 
-          {/* Section 2: Quickstart */}
           <section id="quickstart" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
-            <h2 className="text-2xl font-black text-royal-950 tracking-tight">5-Minute SDK Quickstart</h2>
+            <h2 className="text-2xl font-black text-royal-950 tracking-tight">5-Minute SDK &amp; Zero-Setup Sandbox</h2>
             <p className="text-xs text-royal-950/80 leading-relaxed">
-              Install the zero-dependency universal SDK (<code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">@midas-aem/client</code>) for Node.js, Next.js, and React:
+              Install <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">@midas-aem/client</code> or run the interactive CLI scaffolder:
             </p>
-            <CodeBlock id="install" filename="Terminal" code={`npm install @midas-aem/client`} />
-            <CodeBlock
-              id="env"
-              filename=".env.local"
-              code={`MIDAS_API_KEY=midas_live_your_secret_key\nMIDAS_BASE_URL=${origin}`}
-            />
+            <CodeBlock id="install" filename="Terminal" code={`npm install @midas-aem/client\nnpx @midas-aem/client init`} />
             <CodeBlock
               id="sdk-init"
               filename="lib/newsletter.ts"
               code={`import { MidasClient } from '@midas-aem/client';
 
-// Automatically reads process.env.MIDAS_API_KEY
 const midas = new MidasClient();
 
-// Subscribe directly to a Gong channel by its human-readable slug
+// 1. Fire a Zero-Setup Sandbox test email to your own inbox (no DNS needed)
+await midas.sendSandboxTest({ subject: 'Hello from Midas SDK' });
+
+// 2. Subscribe directly to a Gong channel by slug
 await midas.subscribe({
   email: 'alex@acme.com',
   name: 'Alex Mercer',
-  gongId: 'weekly-alpha', // accepts Gong slug OR CUID
+  gongId: 'weekly-alpha',
   cadence: 'weekly',
   metadata: { role: 'Founder', isDeveloper: true },
 });
 
-// Trigger a bounded cold-outreach sweep (<= 5 sends/tick)
+// 3. Trigger a bounded cold-outreach sweep (<= 5 sends/tick)
 await midas.dispatchCampaign('campaign_cuid_123');`}
             />
           </section>
 
-          {/* Section 3: Auth Model */}
+          <section id="python-sdk" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
+            <h2 className="text-2xl font-black text-royal-950 tracking-tight">Python SDK (<code className="font-mono text-royal-700">midas-aem</code>)</h2>
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Official synchronous and <code className="font-mono">asyncio</code> client built on <code className="font-mono">httpx</code> for FastAPI backends and AI agent pipelines.
+            </p>
+            <CodeBlock
+              id="py-install"
+              filename="Python (Sync & Async)"
+              code={`pip install midas-aem
+
+# example.py
+from midas_aem import MidasClient, AsyncMidasClient
+
+client = MidasClient(api_key="midas_live_YOUR_KEY", base_url="${origin}")
+client.subscribe(email="lead@acme.com", name="Alex", gong_id="weekly-alpha")
+client.send_sandbox_test()
+
+# Async FastAPI / LangGraph usage
+async with AsyncMidasClient(api_key="midas_live_YOUR_KEY", base_url="${origin}") as async_client:
+    await async_client.dispatch_campaign("campaign_cuid_123")`}
+            />
+          </section>
+
           <section id="auth-model" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Authentication Model &amp; Scopes</h2>
-            <p className="text-xs text-royal-950/80 leading-relaxed">
-              MIDAS enforces three explicit authentication planes depending on caller context:
-            </p>
             <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden">
               <table className="min-w-full divide-y divide-gold-500/25 text-left text-xs">
                 <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
@@ -302,45 +314,25 @@ await midas.dispatchCampaign('campaign_cuid_123');`}
                   <tr>
                     <td className="py-3 px-4 font-bold text-royal-800">Scoped API Key</td>
                     <td className="py-3 px-4 font-mono">Authorization: Bearer midas_live_...</td>
-                    <td className="py-3 px-4">/api/public/town-crier/*, /api/campaigns/*, /api/leads/*, CLI</td>
+                    <td className="py-3 px-4">/api/public/town-crier/*, /api/campaigns/*, /api/leads/*, /api/sandbox/*</td>
                   </tr>
                   <tr>
                     <td className="py-3 px-4 font-bold text-royal-800">Dashboard Session</td>
                     <td className="py-3 px-4 font-mono">Clerk Session JWT</td>
-                    <td className="py-3 px-4">All UI routes (/api/domains, /api/inbox, /api/ai, /api/user/*)</td>
+                    <td className="py-3 px-4">All UI routes (/api/domains, /api/inbox, /api/knowledge, /api/artifacts)</td>
                   </tr>
                   <tr>
                     <td className="py-3 px-4 font-bold text-royal-800">Cron Scheduler</td>
                     <td className="py-3 px-4 font-mono">Bearer CRON_SECRET / QStash Sig</td>
-                    <td className="py-3 px-4">/api/cron/queue, /leads, /followups, /newsletter</td>
+                    <td className="py-3 px-4">/api/cron/queue, /leads, /followups, /newsletter, /snapshots</td>
                   </tr>
-                </tbody>
-              </table>
-            </div>
-            <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden">
-              <table className="min-w-full divide-y divide-gold-500/25 text-left text-xs">
-                <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
-                  <tr>
-                    <th className="py-2.5 px-4">Scope</th>
-                    <th className="py-2.5 px-4">Permissions Granted</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gold-500/20 font-mono text-[11px]">
-                  <tr><td className="py-2 px-4 font-bold text-royal-700">*</td><td className="py-2 px-4 font-sans">Super Admin across all workspace API endpoints</td></tr>
-                  <tr><td className="py-2 px-4">campaigns:read / campaigns:write</td><td className="py-2 px-4 font-sans">Query, stage leads, and trigger campaign dispatches</td></tr>
-                  <tr><td className="py-2 px-4">town_crier:read / write / send</td><td className="py-2 px-4 font-sans">Manage Gongs, ingest subscribers, and publish broadcasts</td></tr>
-                  <tr><td className="py-2 px-4">analytics:read</td><td className="py-2 px-4 font-sans">Read-only telemetry stats probes</td></tr>
                 </tbody>
               </table>
             </div>
           </section>
 
-          {/* Section 4: Drop-in Widget & React */}
           <section id="dropin-widget" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Universal Drop-In Script &amp; React SDK</h2>
-            <p className="text-xs text-royal-950/80 leading-relaxed">
-              Bind any HTML element via <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">data-town-crier-modal</code> and pass your Gong slug via <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">data-gong</code>, or use the CSP-safe React component from <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">@midas-aem/client/react</code>.
-            </p>
             <CodeBlock
               id="html-modal"
               filename="index.html"
@@ -379,12 +371,8 @@ export function NewsletterButton() {
             />
           </section>
 
-          {/* Section 5: Progressive Profiling */}
           <section id="progressive" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Progressive Profiling Schemas</h2>
-            <p className="text-xs text-royal-950/80 leading-relaxed">
-              Capture structured lead attributes using <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">data-schema</code> with animated conditional follow-up fields:
-            </p>
             <CodeBlock
               id="schema-demo"
               filename="progressive-schema.html"
@@ -407,12 +395,8 @@ export function NewsletterButton() {
             />
           </section>
 
-          {/* Section 6: Gong Slugs */}
           <section id="gongs-channels" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Gong Slugs &amp; Welcome Autoresponders</h2>
-            <p className="text-xs text-royal-950/80 leading-relaxed">
-              Every Gong channel is addressable by either its CUID or human-readable <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">slug</code> (e.g. <code className="font-mono">weekly-alpha</code>). When a subscriber joins a Gong with <code className="font-mono">welcomeEmailEnabled: true</code>, MIDAS automatically tags them <code className="font-mono">gong:&lt;slug&gt;</code> and dispatches the welcome email in under 60 seconds.
-            </p>
             <CodeBlock
               id="gong-curl"
               filename="Subscribe by Gong Slug (cURL)"
@@ -428,13 +412,8 @@ export function NewsletterButton() {
             />
           </section>
 
-          {/* Section 7: Live Interactive Email Envelopes */}
           <section id="email-envelopes" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Live Interactive Email Envelopes</h2>
-            <p className="text-xs text-royal-950/80 leading-relaxed">
-              Inspect the 4 selectable HTML envelope styles rendered live below. Pass <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">templateStyle</code> when creating a Gong or publishing a broadcast (<code className="font-mono">card</code> is default).
-            </p>
-
             <div className="rounded-2xl border border-gold-500/45 bg-white overflow-hidden shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-thistle-50 border-b border-gold-500/35">
                 <div className="flex gap-1.5">
@@ -464,23 +443,18 @@ export function NewsletterButton() {
             </div>
           </section>
 
-          {/* Section 8-11: Full REST API Reference */}
           <section id="api-campaigns" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Campaigns &amp; Sequences</h2>
-            <p className="text-xs text-royal-950/80">Accepts Clerk Session OR <code className="font-mono">Bearer midas_live_...</code> (<code className="font-mono">campaigns:read</code> / <code className="font-mono">campaigns:write</code>).</p>
             <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
               <table className="min-w-full divide-y divide-gold-500/25 text-left">
                 <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr><th className="py-2.5 px-4">Method &amp; Endpoint</th><th className="py-2.5 px-4">Description</th></tr>
                 </thead>
                 <tbody className="divide-y divide-gold-500/20">
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/campaigns</td><td className="py-2.5 px-4">List campaigns and caller collaboration role</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/campaigns</td><td className="py-2.5 px-4">Create campaign with strategy, context, and optional leadIds</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/campaigns/:id</td><td className="py-2.5 px-4">Fetch full analytics, leads, drafts, and follow-up timeline</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/campaigns/:id/leads</td><td className="py-2.5 px-4">Attach owned leads and reconcile dispatch queue</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET / POST /api/campaigns</td><td className="py-2.5 px-4">List or create sequences</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/campaigns/:id/leads</td><td className="py-2.5 px-4">Attach owned leads and reconcile queue</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/campaigns/:id/dispatch-now</td><td className="py-2.5 px-4">Trigger bounded send sweep (&le; 5 emails)</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/campaigns/:id/pause | resume</td><td className="py-2.5 px-4">Pause or resume sequence and reconcile overdue leads</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/campaigns/:id/drafts/grade</td><td className="py-2.5 px-4">Run pre-flight spam trigger &amp; CAN-SPAM grader</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/sandbox/test-send</td><td className="py-2.5 px-4">Send zero-setup test email to your account inbox</td></tr>
                 </tbody>
               </table>
             </div>
@@ -494,9 +468,8 @@ export function NewsletterButton() {
                   <tr><th className="py-2.5 px-4">Method &amp; Endpoint</th><th className="py-2.5 px-4">Description</th></tr>
                 </thead>
                 <tbody className="divide-y divide-gold-500/20">
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/leads/upload</td><td className="py-2.5 px-4">Multipart CSV/XLSX upload with optional columnMapping &amp; verification</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/leads</td><td className="py-2.5 px-4">Paginated lead list with status &amp; campaignId filtering</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">PUT / DELETE /api/leads/:id</td><td className="py-2.5 px-4">Update whitelisted fields or remove a lead</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/leads/upload</td><td className="py-2.5 px-4">Multipart CSV/XLSX upload with column mapping</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/leads</td><td className="py-2.5 px-4">Paginated lead list with status &amp; campaignId filters</td></tr>
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET / POST / DELETE /api/leads/blocklist</td><td className="py-2.5 px-4">Manage domain &amp; email suppression patterns</td></tr>
                 </tbody>
               </table>
@@ -504,7 +477,7 @@ export function NewsletterButton() {
           </section>
 
           <section id="api-domains" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
-            <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Domains, BIMI &amp; Senders</h2>
+            <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Domains, DNS &amp; Multi-ESP</h2>
             <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
               <table className="min-w-full divide-y divide-gold-500/25 text-left">
                 <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
@@ -512,36 +485,33 @@ export function NewsletterButton() {
                 </thead>
                 <tbody className="divide-y divide-gold-500/20">
                   <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/domains</td><td className="py-2.5 px-4">Connect BYO Mailgun domain (US/EU) and run live send test</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/domains/:id/dmarc-bimi</td><td className="py-2.5 px-4">Inspect live _dmarc TXT policy readiness for BIMI avatars</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/domains/:id/bimi</td><td className="py-2.5 px-4">Configure SVG Tiny 1.2 P/S URL &amp; VMC certificate</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST / PATCH / DELETE /api/domains/:id/senders</td><td className="py-2.5 px-4">Provision and quota-manage isolated mailbox senders</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/domains/esp</td><td className="py-2.5 px-4">Connect Resend (Town Crier) or Custom SMTP domain</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/domains/:id/dns-inspect</td><td className="py-2.5 px-4">Authoritative SPF, DKIM, MX, DMARC &amp; tracking CNAME check</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/domains/:id/tracking-domain</td><td className="py-2.5 px-4">Register custom CNAME tracking domain (Cloudflare SaaS)</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/domains/:id/snapshots</td><td className="py-2.5 px-4">30-day time-series Human Open vs. Bounce metrics</td></tr>
                 </tbody>
               </table>
             </div>
           </section>
 
           <section id="api-inbox-ai" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
-            <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Unified Inbox &amp; AI Studio</h2>
+            <h2 className="text-2xl font-black text-royal-950 tracking-tight">REST API: Inbox, Knowledge Base &amp; Artifacts</h2>
             <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
               <table className="min-w-full divide-y divide-gold-500/25 text-left">
                 <thead className="bg-thistle-100/80 text-royal-800 font-bold text-[10px] uppercase">
                   <tr><th className="py-2.5 px-4">Method &amp; Endpoint</th><th className="py-2.5 px-4">Description</th></tr>
                 </thead>
                 <tbody className="divide-y divide-gold-500/20">
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/inbox</td><td className="py-2.5 px-4">Retrieve active prospect threads with sentiment insights</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/inbox/start | :leadId/reply</td><td className="py-2.5 px-4">Initiate direct conversation or send manual thread reply</td></tr>
-                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/ai/confirm | switch-active</td><td className="py-2.5 px-4">Verify and activate AI Gateway / OpenRouter / Gemini / OpenAI / Ollama models</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">GET /api/inbox?domainId=...&amp;senderId=...</td><td className="py-2.5 px-4">Filter inbox threads by specific domain or sender mailbox</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/knowledge | /scrape-url</td><td className="py-2.5 px-4">Add company playbooks or auto-index website URLs for AI grounding</td></tr>
+                  <tr><td className="py-2.5 px-4 font-mono font-bold text-royal-700">POST /api/artifacts/link | /upload</td><td className="py-2.5 px-4">Create cold-safe <code className="font-mono">{`{{artifact:slug}}`}</code> link/document tokens</td></tr>
                 </tbody>
               </table>
             </div>
           </section>
 
-          {/* Section 12: Webhooks & Payloads */}
           <section id="webhooks" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Outbound Webhook Payloads &amp; HMAC</h2>
-            <p className="text-xs text-royal-950/80 leading-relaxed">
-              Configure endpoints in <strong>Profile &rarr; Webhooks (CRM Sync)</strong>. Every request carries <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-gold-500/30">X-Midas-Signature: t=&lt;unix&gt;,v1=&lt;hmac_sha256&gt;</code>.
-            </p>
             <CodeBlock
               id="wh-payloads"
               filename="Event Envelope & Payload Examples"
@@ -563,43 +533,48 @@ export function NewsletterButton() {
 {
   "event": "gong.subscribed",
   "data": { "recipientId": "cm3...", "email": "alex@co.com", "gongSlug": "weekly-alpha", "cadence": "weekly" }
-}
-
-// 3. deliverability.circuit_tripped
-{
-  "event": "deliverability.circuit_tripped",
-  "data": { "domainId": "dom_1", "domainName": "outreach.acme.com", "bounceRate": 0.052, "status": "paused_health_risk" }
-}`}
-            />
-            <CodeBlock
-              id="wh-verify"
-              filename="verifyMidasSignature.ts"
-              code={`import crypto from 'crypto';
-
-export function verifyMidasWebhook(rawBody: string, signatureHeader: string, secret: string): boolean {
-  const parts = Object.fromEntries(signatureHeader.split(',').map((p) => p.split('=')));
-  if (Math.abs(Date.now() / 1000 - Number(parts.t)) > 300) return false;
-  const expected = crypto.createHmac('sha256', secret).update(\`\${parts.t}.\${rawBody}\`).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(parts.v1, 'hex'), Buffer.from(expected, 'hex'));
 }`}
             />
           </section>
 
-          {/* Section 13: CLI */}
+          <section id="ecosystems" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
+            <h2 className="text-2xl font-black text-royal-950 tracking-tight">Zapier, Make &amp; n8n Ecosystem Connectors</h2>
+            <p className="text-xs text-royal-950/80 leading-relaxed">
+              Connect MIDAS to 5,000+ CRM and workflow apps via signed Webhooks (Trigger) + HTTP Request Nodes (Action):
+            </p>
+            <CodeBlock
+              id="n8n-recipe"
+              filename="n8n HTTP Request Node Configuration (Action)"
+              code={`Method: POST
+URL: ${origin}/api/public/town-crier/subscribe
+Authentication: Generic Header Auth
+  Header Name:  Authorization
+  Header Value: Bearer midas_live_YOUR_API_KEY
+JSON Body:
+{
+  "email": "{{ $json.email }}",
+  "name": "{{ $json.full_name }}",
+  "gong": "weekly-alpha",
+  "tags": ["n8n_crm_sync"]
+}`}
+            />
+          </section>
+
           <section id="cli" className="space-y-4 scroll-mt-24 pb-8 border-b border-gold-500/35">
-            <h2 className="text-2xl font-black text-royal-950 tracking-tight">Standalone Developer CLI</h2>
+            <h2 className="text-2xl font-black text-royal-950 tracking-tight">Standalone CLI &amp; Project Scaffolder</h2>
             <CodeBlock
               id="cli-ref"
               filename="Terminal"
-              code={`node cli/midas.js login --key midas_live_YOUR_KEY --url ${origin}
-node cli/midas.js stats
+              code={`# 1. Scaffold Next.js / Vite React integration automatically
+npx @midas-aem/client init
+
+# 2. Direct operational CLI
+node cli/midas.js login --key midas_live_YOUR_KEY --url ${origin}
 node cli/midas.js gongs list
-node cli/midas.js subscribers add --email "lead@acme.com" --name "Alex" --gong weekly-alpha
-node cli/midas.js broadcast --gong gong_id --subject "Issue #42" --body "Weekly updates..."`}
+node cli/midas.js subscribers add --email "lead@acme.com" --name "Alex" --gong weekly-alpha`}
             />
           </section>
 
-          {/* Section 14: Error Matrix */}
           <section id="errors" className="space-y-4 scroll-mt-24 pb-16">
             <h2 className="text-2xl font-black text-royal-950 tracking-tight">Error &amp; Diagnostic Matrix</h2>
             <div className="rounded-2xl border border-gold-500/40 bg-white overflow-hidden text-xs">
@@ -608,10 +583,9 @@ node cli/midas.js broadcast --gong gong_id --subject "Issue #42" --body "Weekly 
                   <tr><th className="py-2.5 px-4">HTTP</th><th className="py-2.5 px-4">Meaning &amp; Resolution</th></tr>
                 </thead>
                 <tbody className="divide-y divide-gold-500/20">
-                  <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">400</td><td className="py-2 px-4">Validation error (missing email, invalid Gong slug, or Mailgun rejection).</td></tr>
+                  <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">400</td><td className="py-2 px-4">Validation error, Resend cold-outreach AUP guard, or Mailgun rejection.</td></tr>
                   <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">401</td><td className="py-2 px-4">Invalid/revoked <code className="font-mono">midas_live_</code> key or expired Clerk session.</td></tr>
-                  <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">403</td><td className="py-2 px-4">API key lacks required scope (e.g. <code className="font-mono">campaigns:write</code>) or insufficient campaign role.</td></tr>
-                  <tr><td className="py-2 px-4 font-mono font-bold text-amber-700">404</td><td className="py-2 px-4">Resource or Gong identifier not found under your workspace.</td></tr>
+                  <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">429</td><td className="py-2 px-4">Public subscription rate limit (60 req/min) or sandbox daily limit reached.</td></tr>
                   <tr><td className="py-2 px-4 font-mono font-bold text-rose-600">503</td><td className="py-2 px-4">15s timeout guard triggered due to upstream AI or DB latency.</td></tr>
                 </tbody>
               </table>
@@ -619,7 +593,6 @@ node cli/midas.js broadcast --gong gong_id --subject "Issue #42" --body "Weekly 
           </section>
         </main>
 
-        {/* Column 3: Right "On This Page" TOC with Golden Left Separator */}
         <aside className="hidden xl:block w-56 shrink-0 py-10 pr-6 sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto no-print">
           <p className="text-[10px] font-black uppercase tracking-widest text-thistle-500 mb-3">On This Page</p>
           <ul className="space-y-1.5 text-xs border-l border-gold-500/40 pl-3">

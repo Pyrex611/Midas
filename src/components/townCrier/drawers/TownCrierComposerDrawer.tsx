@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Sheet } from '../../common/Sheet';
 import { townCrierAPI, getErrorMessage } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
+import { ArtifactsPanel } from '../../artifacts/ArtifactsPanel';
 
 interface TownCrierComposerDrawerProps {
   isOpen: boolean;
@@ -77,6 +78,8 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
           </select>
         </div>
 
+        <ArtifactsPanel gongId={selectedGongId || undefined} compact />
+
         <div>
           <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">
             Email Layout Design (Card Enabled by Default)
@@ -86,7 +89,7 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
               ['card', 'Card Envelope', 'Centered 580px rounded box'],
               ['editorial', 'Editorial', 'Substack/Beehiiv publication'],
               ['minimal', 'Clean Minimal', 'Accent line & header'],
-              ['plain', 'Conversational', 'Raw HTML (max inbox placement)'],
+              ['plain', 'Conversational', 'Raw HTML format'],
             ].map(([id, label, desc]) => (
               <button
                 key={id}
@@ -129,9 +132,9 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
         </div>
 
         <div>
-          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Newsletter Body (Mustache &amp; Spintax Enabled)</label>
+          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Newsletter Body (Mustache, Spintax &amp; {'{{artifact:slug}}'} Enabled)</label>
           <textarea
-            rows={12}
+            rows={10}
             value={broadcastBody}
             onChange={(e) => setBroadcastBody(e.target.value)}
             placeholder="Write your proclamation content here..."

@@ -1,4 +1,5 @@
 import React from 'react';
+import { KnowledgeBasePanel } from '../../knowledge/KnowledgeBasePanel';
 
 interface CampaignSettingsTabProps {
   campaign: any;
@@ -77,6 +78,8 @@ export const CampaignSettingsTab: React.FC<CampaignSettingsTabProps> = ({
           </div>
         </div>
       </div>
+
+      <KnowledgeBasePanel campaignId={campaign.id} canEdit={canEdit} />
     </div>
   );
 };

@@ -1,6 +1,7 @@
 import React from 'react';
 import { DeliverabilityGrader } from '../DeliverabilityGrader';
 import { SpintaxSimulator } from '../SpintaxSimulator';
+import { ArtifactsPanel } from '../../artifacts/ArtifactsPanel';
 import { Icons } from '../../../lib/icons';
 
 interface CampaignDraftsTabProps {
@@ -26,6 +27,8 @@ export const CampaignDraftsTab: React.FC<CampaignDraftsTabProps> = ({
 }) => {
   return (
     <div className="space-y-6">
+      <ArtifactsPanel campaignId={campaignId} canEdit={canEdit} />
+
       <div className="flex justify-between items-center pb-3 border-b border-gold-500/35">
         <h3 className="text-xs font-bold text-thistle-500 uppercase tracking-wider">Copywriting Variations ({drafts.length})</h3>
         {canEdit && (
