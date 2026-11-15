@@ -14,7 +14,6 @@ export class SmtpProvider implements ESPProvider {
 
   private loadNodemailer(): any {
     try {
-      // Lazy-resolved so installations not using Custom SMTP never require nodemailer at build time.
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       return require('nodemailer');
     } catch {
@@ -25,7 +24,7 @@ export class SmtpProvider implements ESPProvider {
   }
 
   async send(payload: EspSendPayload): Promise<EspSendResult> {
-    const { domain, fromEmail, fromHeader, to, subject, html, text, inReplyTo, unsubscribeUrl } = payload;
+    const { domain, fromEmail, fromHeader, to, subject, html, text, inReplyTo, unsubscribeUrl, attachments } = payload;
 
     const rawConfig = tryDecrypt(domain.smtpConfigEncrypted);
     if (!rawConfig) {
@@ -66,6 +65,9 @@ export class SmtpProvider implements ESPProvider {
       text,
       html,
       headers: Object.keys(headers).length ? headers : undefined,
+      attachments: attachments?.length
+        ? attachments.map((a) => ({ filename: a.filename, path: a.url, contentType: a.contentType }))
+        : undefined,
     });
 
     const cleanId = (info.messageId || '').replace(/^<|>$/g, '').trim();

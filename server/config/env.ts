@@ -24,24 +24,41 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().default('midas-aem.vercel.app'),
   APP_URL: z.string().url().optional(),
 
-  // Clerk Authentication Keys
+  // Authentication Mode ('clerk' | 'supabase' | 'dual')
+  AUTH_PROVIDER: z.enum(['clerk', 'supabase', 'dual']).default('dual'),
   CLERK_SECRET_KEY: z.string().optional(),
   CLERK_PUBLISHABLE_KEY: z.string().optional(),
   VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
   CLERK_WEBHOOK_SECRET: z.string().optional(),
+
+  // Supabase Infrastructure (Phase E)
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_ANON_KEY: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  SUPABASE_STORAGE_BUCKET: z.string().default('midas-uploads'),
+  STORAGE_PROVIDER: z.enum(['auto', 'supabase', 'vercel_blob']).default('auto'),
+
+  // Dodo Payments (Merchant of Record Billing)
+  DODO_PAYMENTS_API_KEY: z.string().optional(),
+  DODO_PAYMENTS_WEBHOOK_SECRET: z.string().optional(),
+  DODO_PAYMENTS_MODE: z.enum(['test_mode', 'live_mode']).default('test_mode'),
+  DODO_PRODUCT_CHIEF_MONTHLY: z.string().optional(),
+  DODO_PRODUCT_CHIEF_ANNUAL: z.string().optional(),
+  DODO_PRODUCT_SYNDICATE_MONTHLY: z.string().optional(),
+  DODO_PRODUCT_SYNDICATE_ANNUAL: z.string().optional(),
 
   // Mailgun Deliverability Infrastructure
   MAILGUN_API_KEY: z.string().optional(),
   MAILGUN_WEBHOOK_KEY: z.string().optional(),
   MAILGUN_REGION: z.enum(['us', 'eu']).default('us'),
 
-  // Sprint C.3 Zero-Setup Sandbox Mode (Guarded self-send domain)
+  // Zero-Setup Sandbox Mode
   SANDBOX_DOMAIN: z.string().optional(),
   SANDBOX_MAILGUN_KEY: z.string().optional(),
   SANDBOX_REGION: z.enum(['us', 'eu']).default('us'),
   SANDBOX_DAILY_LIMIT: z.string().default('15').transform((v) => Math.max(1, Number(v) || 15)),
 
-  // Sprint C.4 Cloudflare for SaaS / Tracking Custom Hostnames
+  // Cloudflare for SaaS Tracking Custom Hostnames
   CLOUDFLARE_API_TOKEN: z.string().optional(),
   CLOUDFLARE_ZONE_ID: z.string().optional(),
   CLOUDFLARE_SAAS_FALLBACK_ORIGIN: z.string().optional(),
@@ -64,7 +81,7 @@ const envSchema = z.object({
   NEVERBOUNCE_API_KEY: z.string().optional(),
   ZEROBOUNCE_API_KEY: z.string().optional(),
 
-  // AI Provider Credentials (Modular Failover Engine)
+  // AI Provider Credentials
   AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter', 'aigateway']).default('aigateway'),
   PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter', 'aigateway']).optional(),
   OPENAI_API_KEY: z.string().optional(),
@@ -93,10 +110,3 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
-
-if (env.NODE_ENV === 'production' && (!process.env.CRON_SECRET || process.env.CRON_SECRET.length < 32)) {
-  console.warn(
-    '[env] CRON_SECRET is unset or shorter than 32 chars — /api/cron/* endpoints will refuse ' +
-    'all requests until it is set.'
-  );
-}

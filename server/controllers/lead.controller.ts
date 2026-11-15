@@ -2,11 +2,12 @@ import { Response, NextFunction } from 'express';
 import multer from 'multer';
 import { blobService } from '../services/blob.service';
 import { leadQueueService } from '../services/leadQueue.service';
+import { enrichmentService } from '../services/enrichment.service';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../config/logger';
 
-const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
 export const uploadLeads = [
   upload.single('file'),
@@ -19,10 +20,17 @@ export const uploadLeads = [
       const safeName = `uploads/${userId}-${Date.now()}.${fileExt}`;
 
       const blobUrl = await blobService.uploadFile(safeName, req.file.buffer);
-
       const verifyEmails = req.body.verifyEmails === 'true' || req.body.verifyEmails === true;
       const columnMapping = typeof req.body.columnMapping === 'string' ? req.body.columnMapping : null;
       const campaignId = typeof req.body.campaignId === 'string' && req.body.campaignId.trim() ? req.body.campaignId.trim() : null;
+
+      if (campaignId) {
+        const campaign = await prisma.campaign.findFirst({
+          where: { id: campaignId, userId },
+          select: { id: true },
+        });
+        if (!campaign) return res.status(404).json({ error: 'Target campaign not found on your account' });
+      }
 
       const job = await prisma.uploadJob.create({
         data: {
@@ -33,7 +41,7 @@ export const uploadLeads = [
           verifyEmails,
           columnMapping,
           campaignId,
-        }
+        },
       });
 
       leadQueueService.processPendingUploads().catch(err => {
@@ -44,7 +52,7 @@ export const uploadLeads = [
     } catch (error) {
       next(error);
     }
-  }
+  },
 ];
 
 export const getUploadJobs = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -52,7 +60,7 @@ export const getUploadJobs = async (req: AuthRequest, res: Response, next: NextF
     const jobs = await prisma.uploadJob.findMany({
       where: { userId: req.user!.id },
       orderBy: { createdAt: 'desc' },
-      take: 5
+      take: 5,
     });
     res.json(jobs);
   } catch (error) {
@@ -72,7 +80,7 @@ export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFu
     const { pattern } = req.body;
     if (!pattern) return res.status(400).json({ error: 'Pattern is required' });
     const block = await prisma.blocklist.create({
-      data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() }
+      data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() },
     });
     res.status(201).json(block);
   } catch (error) { next(error); }
@@ -148,6 +156,15 @@ export const getLead = async (req: AuthRequest, res: Response, next: NextFunctio
     res.json(lead);
   } catch (error) {
     next(error);
+  }
+};
+
+export const enrichLead = async (req: AuthRequest, res: Response) => {
+  try {
+    const updated = await enrichmentService.enrichLead(req.user!.id, req.params.id);
+    res.json(updated);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Lead enrichment failed' });
   }
 };
 

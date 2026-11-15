@@ -1,4 +1,7 @@
 import prisma from '../lib/prisma';
+import { blobService } from './blob.service';
+import { extractTextFromDocument } from '../utils/documentExtractor';
+import { planGuardService } from './billing/planGuard.service';
 
 function isPrivateOrLocalHostname(hostname: string): boolean {
   const h = hostname.toLowerCase();
@@ -21,51 +24,104 @@ function isPrivateOrLocalHostname(hostname: string): boolean {
 }
 
 export class KnowledgeBaseService {
-  async listItems(userId: string, campaignId?: string) {
-    return prisma.knowledgeItem.findMany({
-      where: {
-        userId,
-        ...(campaignId ? { OR: [{ campaignId }, { campaignId: null }] } : {}),
+  async listKnowledgeBases(userId: string) {
+    return prisma.knowledgeBase.findMany({
+      where: { userId },
+      include: {
+        resources: { orderBy: { createdAt: 'desc' } },
+        _count: { select: { campaigns: true, gongs: true, broadcasts: true, resources: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
     });
   }
 
-  async createItem(
-    userId: string,
-    input: {
-      title: string;
-      content: string;
-      sourceType?: 'TEXT' | 'URL' | 'DOCUMENT';
-      sourceUrl?: string;
-      campaignId?: string | null;
-    }
-  ) {
-    if (!input.title?.trim() || !input.content?.trim()) {
-      throw new Error('Title and content are required');
-    }
+  async getOrCreateDefaultKnowledgeBase(userId: string) {
+    let kb = await prisma.knowledgeBase.findFirst({
+      where: { userId },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+    });
 
-    if (input.campaignId) {
-      const owned = await prisma.campaign.findFirst({
-        where: { id: input.campaignId, userId },
-        select: { id: true },
+    if (!kb) {
+      kb = await prisma.knowledgeBase.create({
+        data: {
+          userId,
+          name: 'Company Primary Knowledge Base',
+          description: 'Default workspace repository of company positioning, services, and playbooks.',
+          isDefault: true,
+        },
       });
-      if (!owned) throw new Error('Campaign not found');
     }
 
-    return prisma.knowledgeItem.create({
+    return kb;
+  }
+
+  async createKnowledgeBase(userId: string, input: { name: string; description?: string; isDefault?: boolean }) {
+    if (!input.name?.trim()) throw new Error('Knowledge Base name is required');
+    await planGuardService.assertKnowledgeBaseCapacity(userId);
+
+    if (input.isDefault) {
+      await prisma.knowledgeBase.updateMany({ where: { userId }, data: { isDefault: false } });
+    }
+
+    return prisma.knowledgeBase.create({
       data: {
         userId,
-        campaignId: input.campaignId || null,
-        title: input.title.trim(),
-        sourceType: input.sourceType || 'TEXT',
-        sourceUrl: input.sourceUrl?.trim() || null,
-        content: input.content.trim().slice(0, 8000),
+        name: input.name.trim(),
+        description: input.description?.trim() || null,
+        isDefault: Boolean(input.isDefault),
+      },
+      include: {
+        resources: true,
+        _count: { select: { campaigns: true, gongs: true, broadcasts: true, resources: true } },
       },
     });
   }
 
-  async scrapeUrlAndSave(userId: string, urlString: string, title?: string, campaignId?: string | null) {
+  async updateKnowledgeBase(userId: string, id: string, data: { name?: string; description?: string; isDefault?: boolean }) {
+    const existing = await prisma.knowledgeBase.findFirst({ where: { id, userId } });
+    if (!existing) throw new Error('Knowledge Base not found');
+
+    if (data.isDefault) {
+      await prisma.knowledgeBase.updateMany({ where: { userId }, data: { isDefault: false } });
+    }
+
+    return prisma.knowledgeBase.update({
+      where: { id },
+      data: {
+        ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+        ...(data.description !== undefined ? { description: data.description.trim() || null } : {}),
+        ...(data.isDefault !== undefined ? { isDefault: Boolean(data.isDefault) } : {}),
+      },
+    });
+  }
+
+  async deleteKnowledgeBase(userId: string, id: string) {
+    await prisma.knowledgeBase.deleteMany({ where: { id, userId } });
+  }
+
+  async addTextResource(userId: string, knowledgeBaseId: string, input: { title: string; content: string }) {
+    const kb = await prisma.knowledgeBase.findFirst({ where: { id: knowledgeBaseId, userId } });
+    if (!kb) throw new Error('Knowledge Base not found');
+    if (!input.title?.trim() || !input.content?.trim()) throw new Error('Title and content are required');
+
+    await planGuardService.assertKnowledgeResourceCapacity(userId, knowledgeBaseId);
+
+    return prisma.knowledgeResource.create({
+      data: {
+        knowledgeBaseId,
+        userId,
+        title: input.title.trim(),
+        sourceType: 'TEXT',
+        content: input.content.trim().slice(0, 12000),
+      },
+    });
+  }
+
+  async scrapeUrlResource(userId: string, knowledgeBaseId: string, urlString: string, title?: string) {
+    const kb = await prisma.knowledgeBase.findFirst({ where: { id: knowledgeBaseId, userId } });
+    if (!kb) throw new Error('Knowledge Base not found');
+    await planGuardService.assertKnowledgeResourceCapacity(userId, knowledgeBaseId);
+
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(urlString.trim());
@@ -81,10 +137,7 @@ export class KnowledgeBaseService {
       headers: { 'User-Agent': 'MidasKnowledgeBot/1.0 (+https://midas-aem.vercel.app)' },
       signal: AbortSignal.timeout(8_000),
     });
-
-    if (!res.ok) {
-      throw new Error(`Website returned HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`Website returned HTTP ${res.status}`);
 
     const rawHtml = await res.text();
     const extractedTitle =
@@ -102,61 +155,161 @@ export class KnowledgeBaseService {
       .replace(/&amp;/gi, '&')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 4500);
+      .slice(0, 8000);
 
     if (cleanText.length < 40) {
-      throw new Error('Could not extract readable text content from that URL (may require JS rendering). Try pasting text directly.');
+      throw new Error('Could not extract readable text from that URL. Try uploading a .md/.pdf or pasting text directly.');
     }
 
-    return this.createItem(userId, {
-      title: extractedTitle,
-      sourceType: 'URL',
-      sourceUrl: parsedUrl.toString(),
-      content: cleanText,
-      campaignId,
+    return prisma.knowledgeResource.create({
+      data: {
+        knowledgeBaseId,
+        userId,
+        title: extractedTitle,
+        sourceType: 'URL',
+        sourceUrl: parsedUrl.toString(),
+        content: cleanText,
+      },
     });
   }
 
-  async toggleOrUpdate(userId: string, id: string, data: { title?: string; content?: string; isActive?: boolean }) {
+  async uploadFileResource(userId: string, knowledgeBaseId: string, file: Express.Multer.File, title?: string) {
+    const kb = await prisma.knowledgeBase.findFirst({ where: { id: knowledgeBaseId, userId } });
+    if (!kb) throw new Error('Knowledge Base not found');
+    await planGuardService.assertKnowledgeResourceCapacity(userId, knowledgeBaseId);
+
+    const extractedText = extractTextFromDocument(file.buffer, file.originalname, file.mimetype);
+    const safeName = `kb/${userId}/${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const fileUrl = await blobService.uploadFile(safeName, file.buffer);
+
+    return prisma.knowledgeResource.create({
+      data: {
+        knowledgeBaseId,
+        userId,
+        title: title?.trim() || file.originalname,
+        sourceType: 'FILE',
+        fileUrl,
+        mimeType: file.mimetype,
+        content: extractedText,
+      },
+    });
+  }
+
+  async toggleOrUpdateResource(userId: string, resourceId: string, data: { title?: string; content?: string; isActive?: boolean }) {
     const cleanData: any = {};
     if (data.title !== undefined) cleanData.title = data.title.trim();
-    if (data.content !== undefined) cleanData.content = data.content.trim().slice(0, 8000);
+    if (data.content !== undefined) cleanData.content = data.content.trim().slice(0, 12000);
     if (data.isActive !== undefined) cleanData.isActive = Boolean(data.isActive);
 
-    const res = await prisma.knowledgeItem.updateMany({
-      where: { id, userId },
+    const res = await prisma.knowledgeResource.updateMany({
+      where: { id: resourceId, userId },
       data: cleanData,
     });
-    if (res.count === 0) throw new Error('Knowledge base item not found');
-    return prisma.knowledgeItem.findUnique({ where: { id } });
+    if (res.count === 0) throw new Error('Knowledge resource not found');
+    return prisma.knowledgeResource.findUnique({ where: { id: resourceId } });
   }
 
-  async deleteItem(userId: string, id: string) {
-    await prisma.knowledgeItem.deleteMany({ where: { id, userId } });
+  async deleteResource(userId: string, resourceId: string) {
+    await prisma.knowledgeResource.deleteMany({ where: { id: resourceId, userId } });
   }
 
-  /**
-   * Formats active global & campaign-specific Knowledge Base entries into
-   * a compact, grounded context block for AI draft & objection synthesis.
-   */
-  async buildPromptContext(userId: string, campaignId?: string | null): Promise<string | null> {
-    const items = await prisma.knowledgeItem.findMany({
-      where: {
-        userId,
-        isActive: true,
-        OR: campaignId ? [{ campaignId }, { campaignId: null }] : [{ campaignId: null }],
+  async attachToEntity(
+    userId: string,
+    targetType: 'campaign' | 'gong' | 'broadcast',
+    targetId: string,
+    knowledgeBaseId: string | null
+  ) {
+    if (knowledgeBaseId) {
+      const kb = await prisma.knowledgeBase.findFirst({ where: { id: knowledgeBaseId, userId } });
+      if (!kb) throw new Error('Knowledge Base not found');
+    }
+
+    if (targetType === 'campaign') {
+      const res = await prisma.campaign.updateMany({
+        where: { id: targetId, userId },
+        data: { knowledgeBaseId },
+      });
+      if (res.count === 0) throw new Error('Campaign not found');
+    } else if (targetType === 'gong') {
+      const res = await prisma.gong.updateMany({
+        where: { id: targetId, userId },
+        data: { knowledgeBaseId },
+      });
+      if (res.count === 0) throw new Error('Gong channel not found');
+    } else if (targetType === 'broadcast') {
+      const res = await prisma.newsletterBroadcast.updateMany({
+        where: { id: targetId, userId },
+        data: { knowledgeBaseId },
+      });
+      if (res.count === 0) throw new Error('Broadcast not found');
+    }
+  }
+
+  async buildPromptContext(
+    userId: string,
+    options?: {
+      campaignId?: string | null;
+      gongId?: string | null;
+      broadcastId?: string | null;
+      knowledgeBaseId?: string | null;
+    }
+  ): Promise<string | null> {
+    let targetKbId = options?.knowledgeBaseId || null;
+
+    if (!targetKbId && options?.campaignId) {
+      const camp = await prisma.campaign.findUnique({
+        where: { id: options.campaignId },
+        select: { knowledgeBaseId: true },
+      });
+      targetKbId = camp?.knowledgeBaseId || null;
+    }
+
+    if (!targetKbId && options?.broadcastId) {
+      const b = await prisma.newsletterBroadcast.findUnique({
+        where: { id: options.broadcastId },
+        select: { knowledgeBaseId: true, gong: { select: { knowledgeBaseId: true } } },
+      });
+      targetKbId = b?.knowledgeBaseId || b?.gong?.knowledgeBaseId || null;
+    }
+
+    if (!targetKbId && options?.gongId) {
+      const g = await prisma.gong.findUnique({
+        where: { id: options.gongId },
+        select: { knowledgeBaseId: true },
+      });
+      targetKbId = g?.knowledgeBaseId || null;
+    }
+
+    // Fallback to user's default Knowledge Base
+    if (!targetKbId) {
+      const defKb = await prisma.knowledgeBase.findFirst({
+        where: { userId },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        select: { id: true },
+      });
+      targetKbId = defKb?.id || null;
+    }
+
+    if (!targetKbId) return null;
+
+    const kb = await prisma.knowledgeBase.findUnique({
+      where: { id: targetKbId },
+      include: {
+        resources: {
+          where: { isActive: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 8,
+        },
       },
-      orderBy: [{ campaignId: 'desc' }, { updatedAt: 'desc' }],
-      take: 6,
     });
 
-    if (items.length === 0) return null;
+    if (!kb || kb.resources.length === 0) return null;
 
-    let combined = 'COMPANY KNOWLEDGE BASE (Ground claims in these facts only):\n';
-    for (const item of items) {
-      const snippet = item.content.slice(0, 650);
-      const entry = `- [${item.title}]: ${snippet}\n`;
-      if (combined.length + entry.length > 2800) break;
+    let combined = `KNOWLEDGE BASE ("${kb.name}" — Ground claims strictly in these facts):\n`;
+    for (const r of kb.resources) {
+      const snippet = r.content.slice(0, 750);
+      const entry = `- [${r.title} (${r.sourceType})]: ${snippet}\n`;
+      if (combined.length + entry.length > 3500) break;
       combined += entry;
     }
 

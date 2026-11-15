@@ -12,7 +12,7 @@ export class ResendProvider implements ESPProvider {
       );
     }
 
-    const { domain, fromEmail, fromHeader, to, subject, html, text, outboundEmailId, inReplyTo, unsubscribeUrl } = payload;
+    const { domain, fromEmail, fromHeader, to, subject, html, text, outboundEmailId, inReplyTo, unsubscribeUrl, attachments } = payload;
     const apiKey = tryDecrypt(domain.mailgunApiKeyEncrypted);
     if (!apiKey) {
       throw new Error('Resend API key missing or could not be decrypted for this domain');
@@ -29,6 +29,17 @@ export class ResendProvider implements ESPProvider {
       headers['References'] = `<${cleanReplyId}>`;
     }
 
+    const resendAttachments: Array<{ filename: string; content: string }> = [];
+    if (attachments && attachments.length > 0) {
+      for (const att of attachments) {
+        const fileRes = await fetch(att.url, { signal: AbortSignal.timeout(8_000) });
+        if (fileRes.ok) {
+          const buf = Buffer.from(await fileRes.arrayBuffer());
+          resendAttachments.push({ filename: att.filename, content: buf.toString('base64') });
+        }
+      }
+    }
+
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -43,9 +54,10 @@ export class ResendProvider implements ESPProvider {
         html,
         text,
         headers: Object.keys(headers).length ? headers : undefined,
+        attachments: resendAttachments.length ? resendAttachments : undefined,
         tags: [{ name: 'outbound_email_id', value: outboundEmailId }],
       }),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(12_000),
     });
 
     const data: any = await res.json().catch(() => ({}));

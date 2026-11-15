@@ -55,33 +55,85 @@ export const configAPI = {
   get: () => api.get('/config'),
 };
 
+export const billingAPI = {
+  getStatus: () => api.get('/billing/status'),
+  checkout: (plan: 'CHIEF' | 'SYNDICATE', billingCycle: 'monthly' | 'annual' = 'monthly') =>
+    api.post('/billing/checkout', { plan, billingCycle }),
+  cancel: () => api.post('/billing/cancel'),
+};
+
 export const sandboxAPI = {
   getStatus: () => api.get('/sandbox/status'),
   sendTest: (data?: { subject?: string; body?: string }) => api.post('/sandbox/test-send', data || {}),
 };
 
 export const knowledgeAPI = {
-  list: (campaignId?: string) => api.get('/knowledge', { params: campaignId ? { campaignId } : undefined }),
-  create: (data: { title: string; content: string; sourceType?: 'TEXT' | 'URL' | 'DOCUMENT'; sourceUrl?: string; campaignId?: string | null }) =>
-    api.post('/knowledge', data),
-  scrapeUrl: (data: { url: string; title?: string; campaignId?: string | null }) =>
-    api.post('/knowledge/scrape-url', data),
-  update: (id: string, data: { title?: string; content?: string; isActive?: boolean }) =>
-    api.put(`/knowledge/${id}`, data),
-  delete: (id: string) => api.delete(`/knowledge/${id}`),
+  listBases: () => api.get('/knowledge'),
+  createBase: (data: { name: string; description?: string; isDefault?: boolean }) =>
+    api.post('/knowledge/bases', data),
+  updateBase: (id: string, data: { name?: string; description?: string; isDefault?: boolean }) =>
+    api.put(`/knowledge/bases/${id}`, data),
+  deleteBase: (id: string) => api.delete(`/knowledge/bases/${id}`),
+  addTextResource: (baseId: string, data: { title: string; content: string }) =>
+    api.post(`/knowledge/bases/${baseId}/resources/text`, data),
+  scrapeUrlResource: (baseId: string, data: { url: string; title?: string }) =>
+    api.post(`/knowledge/bases/${baseId}/resources/url`, data),
+  uploadFileResource: (baseId: string, file: File, title?: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (title) formData.append('title', title);
+    return api.post(`/knowledge/bases/${baseId}/resources/file`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  updateResource: (resourceId: string, data: { title?: string; content?: string; isActive?: boolean }) =>
+    api.put(`/knowledge/resources/${resourceId}`, data),
+  deleteResource: (resourceId: string) => api.delete(`/knowledge/resources/${resourceId}`),
+  attachToEntity: (targetType: 'campaign' | 'gong' | 'broadcast', targetId: string, knowledgeBaseId: string | null) =>
+    api.post('/knowledge/attach', { targetType, targetId, knowledgeBaseId }),
 };
 
 export const artifactAPI = {
-  list: (filters?: { campaignId?: string; gongId?: string }) => api.get('/artifacts', { params: filters }),
-  createLink: (data: { title: string; slug?: string; url: string; type?: 'LINK' | 'DOCUMENT' | 'IMAGE'; campaignId?: string | null; gongId?: string | null }) =>
-    api.post('/artifacts/link', data),
-  uploadFile: (file: File, meta?: { title?: string; slug?: string; campaignId?: string | null; gongId?: string | null }) => {
+  list: (filters?: { campaignId?: string; gongId?: string; broadcastId?: string }) =>
+    api.get('/artifacts', { params: filters }),
+  createLink: (data: {
+    title: string;
+    slug?: string;
+    description?: string;
+    usagePrompt?: string;
+    url: string;
+    type?: 'LINK' | 'DOCUMENT' | 'IMAGE';
+    attachmentMode?: 'LINK' | 'MIME_ATTACHMENT';
+    isOneTime?: boolean;
+    campaignId?: string | null;
+    gongId?: string | null;
+    broadcastId?: string | null;
+  }) => api.post('/artifacts/link', data),
+  uploadFile: (
+    file: File,
+    meta?: {
+      title?: string;
+      slug?: string;
+      description?: string;
+      usagePrompt?: string;
+      attachmentMode?: 'LINK' | 'MIME_ATTACHMENT';
+      isOneTime?: boolean;
+      campaignId?: string | null;
+      gongId?: string | null;
+      broadcastId?: string | null;
+    }
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
     if (meta?.title) formData.append('title', meta.title);
     if (meta?.slug) formData.append('slug', meta.slug);
+    if (meta?.description) formData.append('description', meta.description);
+    if (meta?.usagePrompt) formData.append('usagePrompt', meta.usagePrompt);
+    if (meta?.attachmentMode) formData.append('attachmentMode', meta.attachmentMode);
+    if (meta?.isOneTime !== undefined) formData.append('isOneTime', String(meta.isOneTime));
     if (meta?.campaignId) formData.append('campaignId', meta.campaignId);
     if (meta?.gongId) formData.append('gongId', meta.gongId);
+    if (meta?.broadcastId) formData.append('broadcastId', meta.broadcastId);
     return api.post('/artifacts/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -114,12 +166,8 @@ export const leadAPI = {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('verifyEmails', String(verifyEmails));
-    if (columnMapping) {
-      formData.append('columnMapping', columnMapping);
-    }
-    if (campaignId) {
-      formData.append('campaignId', campaignId);
-    }
+    if (columnMapping) formData.append('columnMapping', columnMapping);
+    if (campaignId) formData.append('campaignId', campaignId);
     return api.post('/leads/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -131,6 +179,7 @@ export const leadAPI = {
   getAll: (page = 1, pageSize = 20, status?: string, campaignId?: string) =>
     api.get('/leads', { params: { page, pageSize, status, campaignId } }),
   get: (id: string) => api.get(`/leads/${id}`),
+  enrich: (id: string) => api.post(`/leads/${id}/enrich`),
   update: (id: string, data: any) => api.put(`/leads/${id}`, data),
   delete: (id: string) => api.delete(`/leads/${id}`),
 };

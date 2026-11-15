@@ -8,19 +8,21 @@ generator client {
 
 // --- Midas Core Models ---
 model User {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name          String?
-  email         String    @unique
-  password      String?   
-  clerkId       String?   @unique @map("clerk_id")
-  isAdmin       Boolean   @default(false) @map("is_admin")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String?
+  email          String    @unique
+  password       String?   
+  clerkId        String?   @unique @map("clerk_id")
+  supabaseAuthId String?   @unique @map("supabase_auth_id")
+  isAdmin        Boolean   @default(false) @map("is_admin")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   leads          Lead[]
   campaigns      Campaign[]
   drafts         Draft[]
   settings       UserSettings?
+  subscription   Subscription?
   domains        Domain[]
   outboundEmails OutboundEmail[]
   pendingEmails  PendingEmail[]
@@ -36,10 +38,32 @@ model User {
   newsletterQueueItems NewsletterQueueItem[]
   notifications        Notification[]
   webhookSubscriptions WebhookSubscription[]
-  knowledgeItems       KnowledgeItem[]
+  knowledgeBases       KnowledgeBase[]
+  knowledgeResources   KnowledgeResource[]
   artifacts            Artifact[]
 
   @@map("users")
+}
+
+// --- SAAS SUBSCRIPTION & QUOTA LEDGER (DODO PAYMENTS) ---
+
+model Subscription {
+  id                   String    @id @default(cuid())
+  userId               String    @unique @map("user_id") @db.Uuid
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                 String    @default("SCOUT") // 'SCOUT' | 'CHIEF' | 'SYNDICATE'
+  status               String    @default("ACTIVE") // 'ACTIVE' | 'PAST_DUE' | 'CANCELLED'
+  billingCycle         String    @default("monthly") @map("billing_cycle")
+  dodoCustomerId       String?   @map("dodo_customer_id")
+  dodoSubscriptionId   String?   @unique @map("dodo_subscription_id")
+  currentPeriodStart   DateTime  @default(now()) @map("current_period_start")
+  currentPeriodEnd     DateTime? @map("current_period_end")
+  cancelAtPeriodEnd    Boolean   @default(false) @map("cancel_at_period_end")
+  aiCreditsUsed        Int       @default(0) @map("ai_credits_used")
+  emailsSentThisMonth  Int       @default(0) @map("emails_sent_this_month")
+  periodResetAt        DateTime  @default(now()) @map("period_reset_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 }
 
 // --- Domain & Deliverability Engine ---
@@ -204,6 +228,9 @@ model Campaign {
   targetTool        String?  @map("target_tool")
   extendedObjective String?  @map("extended_objective")
 
+  knowledgeBaseId   String?        @map("knowledge_base_id")
+  knowledgeBase     KnowledgeBase? @relation(fields: [knowledgeBaseId], references: [id], onDelete: SetNull)
+
   followUpSteps  FollowUpStep[]
   leads          Lead[]
   emails         OutboundEmail[]
@@ -212,10 +239,10 @@ model Campaign {
   senderLinks    CampaignSender[] 
   members        CampaignMember[]
   invites        CampaignInvite[]
-  knowledgeItems KnowledgeItem[]
   artifacts      Artifact[]
 
   @@index([userId])
+  @@index([knowledgeBaseId])
 }
 
 model Blocklist {
@@ -253,21 +280,23 @@ model UploadJob {
 }
 
 model Lead {
-  id                 String   @id @default(cuid())
-  userId             String   @map("user_id") @db.Uuid
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                 String    @id @default(cuid())
+  userId             String    @map("user_id") @db.Uuid
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name               String
   email              String
   company            String?
   position           String?
-  status             String   @default("NEW")
-  outreachStatus     String?  @map("outreach_status")
-  verificationStatus String   @default("UNVERIFIED") @map("verification_status")
-  unsubscribeToken   String?  @unique @map("unsubscribe_token")
-  campaignId         String?  @map("campaign_id")
+  status             String    @default("NEW")
+  outreachStatus     String?   @map("outreach_status")
+  verificationStatus String    @default("UNVERIFIED") @map("verification_status")
+  unsubscribeToken   String?   @unique @map("unsubscribe_token")
+  enrichedData       Json?     @map("enriched_data")
+  enrichedAt         DateTime? @map("enriched_at")
+  campaignId         String?   @map("campaign_id")
   campaign           Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
   
   sentEmails     OutboundEmail[]
   replyDrafts    Draft[]         @relation("LeadDrafts")
@@ -437,46 +466,75 @@ model UserSettings {
   updatedAt         DateTime @updatedAt @map("updated_at")
 }
 
-// --- KNOWLEDGE BASE & ARTIFACTS ---
+// --- MULTI-RESOURCE KNOWLEDGE BASES ---
 
-model KnowledgeItem {
-  id         String    @id @default(cuid())
-  userId     String    @map("user_id") @db.Uuid
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaignId String?   @map("campaign_id")
-  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  title      String
-  sourceType String    @default("TEXT") @map("source_type")
-  sourceUrl  String?   @map("source_url")
-  content    String    @db.Text
-  isActive   Boolean   @default(true) @map("is_active")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
+model KnowledgeBase {
+  id          String              @id @default(cuid())
+  userId      String              @map("user_id") @db.Uuid
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  isDefault   Boolean             @default(false) @map("is_default")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  resources   KnowledgeResource[]
+  campaigns   Campaign[]
+  gongs       Gong[]
+  broadcasts  NewsletterBroadcast[]
 
   @@index([userId])
-  @@index([campaignId])
 }
 
+model KnowledgeResource {
+  id              String        @id @default(cuid())
+  knowledgeBaseId String        @map("knowledge_base_id")
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  userId          String        @map("user_id") @db.Uuid
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title           String
+  sourceType      String        @default("TEXT") @map("source_type") // 'TEXT' | 'URL' | 'FILE'
+  sourceUrl       String?       @map("source_url")
+  fileUrl         String?       @map("file_url")
+  mimeType        String?       @map("mime_type")
+  content         String        @db.Text
+  isActive        Boolean       @default(true) @map("is_active")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@index([knowledgeBaseId])
+  @@index([userId])
+}
+
+// --- ARTIFACTS (LINKS, ONE-TIME ATTACHMENTS & AI USAGE PROMPTS) ---
+
 model Artifact {
-  id         String    @id @default(cuid())
-  userId     String    @map("user_id") @db.Uuid
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaignId String?   @map("campaign_id")
-  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  gongId     String?   @map("gong_id")
-  gong       Gong?     @relation(fields: [gongId], references: [id], onDelete: SetNull)
-  title      String
-  slug       String
-  type       String    @default("LINK")
-  url        String    @db.Text
-  mimeType   String?   @map("mime_type")
-  sizeBytes  Int?      @map("size_bytes")
-  createdAt  DateTime  @default(now()) @map("created_at")
+  id             String               @id @default(cuid())
+  userId         String               @map("user_id") @db.Uuid
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaignId     String?              @map("campaign_id")
+  campaign       Campaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  gongId         String?              @map("gong_id")
+  gong           Gong?                @relation(fields: [gongId], references: [id], onDelete: SetNull)
+  broadcastId    String?              @map("broadcast_id")
+  broadcast      NewsletterBroadcast? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
+  title          String
+  slug           String
+  description    String?              @db.Text
+  usagePrompt    String?              @db.Text @map("usage_prompt")
+  type           String               @default("LINK") // 'LINK' | 'DOCUMENT' | 'IMAGE'
+  attachmentMode String               @default("LINK") @map("attachment_mode") // 'LINK' | 'MIME_ATTACHMENT'
+  isOneTime      Boolean              @default(false) @map("is_one_time")
+  url            String               @db.Text
+  mimeType       String?              @map("mime_type")
+  sizeBytes      Int?                 @map("size_bytes")
+  createdAt      DateTime             @default(now()) @map("created_at")
 
   @@unique([userId, slug])
   @@index([userId])
   @@index([campaignId])
   @@index([gongId])
+  @@index([broadcastId])
 }
 
 // --- DEVELOPER API KEYS ---
@@ -510,6 +568,8 @@ model Gong {
   templateStyle        String                 @default("card") @map("template_style")
   dedicatedSenderId    String?                @map("dedicated_sender_id")
   dedicatedSender      Sender?                @relation("GongDedicatedSender", fields: [dedicatedSenderId], references: [id], onDelete: SetNull)
+  knowledgeBaseId      String?                @map("knowledge_base_id")
+  knowledgeBase        KnowledgeBase?         @relation(fields: [knowledgeBaseId], references: [id], onDelete: SetNull)
   
   welcomeEmailEnabled  Boolean                @default(false) @map("welcome_email_enabled")
   welcomeSubject       String?                @map("welcome_subject")
@@ -533,6 +593,7 @@ model Gong {
   @@unique([userId, slug])
   @@index([userId])
   @@index([dedicatedSenderId])
+  @@index([knowledgeBaseId])
 }
 
 model NewsletterRecipient {
@@ -558,22 +619,26 @@ model NewsletterRecipient {
 }
 
 model NewsletterBroadcast {
-  id            String                @id @default(cuid())
-  userId        String                @map("user_id") @db.Uuid
-  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gongId        String?               @map("gong_id")
-  gong          Gong?                 @relation(fields: [gongId], references: [id], onDelete: SetNull)
-  subject       String
-  body          String
-  status        String                @default("DRAFT")
-  templateStyle String                @default("card") @map("template_style")
-  tagFilter     String?               @map("tag_filter")
-  queuedAt      DateTime?             @map("queued_at")
-  createdAt     DateTime              @default(now()) @map("created_at")
-  queueItems    NewsletterQueueItem[]
+  id              String                @id @default(cuid())
+  userId          String                @map("user_id") @db.Uuid
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gongId          String?               @map("gong_id")
+  gong            Gong?                 @relation(fields: [gongId], references: [id], onDelete: SetNull)
+  knowledgeBaseId String?               @map("knowledge_base_id")
+  knowledgeBase   KnowledgeBase?        @relation(fields: [knowledgeBaseId], references: [id], onDelete: SetNull)
+  subject         String
+  body            String
+  status          String                @default("DRAFT")
+  templateStyle   String                @default("card") @map("template_style")
+  tagFilter       String?               @map("tag_filter")
+  queuedAt        DateTime?             @map("queued_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  queueItems      NewsletterQueueItem[]
+  artifacts       Artifact[]
 
   @@index([userId])
   @@index([gongId])
+  @@index([knowledgeBaseId])
 }
 
 model NewsletterQueueItem {

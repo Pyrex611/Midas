@@ -2,6 +2,7 @@ import { logger } from '../config/logger';
 import { encodeOpenToken, encodeClickToken } from '../lib/tracking';
 import { emailTemplateService, BrandEnvelopeOptions } from './emailTemplate.service';
 import { espRouter } from './esp';
+import { EspAttachment } from './esp/types';
 
 export class EmailService {
   private trackingBaseUrl(domain?: any): string {
@@ -99,7 +100,8 @@ export class EmailService {
     inReplyTo?: string | null,
     unsubscribeUrl?: string | null,
     trackingContext?: { leadId: string; campaignId?: string | null },
-    brandOptions?: BrandEnvelopeOptions
+    brandOptions?: BrandEnvelopeOptions,
+    attachments?: EspAttachment[]
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const localPart = domain.senderLocalPart || 'hello';
@@ -135,6 +137,7 @@ export class EmailService {
         inReplyTo,
         unsubscribeUrl,
         isColdOutreach,
+        attachments,
       });
 
       if (result.success) {

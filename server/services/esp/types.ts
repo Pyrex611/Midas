@@ -1,3 +1,9 @@
+export interface EspAttachment {
+  filename: string;
+  url: string;
+  contentType?: string;
+}
+
 export interface EspSendPayload {
   domain: any;
   fromEmail: string;
@@ -10,6 +16,7 @@ export interface EspSendPayload {
   inReplyTo?: string | null;
   unsubscribeUrl?: string | null;
   isColdOutreach: boolean;
+  attachments?: EspAttachment[];
 }
 
 export interface EspSendResult {

@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-react';
 import api from '../services/api';
+import { supabaseAuth } from '../lib/supabaseAuth';
 
 interface User {
   id: string;
@@ -11,19 +12,25 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  providerMode: 'clerk' | 'supabase';
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, name?: string) => Promise<void>;
+  signUp: (email: string, password: string, name?: string) => Promise<{ needsConfirmation: boolean }>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const ACTIVE_FRONTEND_AUTH: 'clerk' | 'supabase' =
+  import.meta.env.VITE_AUTH_PROVIDER === 'supabase' || !import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
+    ? 'supabase'
+    : 'clerk';
+
+const ClerkAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isLoaded, isSignedIn, signOut: clerkSignOut, getToken } = useClerkAuth();
   const { user: clerkUser, isLoaded: isUserLoaded } = useUser();
   const [user, setUser] = useState<User | null>(null);
 
-  // Register the Clerk JWT token interceptor dynamically onto our custom API Axios instance
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -33,9 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
-      } catch (err) {
-        console.error('Error attaching Clerk session token:', err);
-      }
+      } catch {}
       return config;
     });
 
@@ -44,7 +49,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [isLoaded, getToken]);
 
-  // Map Clerk's reactive user model directly to the existing User interface to prevent any refactoring regressions
   useEffect(() => {
     if (isLoaded && isSignedIn && clerkUser) {
       setUser({
@@ -57,20 +61,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [isLoaded, isSignedIn, clerkUser]);
 
-  const signIn = async () => {
-    throw new Error('Use Clerk UI components directly to sign in.');
-  };
-
-  const signUp = async () => {
-    throw new Error('Use Clerk UI components directly to sign up.');
-  };
-
-  const signOut = async () => {
-    await clerkSignOut();
-  };
-
-  // Crucial Fix: We are only "done loading" when BOTH Clerk's auth AND user details are fully populated and mapped.
-  // This prevents the split-second session propagation delay from prematurely triggering a redirect to "/login".
   const loading = !isLoaded || (isSignedIn && (!isUserLoaded || !user));
 
   return (
@@ -78,14 +68,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         loading,
+        providerMode: 'clerk',
+        signIn: async () => { throw new Error('Use Clerk UI component'); },
+        signUp: async () => { throw new Error('Use Clerk UI component'); },
+        signInWithGoogle: async () => { throw new Error('Use Clerk UI component'); },
+        signOut: async () => { await clerkSignOut(); },
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const interceptor = api.interceptors.request.use(async (config) => {
+      try {
+        const token = await supabaseAuth.getValidAccessToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+      } catch {}
+      return config;
+    });
+
+    (async () => {
+      try {
+        const oauthUser = await supabaseAuth.consumeOAuthHashCallback();
+        if (oauthUser) {
+          setUser(oauthUser);
+          return;
+        }
+        const token = await supabaseAuth.getValidAccessToken();
+        const stored = supabaseAuth.getStoredSession();
+        if (token && stored?.user) {
+          setUser(stored.user);
+        } else {
+          setUser(null);
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      api.interceptors.request.eject(interceptor);
+    };
+  }, []);
+
+  const signIn = async (email: string, password: string) => {
+    const u = await supabaseAuth.signIn(email, password);
+    setUser(u);
+  };
+
+  const signUp = async (email: string, password: string, name?: string) => {
+    const result = await supabaseAuth.signUp(email, password, name);
+    if (!result.needsConfirmation && result.user) {
+      setUser(result.user);
+    }
+    return { needsConfirmation: result.needsConfirmation };
+  };
+
+  const signInWithGoogle = async () => {
+    await supabaseAuth.signInWithGoogle();
+  };
+
+  const signOut = async () => {
+    await supabaseAuth.signOut();
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        providerMode: 'supabase',
         signIn,
         signUp,
+        signInWithGoogle,
         signOut,
       }}
     >
       {children}
     </AuthContext.Provider>
   );
+};
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  if (ACTIVE_FRONTEND_AUTH === 'supabase') {
+    return <SupabaseAuthProviderInner>{children}</SupabaseAuthProviderInner>;
+  }
+  return <ClerkAuthProviderInner>{children}</ClerkAuthProviderInner>;
 };
 
 export const useAuth = () => {
