@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as readline from 'readline/promises';
+import * as readline from 'readline';
 import { stdin as input, stdout as output } from 'process';
 
 const GOLD = '\x1b[33m';
@@ -10,6 +10,12 @@ const GREEN = '\x1b[32m';
 const DIM = '\x1b[2m';
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
+
+function ask(rl: readline.Interface, prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question(prompt, (answer) => resolve(answer));
+  });
+}
 
 async function fileExists(targetPath: string): Promise<boolean> {
   try {
@@ -81,9 +87,9 @@ async function scaffoldInit() {
     const detected = await detectFramework(cwd);
     console.log(`${DIM}Detected environment:${RESET} ${BOLD}${detected}${RESET}\n`);
 
-    const apiKeyInput = await rl.question(`${BOLD}1. Enter your Midas API Key${RESET} ${DIM}(leave blank for placeholder)${RESET}: `);
-    const gongSlugInput = await rl.question(`${BOLD}2. Target Gong Slug${RESET} ${DIM}(default: weekly-alpha)${RESET}: `);
-    const baseUrlInput = await rl.question(`${BOLD}3. Midas Host URL${RESET} ${DIM}(default: https://midas-aem.vercel.app)${RESET}: `);
+    const apiKeyInput = await ask(rl, `${BOLD}1. Enter your Midas API Key${RESET} ${DIM}(leave blank for placeholder)${RESET}: `);
+    const gongSlugInput = await ask(rl, `${BOLD}2. Target Gong Slug${RESET} ${DIM}(default: weekly-alpha)${RESET}: `);
+    const baseUrlInput = await ask(rl, `${BOLD}3. Midas Host URL${RESET} ${DIM}(default: https://midas-aem.vercel.app)${RESET}: `);
 
     const apiKey = apiKeyInput.trim() || 'midas_live_replace_me';
     const gongSlug = gongSlugInput.trim() || 'weekly-alpha';

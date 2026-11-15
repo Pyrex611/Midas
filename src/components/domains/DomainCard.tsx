@@ -9,6 +9,7 @@ export interface DomainCardData {
   id: string;
   domainName: string;
   status: string;
+  espProvider?: string;
   bounceRate: number;
   complaintRate: number;
   sendTestPassedAt: string | null;
@@ -53,7 +54,27 @@ export const DomainCard: React.FC<DomainCardProps> = ({
   const [trackingInput, setTrackingInput] = useState(domain.trackingDomain || `track.${domain.domainName}`);
   const [savingTracking, setSavingTracking] = useState(false);
 
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState<any[]>([]);
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+
   const isReceivingConfirmed = domain.receivingConfirmedAt || receivingState?.confirmed;
+
+  const handleToggleSnapshots = async () => {
+    const next = !snapshotsOpen;
+    setSnapshotsOpen(next);
+    if (next && snapshots.length === 0) {
+      setLoadingSnapshots(true);
+      try {
+        const res = await domainAPI.getSnapshots(domain.id, 14);
+        setSnapshots(res.data || []);
+      } catch {
+        toast.error('Failed to load daily health snapshots', 'Error');
+      } finally {
+        setLoadingSnapshots(false);
+      }
+    }
+  };
 
   const handleInspectDns = async () => {
     setInspectingDns(true);
@@ -144,7 +165,7 @@ export const DomainCard: React.FC<DomainCardProps> = ({
     <div className="card-midas rounded-2xl p-6 space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             {domain.bimiEnabled && domain.bimiSvgUrl ? (
               <img
                 src={domain.bimiSvgUrl}
@@ -159,6 +180,9 @@ export const DomainCard: React.FC<DomainCardProps> = ({
             )}
 
             <h3 className="text-xl font-bold text-royal-950 tracking-tight font-mono">{domain.domainName}</h3>
+            <span className="px-2 py-0.5 rounded bg-thistle-100 text-royal-800 border border-gold-500/35 text-[10px] font-mono font-bold uppercase">
+              {domain.espProvider || 'mailgun'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2 mt-2 text-xs flex-wrap pt-1">
@@ -188,6 +212,13 @@ export const DomainCard: React.FC<DomainCardProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleToggleSnapshots}
+            className="px-3 py-1.5 bg-white hover:bg-thistle-100 border border-gold-500/40 text-royal-800 rounded-xl text-xs font-bold"
+          >
+            {snapshotsOpen ? 'Hide Trends' : 'Health Trends (14d)'}
+          </button>
+
           <button
             onClick={handleInspectDns}
             disabled={inspectingDns}
@@ -248,6 +279,44 @@ export const DomainCard: React.FC<DomainCardProps> = ({
         </button>
       </div>
 
+      {snapshotsOpen && (
+        <div className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-xl space-y-2 text-xs">
+          <p className="font-bold text-royal-950">Daily Deliverability Snapshots (Human Opens vs Bounces)</p>
+          {loadingSnapshots ? (
+            <p className="text-thistle-500">Loading snapshots...</p>
+          ) : snapshots.length === 0 ? (
+            <p className="text-thistle-500 italic">No daily snapshots recorded yet (runs via /api/cron/snapshots).</p>
+          ) : (
+            <div className="overflow-x-auto bg-white border border-gold-500/35 rounded-lg">
+              <table className="min-w-full divide-y divide-gold-500/20 text-[11px] font-mono">
+                <thead className="bg-thistle-100/75 text-royal-800">
+                  <tr>
+                    <th className="py-1.5 px-3 text-left">Date</th>
+                    <th className="py-1.5 px-3 text-right">Sent</th>
+                    <th className="py-1.5 px-3 text-right">Human Opens</th>
+                    <th className="py-1.5 px-3 text-right">Clicks</th>
+                    <th className="py-1.5 px-3 text-right">Replies</th>
+                    <th className="py-1.5 px-3 text-right">Bounces</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gold-500/15">
+                  {snapshots.map((snap) => (
+                    <tr key={snap.id}>
+                      <td className="py-1.5 px-3">{snap.snapshotDate}</td>
+                      <td className="py-1.5 px-3 text-right font-bold">{snap.sentCount}</td>
+                      <td className="py-1.5 px-3 text-right text-royal-700">{snap.humanOpenCount}</td>
+                      <td className="py-1.5 px-3 text-right">{snap.clickCount}</td>
+                      <td className="py-1.5 px-3 text-right text-emerald-700">{snap.replyCount}</td>
+                      <td className="py-1.5 px-3 text-right text-rose-600">{snap.bounceCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {dnsReport && (
         <div className="p-3.5 bg-white border border-gold-500/40 rounded-xl text-[11px] space-y-1.5">
           <p className="font-bold text-royal-950">Live Authoritative DNS Lookup Results</p>
@@ -285,7 +354,7 @@ export const DomainCard: React.FC<DomainCardProps> = ({
         <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl text-xs text-rose-900 flex items-center gap-2.5">
           <Icons.Warning className="text-rose-600" />
           <span>
-            <strong>Mailgun Key Unreadable:</strong> Stored API key failed decryption (<code className="font-mono">ENCRYPTION_KEY</code> may have rotated). Delete and reconnect this domain to resume sends.
+            <strong>Credential Unreadable:</strong> Stored API key failed decryption (<code className="font-mono">ENCRYPTION_KEY</code> may have rotated). Delete and reconnect this domain to resume sends.
           </span>
         </div>
       )}
@@ -305,7 +374,7 @@ export const DomainCard: React.FC<DomainCardProps> = ({
         </div>
       )}
 
-      {domain.sendTestPassedAt && !isReceivingConfirmed && (
+      {domain.sendTestPassedAt && !isReceivingConfirmed && (domain.espProvider || 'mailgun') === 'mailgun' && (
         <div className="p-4 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs text-royal-950 space-y-2">
           <p className="font-bold text-royal-800">Step 2: Confirm Inbound Reply Routing</p>
           <p className="text-royal-950/75">

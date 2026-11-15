@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { inboxAPI, senderAPI, leadAPI } from '../services/api';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { inboxAPI, senderAPI, leadAPI, domainAPI } from '../services/api';
 import { Sheet } from '../components/common/Sheet';
 import { useToast } from '../context/ToastContext';
 import { Icons } from '../lib/icons';
@@ -12,6 +12,12 @@ export const Inbox: React.FC = () => {
   const [replyBody, setReplyBody] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Multi-Domain & Sender-Scoped Mailbox Filters
+  const [allDomains, setAllDomains] = useState<any[]>([]);
+  const [allSenders, setAllSenders] = useState<any[]>([]);
+  const [selectedDomainFilter, setSelectedDomainFilter] = useState<string>('all');
+  const [selectedSenderFilter, setSelectedSenderFilter] = useState<string>('all');
 
   const [isNewConvoOpen, setIsNewConvoOpen] = useState(false);
   const [convoMode, setConvoMode] = useState<'SELECT_LEAD' | 'MANUAL_ENTRY'>('SELECT_LEAD');
@@ -29,40 +35,58 @@ export const Inbox: React.FC = () => {
   const [convoBody, setConvoBody] = useState('');
   const [startingConvo, setStartingConvo] = useState(false);
 
-  const fetchInbox = async () => {
+  const fetchInbox = useCallback(async () => {
     try {
-      const res = await inboxAPI.getThreads();
+      const res = await inboxAPI.getThreads({
+        domainId: selectedDomainFilter !== 'all' ? selectedDomainFilter : undefined,
+        senderId: selectedSenderFilter !== 'all' ? selectedSenderFilter : undefined,
+      });
       const list = res.data || [];
       setThreads(list);
-      if (list.length > 0 && !activeThreadId) {
+      if (list.length > 0 && (!activeThreadId || !list.some((t: any) => t.id === activeThreadId))) {
         setActiveThreadId(list[0].id);
+      } else if (list.length === 0) {
+        setActiveThreadId(null);
       }
     } catch {
       toast.error('Failed to load incoming replies', 'Network Error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedDomainFilter, selectedSenderFilter, activeThreadId, toast]);
 
-  const loadSendersAndLeads = async () => {
+  const loadSendersDomainsAndLeads = async () => {
     try {
-      const [sRes, lRes] = await Promise.all([
+      const [dRes, sRes, lRes] = await Promise.all([
+        domainAPI.getAll(),
         senderAPI.listAll(),
         leadAPI.getAll(1, 100),
       ]);
-      const activeSenders = (sRes.data || []).filter((s: any) => s.status === 'active' && s.domain?.status === 'active');
+      setAllDomains(dRes.data || []);
+      const senders = sRes.data || [];
+      setAllSenders(senders);
+      const activeSenders = senders.filter((s: any) => s.status === 'active' && s.domain?.status === 'active');
       setAvailableSenders(activeSenders);
-      if (activeSenders.length > 0) setSelectedSenderId(activeSenders[0].id);
+      if (activeSenders.length > 0 && !selectedSenderId) setSelectedSenderId(activeSenders[0].id);
       setAvailableLeads(lRes.data?.data || []);
     } catch {}
   };
 
   useEffect(() => {
+    loadSendersDomainsAndLeads();
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
     fetchInbox();
-    loadSendersAndLeads();
     const interval = setInterval(fetchInbox, 20000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedDomainFilter, selectedSenderFilter]);
+
+  const scopedSendersForFilter = useMemo(() => {
+    if (selectedDomainFilter === 'all') return allSenders;
+    return allSenders.filter((s) => s.domainId === selectedDomainFilter);
+  }, [allSenders, selectedDomainFilter]);
 
   const filteredThreads = threads.filter((t) => {
     if (filterSentiment === 'ALL') return true;
@@ -78,6 +102,23 @@ export const Inbox: React.FC = () => {
   });
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+
+  const resolveThreadMailboxLabel = (thread: any): string | null => {
+    const msgs = thread.sentEmails || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.sender?.localPart && m.domain?.domainName) {
+        return `${m.sender.localPart}@${m.domain.domainName}`;
+      }
+      if (!m.isIncoming && m.fromAddress) return m.fromAddress;
+      if (m.isIncoming && m.toAddress) {
+        const cleaned = m.toAddress.match(/<(.+)>/)?.[1] || m.toAddress;
+        return cleaned;
+      }
+      if (m.domain?.domainName) return m.domain.domainName;
+    }
+    return null;
+  };
 
   const handleSendReply = async () => {
     if (!replyBody.trim() || !activeThreadId) return;
@@ -188,7 +229,7 @@ export const Inbox: React.FC = () => {
 
   return (
     <div className="h-[calc(100vh-64px)] flex bg-thistle-canvas overflow-hidden">
-      {/* COLUMN 1: THREAD LIST */}
+      {/* COLUMN 1: THREAD LIST WITH DOMAIN & SENDER MAILBOX SWITCHERS */}
       <div className="w-80 md:w-96 bg-white border-r border-gold-500/40 flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-gold-500/35 space-y-3">
           <div className="flex items-center justify-between">
@@ -198,11 +239,47 @@ export const Inbox: React.FC = () => {
               className="px-3 py-1.5 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
             >
               <Icons.Plus className="text-gold-300" />
-              <span>New Conversation</span>
+              <span>New</span>
             </button>
           </div>
 
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {/* Cascading Domain -> Mailbox Selector */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Domain</label>
+              <select
+                value={selectedDomainFilter}
+                onChange={(e) => {
+                  setSelectedDomainFilter(e.target.value);
+                  setSelectedSenderFilter('all');
+                }}
+                className="w-full px-2 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg text-[11px] font-semibold text-royal-950 focus:outline-none focus:border-gold-500"
+              >
+                <option value="all">All Domains ({allDomains.length})</option>
+                {allDomains.map((d) => (
+                  <option key={d.id} value={d.id}>{d.domainName}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Mailbox (Sender)</label>
+              <select
+                value={selectedSenderFilter}
+                onChange={(e) => setSelectedSenderFilter(e.target.value)}
+                className="w-full px-2 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg text-[11px] font-mono font-bold text-royal-800 focus:outline-none focus:border-gold-500"
+              >
+                <option value="all">All Mailboxes ({scopedSendersForFilter.length})</option>
+                {scopedSendersForFilter.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.localPart}@{s.domain?.domainName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
             {(['ALL', 'POSITIVE', 'OBJECTION'] as const).map((tab) => (
               <button
                 key={tab}
@@ -221,15 +298,27 @@ export const Inbox: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto divide-y divide-gold-500/25">
           {loading ? (
-            <div className="p-8 text-center text-xs text-thistle-500">Loading replies...</div>
+            <div className="p-8 text-center text-xs text-thistle-500">Loading mailbox threads...</div>
           ) : filteredThreads.length === 0 ? (
-            <div className="p-8 text-center text-xs text-thistle-500">
-              No conversations active. Click "+ New Conversation" to reach out to a prospect.
+            <div className="p-8 text-center text-xs text-thistle-500 space-y-2">
+              <p>No conversations match this domain/mailbox filter.</p>
+              {(selectedDomainFilter !== 'all' || selectedSenderFilter !== 'all') && (
+                <button
+                  onClick={() => {
+                    setSelectedDomainFilter('all');
+                    setSelectedSenderFilter('all');
+                  }}
+                  className="text-royal-700 font-bold hover:underline"
+                >
+                  Reset Mailbox Filters
+                </button>
+              )}
             </div>
           ) : (
             filteredThreads.map((thread) => {
               const latest = thread.sentEmails?.[thread.sentEmails.length - 1];
               const isSelected = activeThreadId === thread.id;
+              const mailboxLabel = resolveThreadMailboxLabel(thread);
 
               return (
                 <div
@@ -247,7 +336,14 @@ export const Inbox: React.FC = () => {
                   </div>
                   <p className="text-[11px] font-semibold text-royal-700 truncate">{thread.campaign?.name || 'Direct Outreach'}</p>
                   <p className="text-xs text-royal-950/70 truncate">{latest?.body || 'No text'}</p>
-                  <div className="pt-1">{latest?.isIncoming && getSentimentPill(latest.analysis)}</div>
+                  <div className="pt-1 flex items-center justify-between gap-2 flex-wrap">
+                    {mailboxLabel && (
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-thistle-50 text-royal-800 border border-gold-500/30 truncate max-w-[180px]">
+                        via {mailboxLabel}
+                      </span>
+                    )}
+                    {latest?.isIncoming && getSentimentPill(latest.analysis)}
+                  </div>
                 </div>
               );
             })
@@ -266,6 +362,11 @@ export const Inbox: React.FC = () => {
                   {activeThread.email} · {activeThread.company || 'Direct Contact'}
                 </p>
               </div>
+              {resolveThreadMailboxLabel(activeThread) && (
+                <span className="px-2.5 py-1 rounded-lg bg-white border border-gold-500/40 text-[11px] font-mono font-bold text-royal-800">
+                  Mailbox: {resolveThreadMailboxLabel(activeThread)}
+                </span>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-thistle-canvas/60">
@@ -278,8 +379,10 @@ export const Inbox: React.FC = () => {
                         : 'bg-royal-700 text-white border border-gold-400/50'
                     }`}
                   >
-                    <div className="flex items-center justify-between text-[10px] opacity-80 pb-1 border-b border-gold-500/30">
-                      <span className="font-bold">{msg.isIncoming ? activeThread.name : 'You'}</span>
+                    <div className="flex items-center justify-between text-[10px] opacity-80 pb-1 border-b border-gold-500/30 gap-4">
+                      <span className="font-bold">
+                        {msg.isIncoming ? activeThread.name : msg.fromAddress || 'You'}
+                      </span>
                       <span>{new Date(msg.sentAt).toLocaleString()}</span>
                     </div>
                     <p className="font-bold text-[11px] pt-1">{msg.subject}</p>
@@ -321,7 +424,7 @@ export const Inbox: React.FC = () => {
             </div>
             <h3 className="text-base font-bold text-royal-950">No conversation selected</h3>
             <p className="text-xs text-thistle-500 max-w-sm">
-              Select an active thread from the left, or compose a new email to an existing or new prospect.
+              Select a thread or change your Domain / Mailbox filter on the left, or start a new direct conversation.
             </p>
             <button
               onClick={() => setIsNewConvoOpen(true)}

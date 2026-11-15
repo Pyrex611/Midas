@@ -60,6 +60,35 @@ export const sandboxAPI = {
   sendTest: (data?: { subject?: string; body?: string }) => api.post('/sandbox/test-send', data || {}),
 };
 
+export const knowledgeAPI = {
+  list: (campaignId?: string) => api.get('/knowledge', { params: campaignId ? { campaignId } : undefined }),
+  create: (data: { title: string; content: string; sourceType?: 'TEXT' | 'URL' | 'DOCUMENT'; sourceUrl?: string; campaignId?: string | null }) =>
+    api.post('/knowledge', data),
+  scrapeUrl: (data: { url: string; title?: string; campaignId?: string | null }) =>
+    api.post('/knowledge/scrape-url', data),
+  update: (id: string, data: { title?: string; content?: string; isActive?: boolean }) =>
+    api.put(`/knowledge/${id}`, data),
+  delete: (id: string) => api.delete(`/knowledge/${id}`),
+};
+
+export const artifactAPI = {
+  list: (filters?: { campaignId?: string; gongId?: string }) => api.get('/artifacts', { params: filters }),
+  createLink: (data: { title: string; slug?: string; url: string; type?: 'LINK' | 'DOCUMENT' | 'IMAGE'; campaignId?: string | null; gongId?: string | null }) =>
+    api.post('/artifacts/link', data),
+  uploadFile: (file: File, meta?: { title?: string; slug?: string; campaignId?: string | null; gongId?: string | null }) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (meta?.title) formData.append('title', meta.title);
+    if (meta?.slug) formData.append('slug', meta.slug);
+    if (meta?.campaignId) formData.append('campaignId', meta.campaignId);
+    if (meta?.gongId) formData.append('gongId', meta.gongId);
+    return api.post('/artifacts/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  delete: (id: string) => api.delete(`/artifacts/${id}`),
+};
+
 export const notificationAPI = {
   get: (limit = 20) => api.get('/notifications', { params: { limit } }),
   markRead: (id: string) => api.patch(`/notifications/${id}/read`),
@@ -202,6 +231,12 @@ export const domainAPI = {
   getAll: () => api.get('/domains'),
   connect: (domainName: string, mailgunApiKey: string, region?: 'us' | 'eu', testRecipientEmail?: string) =>
     api.post('/domains', { domainName, mailgunApiKey, region, testRecipientEmail }),
+  connectEsp: (data: {
+    domainName: string;
+    espProvider: 'resend' | 'smtp';
+    apiKey?: string;
+    smtpConfig?: { host: string; port: number; secure: boolean; user: string; pass: string };
+  }) => api.post('/domains/esp', data),
   retrySendTest: (id: string, testRecipientEmail?: string) => api.post(`/domains/${id}/send-test`, { testRecipientEmail }),
   resetReceivingTest: (id: string) => api.post(`/domains/${id}/receiving-test/reset`),
   checkReceivingTest: (id: string) => api.get(`/domains/${id}/receiving-test`),
@@ -209,6 +244,8 @@ export const domainAPI = {
     api.get(`/domains/${id}/dns-inspect`, { params: dkimSelector ? { dkimSelector } : undefined }),
   setTrackingDomain: (id: string, trackingDomain: string) =>
     api.post(`/domains/${id}/tracking-domain`, { trackingDomain }),
+  getSnapshots: (id: string, days = 14) =>
+    api.get(`/domains/${id}/snapshots`, { params: { days } }),
   delete: (id: string) => api.delete(`/domains/${id}`),
   checkDmarcBimi: (id: string) => api.get(`/domains/${id}/dmarc-bimi`),
   updateBimi: (id: string, data: { bimiEnabled: boolean; bimiSvgUrl?: string; bimiVmcUrl?: string }) =>
@@ -297,7 +334,7 @@ export const diagnosticsAPI = {
 };
 
 export const inboxAPI = {
-  getThreads: () => api.get('/inbox'),
+  getThreads: (params?: { domainId?: string; senderId?: string }) => api.get('/inbox', { params }),
   startConversation: (data: {
     leadId?: string;
     name?: string;

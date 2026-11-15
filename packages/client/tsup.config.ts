@@ -18,5 +18,6 @@ export default defineConfig([
     sourcemap: false,
     platform: 'node',
     target: 'node18',
+    external: ['readline', 'fs/promises', 'path', 'process'],
   },
 ]);
