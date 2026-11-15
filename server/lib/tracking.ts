@@ -1,76 +1,116 @@
 import crypto from 'crypto';
 
-const SIGNING_SECRET = process.env.ENCRYPTION_KEY || process.env.CRON_SECRET || 'midas_default_telemetry_secret_32';
-
 export interface OpenTrackingPayload {
   outboundEmailId: string;
   leadId: string;
   campaignId?: string | null;
 }
 
-export interface ClickTrackingPayload {
-  outboundEmailId: string;
-  leadId: string;
-  campaignId?: string | null;
+export interface ClickTrackingPayload extends OpenTrackingPayload {
   targetUrl: string;
 }
 
-// RFC compliant 43-byte 1x1 transparent GIF
 export const TRANSPARENT_GIF_BUFFER = Buffer.from(
   'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
   'base64'
 );
 
-function sign(data: string): string {
-  return crypto.createHmac('sha256', SIGNING_SECRET).update(data).digest('hex').substring(0, 16);
+function getSigningSecret(): string {
+  return (
+    process.env.ENCRYPTION_KEY ||
+    process.env.CRON_SECRET ||
+    'midas_tracking_dev_secret_key'
+  );
+}
+
+function signPayload(dataB64: string): string {
+  return crypto
+    .createHmac('sha256', getSigningSecret())
+    .update(dataB64)
+    .digest('base64url');
+}
+
+function encodeSignedToken(payload: object): string {
+  const jsonB64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const sig = signPayload(jsonB64);
+  return `${jsonB64}.${sig}`;
+}
+
+function decodeSignedToken<T>(token: string): T | null {
+  try {
+    const [jsonB64, sig] = token.split('.');
+    if (!jsonB64 || !sig) return null;
+    const expected = signPayload(jsonB64);
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+    return JSON.parse(Buffer.from(jsonB64, 'base64url').toString('utf8')) as T;
+  } catch {
+    return null;
+  }
 }
 
 export function encodeOpenToken(payload: OpenTrackingPayload): string {
-  const jsonStr = JSON.stringify(payload);
-  const base64 = Buffer.from(jsonStr).toString('base64url');
-  const signature = sign(base64);
-  return `${base64}.${signature}`;
+  return encodeSignedToken(payload);
 }
 
 export function decodeOpenToken(token: string): OpenTrackingPayload | null {
-  try {
-    const [base64, signature] = token.split('.');
-    if (!base64 || !signature || sign(base64) !== signature) return null;
-    const jsonStr = Buffer.from(base64, 'base64url').toString('utf8');
-    return JSON.parse(jsonStr) as OpenTrackingPayload;
-  } catch {
-    return null;
-  }
+  return decodeSignedToken<OpenTrackingPayload>(token);
 }
 
 export function encodeClickToken(payload: ClickTrackingPayload): string {
-  const jsonStr = JSON.stringify(payload);
-  const base64 = Buffer.from(jsonStr).toString('base64url');
-  const signature = sign(base64);
-  return `${base64}.${signature}`;
+  return encodeSignedToken(payload);
 }
 
 export function decodeClickToken(token: string): ClickTrackingPayload | null {
-  try {
-    const [base64, signature] = token.split('.');
-    if (!base64 || !signature || sign(base64) !== signature) return null;
-    const jsonStr = Buffer.from(base64, 'base64url').toString('utf8');
-    return JSON.parse(jsonStr) as ClickTrackingPayload;
-  } catch {
-    return null;
-  }
+  return decodeSignedToken<ClickTrackingPayload>(token);
 }
 
-export function isBotScanner(userAgent?: string): boolean {
-  if (!userAgent) return false;
+/**
+ * Filters known security gateway scanners, image proxy pre-fetchers,
+ * Apple Mail Privacy Protection (MPP) proxies (`17.0.0.0/8` + AppleWebKit),
+ * and sub-4-second post-send automated gateway bursts.
+ */
+export function isBotScanner(
+  userAgent: string = '',
+  ip: string = '',
+  sentAt?: Date | null
+): boolean {
   const ua = userAgent.toLowerCase();
-  return (
+  const cleanIp = ip.trim();
+
+  if (
     ua.includes('googleimageproxy') ||
-    ua.includes('barracuda') ||
     ua.includes('proofpoint') ||
     ua.includes('mimecast') ||
-    ua.includes('virustotal') ||
-    ua.includes('mailprefetch') ||
-    ua.includes('crawler')
-  );
+    ua.includes('barracuda') ||
+    ua.includes('symantec') ||
+    ua.includes('slackbot') ||
+    ua.includes('facebookexternalhit') ||
+    ua.includes('linkedinbot') ||
+    ua.includes('whatsapp') ||
+    ua.includes('headless') ||
+    ua.includes('python-requests') ||
+    ua.includes('curl/') ||
+    ua.includes('wget/')
+  ) {
+    return true;
+  }
+
+  // Apple Mail Privacy Protection proxy pre-fetch detection (Apple AS714 17.0.0.0/8 block)
+  if (cleanIp.startsWith('17.') && (ua.includes('mozilla/5.0') || ua.includes('applewebkit') || ua === '')) {
+    return true;
+  }
+
+  // Immediate (< 4s) pre-fetch bursts triggered by corporate link/image scanners
+  if (sentAt) {
+    const elapsedMs = Date.now() - new Date(sentAt).getTime();
+    if (elapsedMs >= 0 && elapsedMs < 4000) {
+      return true;
+    }
+  }
+
+  return false;
 }

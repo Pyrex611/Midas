@@ -3,6 +3,7 @@ import { emailQueueService } from '../services/emailQueue.service';
 import { followUpService } from '../services/followUp.service';
 import { leadQueueService } from '../services/leadQueue.service';
 import { newsletterQueueService } from '../services/newsletterQueue.service';
+import { snapshotService } from '../services/snapshot.service';
 import { withCronLock } from '../lib/cronLock';
 import { verifyCronRequest } from '../middleware/cronAuth.middleware';
 
@@ -25,6 +26,10 @@ const handlers = {
     const result = await withCronLock('newsletter', () => newsletterQueueService.processNewsletterQueue());
     res.json({ success: true, ...result });
   },
+  snapshots: async (_req: any, res: any) => {
+    const result = await withCronLock('snapshots', () => snapshotService.captureDailySnapshots());
+    res.json({ success: true, ...result });
+  },
 };
 
 router.get('/queue', verifyCronRequest, handlers.queue);
@@ -38,5 +43,8 @@ router.post('/leads', verifyCronRequest, handlers.leads);
 
 router.get('/newsletter', verifyCronRequest, handlers.newsletter);
 router.post('/newsletter', verifyCronRequest, handlers.newsletter);
+
+router.get('/snapshots', verifyCronRequest, handlers.snapshots);
+router.post('/snapshots', verifyCronRequest, handlers.snapshots);
 
 export default router;

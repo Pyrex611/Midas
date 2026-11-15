@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { domainService } from '../services/domain.service';
 import { senderService } from '../services/sender.service';
 import { dnsService } from '../services/dns.service';
+import { snapshotService } from '../services/snapshot.service';
 
 const router = Router();
 
@@ -27,6 +28,25 @@ router.post('/', async (req: any, res) => {
       region || null,
       testRecipientEmail || req.user.email
     );
+    res.status(201).json(domain);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.post('/esp', async (req: any, res) => {
+  try {
+    const { domainName, espProvider, apiKey, smtpConfig } = req.body;
+    if (!domainName) return res.status(400).json({ error: 'domainName is required' });
+    if (!['resend', 'smtp'].includes(espProvider)) {
+      return res.status(400).json({ error: 'espProvider must be "resend" or "smtp"' });
+    }
+    const domain = await domainService.connectEspDomain(req.user.id, {
+      domainName,
+      espProvider,
+      apiKey,
+      smtpConfig,
+    });
     res.status(201).json(domain);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
@@ -80,6 +100,16 @@ router.post('/:id/tracking-domain', async (req: any, res) => {
     if (!trackingDomain) return res.status(400).json({ error: 'trackingDomain is required' });
     const result = await dnsService.configureTrackingDomain(req.user.id, req.params.id, trackingDomain);
     res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.get('/:id/snapshots', async (req: any, res) => {
+  try {
+    const days = parseInt((req.query.days as string) || '30', 10);
+    const snapshots = await snapshotService.getDomainSnapshots(req.user.id, req.params.id, days);
+    res.json(snapshots);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
   }

@@ -1,7 +1,7 @@
 import { logger } from '../config/logger';
-import { domainService } from './domain.service';
 import { encodeOpenToken, encodeClickToken } from '../lib/tracking';
 import { emailTemplateService, BrandEnvelopeOptions } from './emailTemplate.service';
+import { espRouter } from './esp';
 
 export class EmailService {
   private trackingBaseUrl(domain?: any): string {
@@ -106,8 +106,6 @@ export class EmailService {
       const fromEmail = `${localPart}@${domain.domainName}`;
       const fromHeader = senderName ? `"${senderName}" <${fromEmail}>` : fromEmail;
 
-      const { authHeader, baseUrl } = domainService.getMailgunContextForDomain(domain);
-
       let finalHtml = html;
       if (brandOptions?.brandingEnabled || brandOptions?.templateStyle) {
         finalHtml = emailTemplateService.wrapInBrandTemplate(html, brandOptions);
@@ -123,55 +121,31 @@ export class EmailService {
         );
       }
 
-      const formData = new URLSearchParams();
-      formData.append('from', fromHeader);
-      formData.append('to', to);
-      formData.append('subject', subject);
-      formData.append('text', text);
-      formData.append('html', finalHtml);
-      formData.append('v:outbound_email_id', outboundEmailId);
-      if (domain.id) {
-        formData.append('v:domain_id', domain.id);
-      }
-      formData.append('o:tracking', 'yes');
-      formData.append('o:tracking-clicks', 'yes');
-      formData.append('o:tracking-opens', 'yes');
-      formData.append('h:Reply-To', fromEmail);
+      const isColdOutreach = !outboundEmailId.startsWith('tc_');
 
-      if (unsubscribeUrl) {
-        formData.append('h:List-Unsubscribe', `<${unsubscribeUrl}>`);
-        formData.append('h:List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
-      }
-
-      if (inReplyTo) {
-        const cleanReplyId = inReplyTo.replace(/^<|>$/g, '').trim();
-        formData.append('h:In-Reply-To', `<${cleanReplyId}>`);
-        formData.append('h:References', `<${cleanReplyId}>`);
-      }
-
-      const res = await fetch(`${baseUrl}/${domain.domainName}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': authHeader,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData.toString(),
-        signal: AbortSignal.timeout(10_000),
+      const result = await espRouter.send({
+        domain,
+        fromEmail,
+        fromHeader,
+        to,
+        subject,
+        html: finalHtml,
+        text,
+        outboundEmailId,
+        inReplyTo,
+        unsubscribeUrl,
+        isColdOutreach,
       });
 
-      const rawText = await res.text();
-      let data: any = {};
-      try { data = JSON.parse(rawText); } catch { data = { message: rawText }; }
-
-      if (!res.ok) {
-        throw new Error(data.message || `Mailgun rejected sending (HTTP ${res.status})`);
+      if (result.success) {
+        logger.info(
+          { messageId: result.messageId, to, domain: domain.domainName, esp: domain.espProvider || 'mailgun' },
+          'Email sent via ESP router'
+        );
       }
-
-      const cleanMessageId = (data.id || '').replace(/^<|>$/g, '').trim();
-      logger.info({ messageId: cleanMessageId, to, domain: domain.domainName }, 'Email sent via Mailgun');
-      return { success: true, messageId: cleanMessageId };
+      return result;
     } catch (error: any) {
-      logger.error({ error: error.message, to, domain: domain.domainName }, 'Mailgun API Error');
+      logger.error({ error: error.message, to, domain: domain.domainName }, 'ESP Dispatch Error');
       return { success: false, error: error.message };
     }
   }

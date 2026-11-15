@@ -17,17 +17,12 @@ function safeWaitUntil(promise: Promise<any>): void {
       vercel.waitUntil(promise);
       return;
     }
-  } catch {
-    // Local dev or non-Vercel Node runtime
-  }
+  } catch {}
   promise.catch((err) => {
     logger.warn({ err: err?.message || err }, '[TRACKING] Background telemetry write failed');
   });
 }
 
-/**
- * GET /api/track/open/:token
- */
 export const trackOpen = async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'image/gif');
   res.setHeader('Content-Length', '43');
@@ -42,7 +37,6 @@ export const trackOpen = async (req: Request, res: Response) => {
 
   const userAgent = req.headers['user-agent'] || '';
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
-  const isScanner = isBotScanner(userAgent);
 
   safeWaitUntil(
     (async () => {
@@ -51,6 +45,8 @@ export const trackOpen = async (req: Request, res: Response) => {
           where: { id: payload.outboundEmailId },
           select: { id: true, sentAt: true, openedAt: true },
         });
+
+        const isScanner = isBotScanner(userAgent, ip, email?.sentAt);
 
         if (email && !email.openedAt && !isScanner) {
           await prisma.outboundEmail.update({
@@ -79,9 +75,6 @@ export const trackOpen = async (req: Request, res: Response) => {
   );
 };
 
-/**
- * GET /api/track/click/:token
- */
 export const trackClick = async (req: Request, res: Response) => {
   const { token } = req.params;
   const payload = decodeClickToken(token);
@@ -99,15 +92,16 @@ export const trackClick = async (req: Request, res: Response) => {
 
   const userAgent = req.headers['user-agent'] || '';
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
-  const isScanner = isBotScanner(userAgent);
 
   safeWaitUntil(
     (async () => {
       try {
         const email = await prisma.outboundEmail.findUnique({
           where: { id: payload.outboundEmailId },
-          select: { id: true, userId: true, clickedAt: true },
+          select: { id: true, userId: true, sentAt: true, clickedAt: true },
         });
+
+        const isScanner = isBotScanner(userAgent, ip, email?.sentAt);
 
         if (email && !email.clickedAt && !isScanner) {
           await prisma.outboundEmail.update({

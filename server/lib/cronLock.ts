@@ -3,7 +3,7 @@ import { logger } from '../config/logger';
 
 const STALE_LOCK_MINUTES = 10;
 
-export type CronJobName = 'queue' | 'leads' | 'followups' | 'newsletter';
+export type CronJobName = 'queue' | 'leads' | 'followups' | 'newsletter' | 'snapshots';
 
 export async function acquireCronLock(name: CronJobName): Promise<boolean> {
   try {
@@ -27,14 +27,14 @@ export async function releaseCronLock(name: CronJobName): Promise<void> {
   try {
     await prisma.cronLock.update({ where: { name }, data: { lockedAt: null } });
   } catch (error) {
-    logger.error({ error, name }, 'Failed to release cron lock');
+    logger.error({ error, name }, 'Failed to release cron lock (will self-heal via staleness check)');
   }
 }
 
 export async function withCronLock<T>(name: CronJobName, fn: () => Promise<T>): Promise<T | { skipped: true }> {
   const claimed = await acquireCronLock(name);
   if (!claimed) {
-    logger.info({ name }, 'Cron job already running on another instance — skipping');
+    logger.info({ name }, 'Cron job already running on another instance — skipping this invocation');
     return { skipped: true };
   }
   try {

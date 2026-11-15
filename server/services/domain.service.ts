@@ -20,11 +20,14 @@ export class DomainService {
 
   private sanitize(domain: any) {
     if (!domain) return domain;
-    const { mailgunApiKeyEncrypted, ...rest } = domain;
-    const keyDecryptionFailed = Boolean(mailgunApiKeyEncrypted) && !tryDecrypt(mailgunApiKeyEncrypted);
+    const { mailgunApiKeyEncrypted, smtpConfigEncrypted, ...rest } = domain;
+    const keyDecryptionFailed =
+      (Boolean(mailgunApiKeyEncrypted) && !tryDecrypt(mailgunApiKeyEncrypted)) ||
+      (Boolean(smtpConfigEncrypted) && !tryDecrypt(smtpConfigEncrypted));
     return {
       ...rest,
       hasMailgunKey: !!mailgunApiKeyEncrypted,
+      hasSmtpConfig: !!smtpConfigEncrypted,
       keyDecryptionFailed,
     };
   }
@@ -99,34 +102,27 @@ export class DomainService {
     const cleanKey = mailgunApiKey.trim();
     const url = `${this.baseUrlFor(region)}/${cleanDomain}/messages`;
 
-    logger.info({ domain: cleanDomain, region: region || 'us', recipient: cleanTo }, 'Dispatching Mailgun connectivity test send');
-
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': this.authHeaderFor(cleanKey),
+        Authorization: this.authHeaderFor(cleanKey),
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
         from: `Midas Connectivity Test <postmaster@${cleanDomain}>`,
         to: cleanTo,
         subject: 'Midas: your domain is connected',
-        text: `This confirms ${cleanDomain} can send email through your Mailgun account via Midas.\n\nNext step: confirm receiving — check the Domains page for a one-time code and test address.`,
+        text: `This confirms ${cleanDomain} can send email through your Mailgun account via Midas.`,
       }).toString(),
       signal: AbortSignal.timeout(10_000),
     });
 
     const rawText = await res.text();
     let data: any = {};
-    try {
-      data = JSON.parse(rawText);
-    } catch {
-      data = { message: rawText };
-    }
+    try { data = JSON.parse(rawText); } catch { data = { message: rawText }; }
 
     if (!res.ok) {
       const errorMsg = data.message || rawText || `HTTP ${res.status}`;
-      logger.error({ status: res.status, errorMsg, domain: cleanDomain }, 'Mailgun rejected test send');
       throw new Error(`Mailgun rejected the test send (${res.status}): ${errorMsg}`);
     }
 
@@ -219,6 +215,7 @@ export class DomainService {
       data: {
         userId,
         domainName: cleanDomain,
+        espProvider: 'mailgun',
         status: 'pending_setup',
         mailgunApiKeyEncrypted: encrypt(cleanKey),
         mailgunRegion: region || null,
@@ -228,6 +225,45 @@ export class DomainService {
 
     const updated = await this.runSendTest(userId, domain.id, testRecipientEmail);
     return this.sanitize(updated);
+  }
+
+  /** Connects a Resend (for Town Crier) or Custom SMTP domain cleanly. */
+  async connectEspDomain(
+    userId: string,
+    input: {
+      domainName: string;
+      espProvider: 'resend' | 'smtp';
+      apiKey?: string;
+      smtpConfig?: { host: string; port: number; secure: boolean; user: string; pass: string };
+    }
+  ) {
+    const cleanDomain = input.domainName.toLowerCase().trim();
+    const existing = await prisma.domain.findFirst({ where: { userId, domainName: cleanDomain } });
+    if (existing) throw new Error('This domain is already connected to your account');
+
+    if (input.espProvider === 'resend' && !input.apiKey?.trim()) {
+      throw new Error('Resend API Key is required');
+    }
+    if (input.espProvider === 'smtp' && (!input.smtpConfig?.host || !input.smtpConfig?.user || !input.smtpConfig?.pass)) {
+      throw new Error('SMTP host, user, and password are required');
+    }
+
+    const dmarcCheck = await this.checkDmarcPolicy(cleanDomain);
+
+    const domain = await prisma.domain.create({
+      data: {
+        userId,
+        domainName: cleanDomain,
+        espProvider: input.espProvider,
+        status: 'active',
+        sendTestPassedAt: new Date(),
+        dmarcPolicy: dmarcCheck.policy,
+        mailgunApiKeyEncrypted: input.apiKey?.trim() ? encrypt(input.apiKey.trim()) : null,
+        smtpConfigEncrypted: input.smtpConfig ? encrypt(JSON.stringify(input.smtpConfig)) : null,
+      },
+    });
+
+    return this.sanitize(domain);
   }
 
   async runSendTest(userId: string, domainId: string, testRecipientEmail: string) {
@@ -247,10 +283,7 @@ export class DomainService {
     try {
       routeId = await this.ensureInboundRoute(domain.id, domain.domainName, key, domain.mailgunRegion);
     } catch (err: any) {
-      logger.warn(
-        { err: err.message, domainId: domain.id },
-        'Automatic Mailgun inbound route setup failed — receiving test will need a manually-configured Route'
-      );
+      logger.warn({ err: err.message, domainId: domain.id }, 'Automatic Mailgun inbound route setup failed');
     }
 
     return prisma.domain.update({
