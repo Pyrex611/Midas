@@ -1,4 +1,4 @@
-mport React, { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { SignUp } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';

@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { promptManager, PromptParams } from './promptManager.service';
+import { knowledgeBaseService } from './knowledgeBase.service';
 import { tryDecrypt } from '../lib/encryption';
 import {
   AIProvider,
@@ -29,6 +30,7 @@ export interface GenerateDraftOptions {
   sentiment?: string;
   stepNumber?: number;
   userId?: string;
+  campaignId?: string | null;
 }
 
 export class AIService {
@@ -96,13 +98,8 @@ export class AIService {
     if (!userId) return this.defaultPrimaryProvider;
 
     try {
-      const settings = await prisma.userSettings.findUnique({
-        where: { userId },
-      });
-
-      if (!settings) {
-        return this.defaultPrimaryProvider;
-      }
+      const settings = await prisma.userSettings.findUnique({ where: { userId } });
+      if (!settings) return this.defaultPrimaryProvider;
 
       let providerName = settings.aiProvider;
       let model = settings.aiModel || undefined;
@@ -130,11 +127,7 @@ export class AIService {
         gatewayUrl = gatewayUrl.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
       }
 
-      return this.createProviderInstance(providerName, {
-        model,
-        apiKey: decryptedKey,
-        gatewayUrl,
-      });
+      return this.createProviderInstance(providerName, { model, apiKey: decryptedKey, gatewayUrl });
     } catch {
       return this.defaultPrimaryProvider;
     }
@@ -149,41 +142,26 @@ export class AIService {
     const provider = activeProvider || this.defaultPrimaryProvider;
     const start = Date.now();
 
-    logger.info(`[AI-CALL-START] Dispatching prompt to ${provider.name}`);
-
     try {
       const result = await provider.complete(prompt, system);
-      const duration = Date.now() - start;
-      logger.info(`[AI-CALL-SUCCESS] ${provider.name} responded in ${duration}ms`);
+      logger.info(`[AI-CALL-SUCCESS] ${provider.name} responded in ${Date.now() - start}ms`);
       return result;
     } catch (primaryError: any) {
-      const duration = Date.now() - start;
       logger.error(
-        {
-          provider: provider.name,
-          durationMs: duration,
-          error: primaryError?.message || String(primaryError),
-        },
-        `[AI-CALL-FAILED] ${provider.name} failed after ${duration}ms`
+        { provider: provider.name, error: primaryError?.message || String(primaryError) },
+        `[AI-CALL-FAILED] ${provider.name} failed`
       );
 
       if (this.defaultFallbackProvider) {
         try {
-          logger.info(`[AI-CALL-FALLBACK] Attempting fallback to ${this.defaultFallbackProvider.name}`);
           return await this.defaultFallbackProvider.complete(prompt, system);
-        } catch (fallbackError: any) {
-          logger.error(
-            { fallback: this.defaultFallbackProvider.name, error: fallbackError?.message },
-            '[AI-CALL-FAILED] Fallback provider also failed'
-          );
-        }
+        } catch {}
       }
 
       if (!allowMockFallback && provider.name !== 'mock') {
         throw new Error(`[${provider.name.toUpperCase()}] ${primaryError?.message || 'AI Provider request failed'}`);
       }
 
-      logger.warn('[AI-ENGINE] Degrading to Mock AI provider (background safe fallback)');
       return await this.mockProvider.complete(prompt, system);
     }
   }
@@ -194,9 +172,7 @@ export class AIService {
 
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch {}
+      try { return JSON.parse(match[0]); } catch {}
     }
 
     let depth = 0;
@@ -210,14 +186,12 @@ export class AIService {
         depth--;
         if (depth === 0 && start !== -1) {
           const candidate = cleaned.substring(start, i + 1);
-          try {
-            return JSON.parse(candidate);
-          } catch {}
+          try { return JSON.parse(candidate); } catch {}
         }
       }
     }
 
-    throw new Error(`AI generated response but it could not be parsed into valid JSON. Response snippet: ${cleaned.substring(0, 180)}`);
+    throw new Error(`AI generated response could not be parsed as JSON: ${cleaned.substring(0, 180)}`);
   }
 
   async complete(prompt: string, system?: string, userId?: string): Promise<string> {
@@ -235,7 +209,8 @@ export class AIService {
     originalEmail?: string,
     sentiment?: string,
     stepNumber?: number,
-    userId?: string
+    userId?: string,
+    campaignId?: string | null
   ): Promise<{ subject: string; body: string }>;
   async generateDraft(
     optionsOrTone: GenerateDraftOptions | string = 'professional',
@@ -246,7 +221,8 @@ export class AIService {
     originalEmail?: string,
     sentiment?: string,
     stepNumber?: number,
-    userId?: string
+    userId?: string,
+    campaignId?: string | null
   ): Promise<{ subject: string; body: string }> {
     let opts: GenerateDraftOptions;
 
@@ -261,20 +237,25 @@ export class AIService {
         sentiment,
         stepNumber,
         userId,
+        campaignId,
       };
     } else {
       opts = optionsOrTone;
     }
 
     const provider = await this.resolveUserProvider(opts.userId);
+    const kbContext = opts.userId
+      ? await knowledgeBaseService.buildPromptContext(opts.userId, opts.campaignId).catch(() => null)
+      : null;
+
+    const mergedCompanyContext = [opts.companyContext, kbContext].filter(Boolean).join('\n\n') || null;
     const variationSeed = Math.floor(Math.random() * 1000000);
-    const resolvedTone = opts.tone || 'professional';
     const params: PromptParams = {
       useCase: opts.useCase || 'initial',
-      tone: resolvedTone,
+      tone: opts.tone || 'professional',
       campaignContext: opts.campaignContext,
       reference: opts.reference,
-      companyContext: opts.companyContext,
+      companyContext: mergedCompanyContext,
       variationSeed,
       originalEmail: opts.originalEmail,
       sentiment: opts.sentiment,
@@ -288,7 +269,7 @@ export class AIService {
     const parsed = this.extractJSON(raw);
 
     if (!parsed.subject?.trim() || !parsed.body?.trim()) {
-      throw new Error(`AI model "${provider.name}" returned an empty subject or body. Use a fast instruction model like "openai/gpt-4o-mini" or "gemini-1.5-flash".`);
+      throw new Error(`AI model "${provider.name}" returned an empty subject or body.`);
     }
 
     return { subject: parsed.subject.trim(), body: parsed.body.trim() };
@@ -325,19 +306,24 @@ ${replyText}
   }
 
   async generateObjectionResponse(
-    campaign: { context?: string | null; reference?: string | null; targetTool?: string | null; extendedObjective?: string | null },
+    campaign: { id?: string; context?: string | null; reference?: string | null; targetTool?: string | null; extendedObjective?: string | null },
     lead: { name: string; company?: string | null },
     inboundText: string,
     intent: InboundIntentCategory,
     userId?: string
   ): Promise<{ subject: string; body: string }> {
     const provider = await this.resolveUserProvider(userId);
+    const kbContext = userId
+      ? await knowledgeBaseService.buildPromptContext(userId, campaign.id).catch(() => null)
+      : null;
+
     const prompt = `You are a world-class sales development representative.
 A prospect has raised an objection of type "${intent}".
 Your goal is to politely resolve the objection, remove friction, and steer towards the target tool: "${campaign.targetTool || 'a short 15-minute call'}".
 
 Campaign Strategy Context: "${campaign.context || 'B2B Solutions'}"
 Extended SDR Guidelines: "${campaign.extendedObjective || 'Be concise, low-pressure, and helpful.'}"
+${kbContext ? `\n${kbContext}\n` : ''}
 Prospect Name: "${lead.name}"
 Prospect Company: "${lead.company || 'their team'}"
 Prospect's Message:
@@ -391,11 +377,10 @@ Reply text: """${replyText}"""`;
         'Return JSON: {"status": "ok", "message": "ping"}',
         'Output valid JSON only.'
       );
-      const latencyMs = Date.now() - start;
       return {
         configuredProvider: provider.name,
         status: 'HEALTHY',
-        latencyMs,
+        latencyMs: Date.now() - start,
         responsePreview: result.substring(0, 100),
       };
     } catch (err: any) {
@@ -423,9 +408,7 @@ Reply text: """${replyText}"""`;
 
     if (!resolvedKey && config.userId) {
       try {
-        const settings = await prisma.userSettings.findUnique({
-          where: { userId: config.userId },
-        });
+        const settings = await prisma.userSettings.findUnique({ where: { userId: config.userId } });
         if (settings?.aiApiKeyEncrypted) {
           resolvedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
         }
@@ -449,10 +432,9 @@ Reply text: """${replyText}"""`;
         'Return JSON: {"status": "ok", "message": "ping"}',
         'Output valid JSON only.'
       );
-      const latencyMs = Date.now() - start;
       return {
         status: 'HEALTHY',
-        latencyMs,
+        latencyMs: Date.now() - start,
         responsePreview: result.substring(0, 100),
       };
     } catch (err: any) {

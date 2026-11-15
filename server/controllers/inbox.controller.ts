@@ -5,28 +5,63 @@ import { senderService } from '../services/sender.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../config/logger';
 
+/**
+ * GET /api/inbox?domainId=...&senderId=...
+ * Supports filtering threads cleanly by Domain or a specific Sender mailbox.
+ */
 export const getUnifiedInbox = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    
-    const leadsWithThreads = await prisma.lead.findMany({
+    const domainId = (req.query.domainId as string | undefined)?.trim();
+    const senderId = (req.query.senderId as string | undefined)?.trim();
+
+    let emailFilter: any = undefined;
+
+    if (senderId && senderId !== 'all') {
+      const sender = await prisma.sender.findFirst({
+        where: { id: senderId, userId },
+        include: { domain: { select: { domainName: true } } },
+      });
+      if (!sender) {
+        return res.status(404).json({ error: 'Selected mailbox sender not found' });
+      }
+      const senderAddress = `${sender.localPart}@${sender.domain.domainName}`.toLowerCase();
+
+      emailFilter = {
+        some: {
+          OR: [
+            { senderId: sender.id },
+            { fromAddress: { contains: senderAddress, mode: 'insensitive' } },
+            { toAddress: { contains: senderAddress, mode: 'insensitive' } },
+          ],
+        },
+      };
+    } else if (domainId && domainId !== 'all') {
+      emailFilter = {
+        some: { domainId },
+      };
+    }
+
+    const activeThreads = await prisma.lead.findMany({
       where: {
         userId,
-        OR: [
-          { status: 'REPLIED' },
-          { sentEmails: { some: {} } },
-        ],
+        OR: [{ status: 'REPLIED' }, { status: 'CONTACTED' }],
+        sentEmails: emailFilter || { some: {} },
       },
       include: {
         campaign: { select: { id: true, name: true, senderName: true } },
         sentEmails: {
+          include: {
+            domain: { select: { id: true, domainName: true } },
+            sender: { select: { id: true, localPart: true, displayName: true } },
+          },
           orderBy: { sentAt: 'asc' },
         },
       },
       orderBy: { updatedAt: 'desc' },
     });
 
-    res.json(leadsWithThreads);
+    res.json(activeThreads);
   } catch (error) {
     next(error);
   }
@@ -51,80 +86,61 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: 'Subject and email body are required' });
     }
     if (!senderId) {
-      return res.status(400).json({ error: 'A sending mailbox (senderId) is required' });
+      return res.status(400).json({ error: 'Please select an active mailbox sender to send from' });
     }
 
-    // 1. Ensure daily midnight warmup reset runs before checking quota
-    let sender = await senderService.ensureSenderDailyReset(senderId);
+    let sender = await prisma.sender.findFirst({
+      where: { id: senderId, userId },
+      include: { domain: true },
+    });
+    if (!sender || sender.status !== 'active' || sender.domain?.status !== 'active') {
+      return res.status(400).json({ error: 'Selected sender mailbox or domain is not active' });
+    }
 
-    if (!sender || sender.userId !== userId || sender.status !== 'active' || sender.domain?.status !== 'active') {
-      return res.status(400).json({ error: 'The selected sending mailbox or its domain is not active' });
+    sender = await senderService.ensureSenderDailyReset(sender.id);
+    if (sender.sentCountToday >= sender.dailyLimit) {
+      return res.status(429).json({ error: 'Selected sender mailbox has reached its daily quota limit' });
     }
 
     let targetLead: any = null;
-
     if (leadId) {
-      targetLead = await prisma.lead.findFirst({
-        where: { id: leadId, userId },
-      });
-      if (!targetLead) return res.status(404).json({ error: 'Specified lead was not found' });
+      targetLead = await prisma.lead.findFirst({ where: { id: leadId, userId } });
+      if (!targetLead) return res.status(404).json({ error: 'Selected lead not found' });
     } else {
       const cleanEmail = (email || '').trim().toLowerCase();
       if (!cleanEmail || !cleanEmail.includes('@')) {
         return res.status(400).json({ error: 'A valid recipient email address is required' });
       }
-
-      const cleanName = (name || '').trim() || cleanEmail.split('@')[0];
+      const resolvedName = (name || '').trim() || cleanEmail.split('@')[0];
 
       targetLead = await prisma.lead.upsert({
-        where: {
-          userId_email: {
-            userId,
-            email: cleanEmail,
-          },
-        },
+        where: { userId_email: { userId, email: cleanEmail } },
         update: {
-          name: cleanName,
+          name: resolvedName,
           company: company?.trim() || undefined,
           position: position?.trim() || undefined,
-          status: 'CONTACTED',
-          outreachStatus: saveAsLead ? 'DIRECT' : 'DIRECT_UNSAVED',
         },
         create: {
           userId,
-          name: cleanName,
           email: cleanEmail,
+          name: resolvedName,
           company: company?.trim() || null,
           position: position?.trim() || null,
-          status: 'CONTACTED',
-          outreachStatus: saveAsLead ? 'DIRECT' : 'DIRECT_UNSAVED',
+          status: saveAsLead ? 'CONTACTED' : 'NEW',
+          outreachStatus: 'SENT',
         },
       });
     }
 
-    if (targetLead.status === 'UNSUBSCRIBED') {
-      return res.status(400).json({ error: 'This recipient has previously unsubscribed and cannot be emailed' });
-    }
-
-    // 2. Atomic quota slot reservation
-    const claimResult = await prisma.$queryRaw<{ id: string }[]>`
-      UPDATE "Sender"
-      SET "sent_count_today" = "sent_count_today" + 1,
-          "last_dispatched_at" = NOW()
-      WHERE id = ${sender.id} AND "sent_count_today" < "daily_limit"
-      RETURNING id
-    `;
-
-    if (claimResult.length === 0) {
-      return res.status(400).json({ error: 'This sender mailbox has reached its daily quota limit. Please select another sender.' });
-    }
-
-    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+    const fromEmail = `${sender.localPart}@${sender.domain.domainName}`;
 
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
         domainId: sender.domainId,
+        senderId: sender.id,
+        fromAddress: fromEmail,
+        toAddress: targetLead.email,
         leadId: targetLead.id,
         subject: subject.trim(),
         body: body.trim(),
@@ -132,6 +148,8 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
         status: 'PROCESSING',
       },
     });
+
+    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
 
     const result = await emailService.sendEmailNow(
       { ...sender.domain, senderLocalPart: sender.localPart },
@@ -143,7 +161,7 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       sender.displayName || null,
       undefined,
       undefined,
-      { leadId: targetLead.id, campaignId: targetLead.campaignId },
+      { leadId: targetLead.id },
       {
         brandName: userSettings?.companyName,
         brandInitials: userSettings?.brandInitials,
@@ -154,43 +172,39 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
     );
 
     if (!result.success) {
-      await prisma.sender.update({
-        where: { id: sender.id },
-        data: { sentCountToday: { decrement: 1 } },
-      });
       await prisma.outboundEmail.update({
         where: { id: outboundRecord.id },
         data: { status: 'FAILED', error: result.error },
       });
-      throw new Error(result.error || 'Failed to dispatch email via Mailgun');
+      return res.status(400).json({ error: result.error || 'Failed to dispatch email' });
     }
 
-    const finalizedEmail = await prisma.outboundEmail.update({
+    await prisma.outboundEmail.update({
       where: { id: outboundRecord.id },
       data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
+    });
+
+    await prisma.sender.update({
+      where: { id: sender.id },
+      data: { sentCountToday: { increment: 1 }, lastDispatchedAt: new Date() },
+    });
+
+    await prisma.lead.update({
+      where: { id: targetLead.id },
+      data: { status: 'CONTACTED', outreachStatus: 'SENT' },
     });
 
     await prisma.leadActivityEvent.create({
       data: {
         leadId: targetLead.id,
         eventType: 'EMAIL_SENT',
-        metadata: {
-          outboundEmailId: finalizedEmail.id,
-          sender: `${sender.localPart}@${sender.domain.domainName}`,
-          isDirectInbox: true,
-        },
+        metadata: { outboundEmailId: outboundRecord.id, isManualDirect: true, senderId: sender.id },
       },
     });
 
-    logger.info({ leadId: targetLead.id, email: targetLead.email }, 'Direct conversation started from Unified Inbox');
-
-    res.status(201).json({
-      success: true,
-      lead: targetLead,
-      email: finalizedEmail,
-    });
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to start conversation from inbox');
+    logger.info({ leadId: targetLead.id, outboundId: outboundRecord.id }, 'Direct conversation initiated from Inbox');
+    res.status(201).json({ success: true, email: outboundRecord, lead: targetLead });
+  } catch (error) {
     next(error);
   }
 };
@@ -201,65 +215,67 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
     const leadId = req.params.leadId as string;
     const { body } = req.body;
 
-    if (!body?.trim()) return res.status(400).json({ error: 'Reply body is required' });
+    if (!body) return res.status(400).json({ error: 'Reply body is required' });
 
     const lead = await prisma.lead.findUnique({
       where: { id: leadId, userId },
-      include: { 
+      include: {
         campaign: true,
-        sentEmails: { 
-          where: { isIncoming: true }, 
-          orderBy: { sentAt: 'desc' }, 
-          take: 1 
-        } 
-      }
+        sentEmails: {
+          orderBy: { sentAt: 'desc' },
+          take: 5,
+        },
+      },
     });
 
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
-    const latestInbound = lead.sentEmails[0];
-    if (!latestInbound) return res.status(400).json({ error: 'No inbound email found to reply to' });
+    const latestEmail = lead.sentEmails[0];
+    if (!latestEmail || !latestEmail.domainId) return res.status(400).json({ error: 'No previous email context to reply to' });
 
     const domain = await prisma.domain.findFirst({
-      where: { id: latestInbound.domainId!, status: 'active' },
-      include: { senders: { where: { status: 'active' }, take: 1 } },
+      where: { id: latestEmail.domainId, status: 'active' },
+      include: { senders: true },
     });
 
-    if (!domain || domain.senders.length === 0) {
-      return res.status(400).json({ error: 'Associated domain has no active senders' });
-    }
+    if (!domain) return res.status(400).json({ error: 'Associated domain is not active' });
 
-    let sender = domain.senders[0];
-    sender = await senderService.ensureSenderDailyReset(sender.id);
-    const localPart = sender?.localPart || 'hello';
+    const matchedSender =
+      (latestEmail.senderId ? domain.senders.find((s) => s.id === latestEmail.senderId) : undefined) ||
+      domain.senders.find((s) => s.status === 'active') ||
+      domain.senders[0];
 
-    const subject = latestInbound.subject.startsWith('Re:') ? latestInbound.subject : `Re: ${latestInbound.subject}`;
-
-    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+    const fromEmail = matchedSender ? `${matchedSender.localPart}@${domain.domainName}` : undefined;
+    const subject = latestEmail.subject.startsWith('Re:') ? latestEmail.subject : `Re: ${latestEmail.subject}`;
 
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
         domainId: domain.id,
+        senderId: matchedSender?.id || null,
+        fromAddress: fromEmail,
+        toAddress: lead.email,
         leadId: lead.id,
         campaignId: lead.campaignId,
         subject,
-        body: body.trim(),
+        body,
         isIncoming: false,
         status: 'PROCESSING',
-        replyToId: latestInbound.id,
-      }
+        replyToId: latestEmail.id,
+      },
     });
 
+    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+
     const result = await emailService.sendEmailNow(
-      { ...domain, senderLocalPart: localPart },
+      { ...domain, senderLocalPart: matchedSender?.localPart || 'hello' },
       lead.email,
       subject,
-      body.trim().replace(/\n/g, '<br>'),
-      body.trim(),
+      body.replace(/\n/g, '<br>'),
+      body,
       outboundRecord.id,
-      lead.campaign?.senderName || sender?.displayName || null,
-      latestInbound.messageId,
+      matchedSender?.displayName || lead.campaign?.senderName || null,
+      latestEmail.messageId,
       undefined,
       { leadId: lead.id, campaignId: lead.campaignId },
       {
@@ -273,24 +289,12 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
 
     if (!result.success) throw new Error(result.error);
 
-    const finalized = await prisma.outboundEmail.update({
+    await prisma.outboundEmail.update({
       where: { id: outboundRecord.id },
-      data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() }
+      data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
     });
 
-    await prisma.leadActivityEvent.create({
-      data: {
-        leadId: lead.id,
-        campaignId: lead.campaignId,
-        eventType: 'EMAIL_SENT',
-        metadata: {
-          outboundEmailId: finalized.id,
-          isManualReply: true,
-        },
-      },
-    });
-
-    res.json({ success: true, email: finalized });
+    res.json({ success: true, email: outboundRecord });
   } catch (error) {
     next(error);
   }

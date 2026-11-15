@@ -26,6 +26,8 @@ import townCrierPublicRoutes from './routes/public/townCrier.public.routes';
 import notificationRoutes from './routes/notification.routes';
 import apiKeyRoutes from './routes/apiKey.routes';
 import sandboxRoutes from './routes/sandbox.routes';
+import knowledgeRoutes from './routes/knowledge.routes';
+import artifactRoutes from './routes/artifact.routes';
 
 const app = express();
 
@@ -75,7 +77,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use(requestTimeoutGuard(15000));
 
-// Public Rate Limiters
 const publicSubscribeLimiter = createRateLimiter({
   windowMs: 60 * 1000,
   max: 60,
@@ -110,6 +111,8 @@ app.use('/api/sandbox', requireAuthOrApiKey, sandboxRoutes);
 app.use('/api/domains', requireAuth, domainRoutes);
 app.use('/api/inbox', requireAuth, inboxRoutes);
 app.use('/api/ai', requireAuth, aiRoutes);
+app.use('/api/knowledge', requireAuth, knowledgeRoutes);
+app.use('/api/artifacts', requireAuth, artifactRoutes);
 app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/user/webhooks', requireAuth, webhookSubscriptionRoutes);

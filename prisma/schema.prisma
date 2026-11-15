@@ -36,6 +36,8 @@ model User {
   newsletterQueueItems NewsletterQueueItem[]
   notifications        Notification[]
   webhookSubscriptions WebhookSubscription[]
+  knowledgeItems       KnowledgeItem[]
+  artifacts            Artifact[]
 
   @@map("users")
 }
@@ -128,6 +130,7 @@ model Sender {
   preferredPendingEmails PendingEmail[]   @relation("PendingEmailPreferredSender")
   dedicatedSettings      UserSettings[]   @relation("DedicatedNewsletterSender")
   gongDedicatedChannels  Gong[]           @relation("GongDedicatedSender")
+  outboundEmails         OutboundEmail[]  @relation("OutboundEmailSender")
 
   @@unique([domainId, localPart])
   @@index([userId])
@@ -201,14 +204,16 @@ model Campaign {
   targetTool        String?  @map("target_tool")
   extendedObjective String?  @map("extended_objective")
 
-  followUpSteps FollowUpStep[]
-  leads         Lead[]
-  emails        OutboundEmail[]
-  drafts        Draft[]
-  pendingEmails PendingEmail[]
-  senderLinks   CampaignSender[] 
-  members       CampaignMember[]
-  invites       CampaignInvite[]
+  followUpSteps  FollowUpStep[]
+  leads          Lead[]
+  emails         OutboundEmail[]
+  drafts         Draft[]
+  pendingEmails  PendingEmail[]
+  senderLinks    CampaignSender[] 
+  members        CampaignMember[]
+  invites        CampaignInvite[]
+  knowledgeItems KnowledgeItem[]
+  artifacts      Artifact[]
 
   @@index([userId])
 }
@@ -334,6 +339,8 @@ model OutboundEmail {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   domainId    String?  @map("domain_id")
   domain      Domain?  @relation("OutboundEmailDomain", fields: [domainId], references: [id], onDelete: SetNull)
+  senderId    String?  @map("sender_id")
+  sender      Sender?  @relation("OutboundEmailSender", fields: [senderId], references: [id], onDelete: SetNull)
   leadId      String   @map("lead_id")
   lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaignId  String?  @map("campaign_id")
@@ -371,6 +378,7 @@ model OutboundEmail {
   @@index([campaignId])
   @@index([leadId])
   @@index([messageId])
+  @@index([senderId])
 }
 
 model PendingEmail {
@@ -429,7 +437,49 @@ model UserSettings {
   updatedAt         DateTime @updatedAt @map("updated_at")
 }
 
-// --- DEVELOPER API KEYS (SCOPED GLOBALLY) ---
+// --- KNOWLEDGE BASE & ARTIFACTS ---
+
+model KnowledgeItem {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id") @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaignId String?   @map("campaign_id")
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  title      String
+  sourceType String    @default("TEXT") @map("source_type")
+  sourceUrl  String?   @map("source_url")
+  content    String    @db.Text
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([campaignId])
+}
+
+model Artifact {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id") @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaignId String?   @map("campaign_id")
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  gongId     String?   @map("gong_id")
+  gong       Gong?     @relation(fields: [gongId], references: [id], onDelete: SetNull)
+  title      String
+  slug       String
+  type       String    @default("LINK")
+  url        String    @db.Text
+  mimeType   String?   @map("mime_type")
+  sizeBytes  Int?      @map("size_bytes")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@unique([userId, slug])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([gongId])
+}
+
+// --- DEVELOPER API KEYS ---
 
 model ApiKey {
   id         String    @id @default(cuid())
@@ -478,6 +528,7 @@ model Gong {
 
   recipients           NewsletterRecipient[]
   broadcasts           NewsletterBroadcast[]
+  artifacts            Artifact[]
 
   @@unique([userId, slug])
   @@index([userId])
