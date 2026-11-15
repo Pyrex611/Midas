@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { domainService } from '../services/domain.service';
 import { senderService } from '../services/sender.service';
-import { logger } from '../config/logger';
+import { dnsService } from '../services/dns.service';
 
 const router = Router();
 
@@ -10,7 +10,6 @@ router.get('/', async (req: any, res) => {
     const domains = await domainService.getDomains(req.user.id);
     res.json(domains);
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to fetch domains');
     res.status(500).json({ error: error.message });
   }
 });
@@ -21,33 +20,79 @@ router.post('/', async (req: any, res) => {
     if (!domainName) return res.status(400).json({ error: 'domainName is required' });
     if (!mailgunApiKey) return res.status(400).json({ error: 'mailgunApiKey is required' });
 
-    const recipient = testRecipientEmail || req.user?.email;
-    if (!recipient) {
-      return res.status(400).json({ error: 'A valid test recipient email address is required' });
-    }
-
     const domain = await domainService.connectWithKey(
       req.user.id,
       domainName,
       mailgunApiKey,
       region || null,
-      recipient
+      testRecipientEmail || req.user.email
     );
     res.status(201).json(domain);
   } catch (error: any) {
-    logger.error({ error: error.message, domainName: req.body?.domainName }, 'Domain connection failed');
     res.status(400).json({ error: error.message });
   }
 });
 
-// DMARC & BIMI Verification Inspector (Sprint B.1)
+router.post('/:id/send-test', async (req: any, res) => {
+  try {
+    const { testRecipientEmail } = req.body;
+    const domain = await domainService.runSendTest(req.user.id, req.params.id, testRecipientEmail || req.user.email);
+    res.json(domain);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.post('/:id/receiving-test/reset', async (req: any, res) => {
+  try {
+    const domain = await domainService.resetReceivingTest(req.user.id, req.params.id);
+    res.json(domain);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.get('/:id/receiving-test', async (req: any, res) => {
+  try {
+    const result = await domainService.checkReceivingTest(req.user.id, req.params.id);
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.get('/:id/dns-inspect', async (req: any, res) => {
+  try {
+    const report = await dnsService.inspectDomainDns(
+      req.user.id,
+      req.params.id,
+      req.query.dkimSelector as string | undefined
+    );
+    res.json(report);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.post('/:id/tracking-domain', async (req: any, res) => {
+  try {
+    const { trackingDomain } = req.body;
+    if (!trackingDomain) return res.status(400).json({ error: 'trackingDomain is required' });
+    const result = await dnsService.configureTrackingDomain(req.user.id, req.params.id, trackingDomain);
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 router.get('/:id/dmarc-bimi', async (req: any, res) => {
   try {
-    const domain = await domainService.getDomainRaw(req.params.id);
-    if (!domain || domain.userId !== req.user.id) return res.status(404).json({ error: 'Domain not found' });
+    const domains = await domainService.getDomains(req.user.id);
+    const domain = domains.find((d: any) => d.id === req.params.id);
+    if (!domain) return res.status(404).json({ error: 'Domain not found' });
 
-    const policy = await domainService.checkDmarcPolicy(domain.domainName);
-    res.json(policy);
+    const report = await domainService.checkDmarcPolicy(domain.domainName);
+    res.json(report);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
   }
@@ -67,52 +112,15 @@ router.post('/:id/bimi', async (req: any, res) => {
   }
 });
 
-router.post('/:id/send-test', async (req: any, res) => {
-  try {
-    const { testRecipientEmail } = req.body;
-    const recipient = testRecipientEmail || req.user?.email;
-    if (!recipient) {
-      return res.status(400).json({ error: 'A valid test recipient email address is required' });
-    }
-
-    const domain = await domainService.runSendTest(req.user.id, req.params.id, recipient);
-    res.json(domain);
-  } catch (error: any) {
-    logger.error({ error: error.message, domainId: req.params.id }, 'Domain retry send-test failed');
-    res.status(400).json({ error: error.message });
-  }
-});
-
-router.post('/:id/receiving-test/reset', async (req: any, res) => {
-  try {
-    const domain = await domainService.resetReceivingTest(req.user.id, req.params.id);
-    res.json(domain);
-  } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to reset receiving test');
-    res.status(400).json({ error: error.message });
-  }
-});
-
-router.get('/:id/receiving-test', async (req: any, res) => {
-  try {
-    const result = await domainService.checkReceivingTest(req.user.id, req.params.id);
-    res.json(result);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
 router.delete('/:id', async (req: any, res) => {
   try {
     await domainService.deleteDomain(req.user.id, req.params.id);
     res.json({ success: true });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to delete domain');
     res.status(400).json({ error: error.message });
   }
 });
 
-// Senders
 router.get('/senders/all', async (req: any, res) => {
   try {
     const senders = await senderService.listAllSendersForUser(req.user.id);

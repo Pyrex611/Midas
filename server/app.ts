@@ -25,6 +25,7 @@ import townCrierRoutes from './routes/townCrier.routes';
 import townCrierPublicRoutes from './routes/public/townCrier.public.routes';
 import notificationRoutes from './routes/notification.routes';
 import apiKeyRoutes from './routes/apiKey.routes';
+import sandboxRoutes from './routes/sandbox.routes';
 
 const app = express();
 
@@ -103,6 +104,7 @@ app.use('/api/public/town-crier', townCrierPublicRoutes);
 // Dual-Authed Core Routes (Accepts Clerk Session OR Scoped API Keys)
 app.use('/api/campaigns', requireAuthOrApiKey, campaignRoutes);
 app.use('/api/leads', requireAuthOrApiKey, leadRoutes);
+app.use('/api/sandbox', requireAuthOrApiKey, sandboxRoutes);
 
 // Protected Dashboard Application Routes (Clerk Authed)
 app.use('/api/domains', requireAuth, domainRoutes);

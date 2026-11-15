@@ -55,6 +55,11 @@ export const configAPI = {
   get: () => api.get('/config'),
 };
 
+export const sandboxAPI = {
+  getStatus: () => api.get('/sandbox/status'),
+  sendTest: (data?: { subject?: string; body?: string }) => api.post('/sandbox/test-send', data || {}),
+};
+
 export const notificationAPI = {
   get: (limit = 20) => api.get('/notifications', { params: { limit } }),
   markRead: (id: string) => api.patch(`/notifications/${id}/read`),
@@ -200,6 +205,10 @@ export const domainAPI = {
   retrySendTest: (id: string, testRecipientEmail?: string) => api.post(`/domains/${id}/send-test`, { testRecipientEmail }),
   resetReceivingTest: (id: string) => api.post(`/domains/${id}/receiving-test/reset`),
   checkReceivingTest: (id: string) => api.get(`/domains/${id}/receiving-test`),
+  inspectDns: (id: string, dkimSelector?: string) =>
+    api.get(`/domains/${id}/dns-inspect`, { params: dkimSelector ? { dkimSelector } : undefined }),
+  setTrackingDomain: (id: string, trackingDomain: string) =>
+    api.post(`/domains/${id}/tracking-domain`, { trackingDomain }),
   delete: (id: string) => api.delete(`/domains/${id}`),
   checkDmarcBimi: (id: string) => api.get(`/domains/${id}/dmarc-bimi`),
   updateBimi: (id: string, data: { bimiEnabled: boolean; bimiSvgUrl?: string; bimiVmcUrl?: string }) =>
@@ -222,9 +231,6 @@ export const townCrierAPI = {
   createGong: (data: any) => api.post('/town-crier/gongs', data),
   updateGong: (id: string, data: any) => api.put(`/town-crier/gongs/${id}`, data),
   deleteGong: (id: string) => api.delete(`/town-crier/gongs/${id}`),
-  getApiKeys: () => api.get('/api-keys'),
-  createApiKey: (label: string, scopes?: string[]) => api.post('/api-keys', { label, scopes }),
-  revokeApiKey: (id: string) => api.delete(`/api-keys/${id}`),
 
   getBroadcasts: () => api.get('/town-crier/broadcasts'),
   createBroadcast: (data: { subject: string; body: string; tagFilter?: string; gongId?: string; templateStyle?: string }) =>

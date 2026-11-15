@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "midas-aem"
+version = "0.1.0"
+description = "Official Python SDK (sync & async) for MIDAS Golden Email Infrastructure"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Pyrexx", email = "gamboclifford11@gmail.com" }]
+keywords = ["email", "newsletter", "outreach", "midas", "mailgun", "sdk"]
+dependencies = [
+  "httpx>=0.25.0,<1.0.0"
+]
+
+[project.urls]
+Homepage = "https://midas-aem.vercel.app/docs"
+Repository = "https://github.com/Pyrex611/Midas"

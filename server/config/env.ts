@@ -22,11 +22,6 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z.string().optional(),
   EMAIL_SERVICE: z.enum(['ethereal', 'smtp', 'mailgun']).default('mailgun'),
   EMAIL_FROM: z.string().default('midas-aem.vercel.app'),
-
-  // Bounded Send Sweep Ceiling & Cooldown Guard (Phase A - Initiative 2)
-  SEND_SWEEP_BATCH_SIZE: z.string().default('5').transform(Number),
-  SENDER_COOLDOWN_SECONDS: z.string().default('20').transform(Number),
-
   APP_URL: z.string().url().optional(),
 
   // Clerk Authentication Keys
@@ -40,41 +35,50 @@ const envSchema = z.object({
   MAILGUN_WEBHOOK_KEY: z.string().optional(),
   MAILGUN_REGION: z.enum(['us', 'eu']).default('us'),
 
+  // Sprint C.3 Zero-Setup Sandbox Mode (Guarded self-send domain)
+  SANDBOX_DOMAIN: z.string().optional(),
+  SANDBOX_MAILGUN_KEY: z.string().optional(),
+  SANDBOX_REGION: z.enum(['us', 'eu']).default('us'),
+  SANDBOX_DAILY_LIMIT: z.string().default('15').transform((v) => Math.max(1, Number(v) || 15)),
+
+  // Sprint C.4 Cloudflare for SaaS / Tracking Custom Hostnames
+  CLOUDFLARE_API_TOKEN: z.string().optional(),
+  CLOUDFLARE_ZONE_ID: z.string().optional(),
+  CLOUDFLARE_SAAS_FALLBACK_ORIGIN: z.string().optional(),
+
+  // Automation & Cron Infrastructure
   CRON_SECRET: z.string().optional(),
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
 
+  // Send Rate Safety Guards
+  SEND_SWEEP_BATCH_SIZE: z.string().default('5').transform((v) => Math.min(Math.max(1, Number(v) || 5), 10)),
+  SENDER_COOLDOWN_SECONDS: z.string().default('20').transform((v) => Math.max(5, Number(v) || 20)),
+
+  // Optional Upstash QStash signature verification
   QSTASH_CURRENT_SIGNING_KEY: z.string().optional(),
   QSTASH_NEXT_SIGNING_KEY: z.string().optional(),
 
+  // Modular email verification
   VERIFICATION_PROVIDER: z.enum(['mock', 'bounceban', 'neverbounce', 'zerobounce']).default('mock'),
   BOUNCEBAN_API_KEY: z.string().optional(),
   NEVERBOUNCE_API_KEY: z.string().optional(),
   ZEROBOUNCE_API_KEY: z.string().optional(),
 
-  // Modular AI Provider Credentials
-  AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter', 'aigateway']).default('mock'),
+  // AI Provider Credentials (Modular Failover Engine)
+  AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter', 'aigateway']).default('aigateway'),
   PRIMARY_FALLBACK_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'ollama', 'deepseek', 'openrouter', 'aigateway']).optional(),
-  
-  // Model & Key Configurations
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
-  
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-1.5-flash'),
-  
   DEEPSEEK_API_KEY: z.string().optional(),
   DEEPSEEK_MODEL: z.string().default('deepseek-chat'),
-  
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default('deepseek/deepseek-chat'),
-
-  // Canonical Vercel AI Gateway (ai-gateway.vercel.sh/v1)
-  AI_GATEWAY_URL: z.string().default('https://ai-gateway.vercel.sh/v1'),
   AI_GATEWAY_API_KEY: z.string().optional(),
   AI_GATEWAY_KEY: z.string().optional(),
-  VERCEL_OIDC_TOKEN: z.string().optional(),
+  AI_GATEWAY_URL: z.string().default('https://ai-gateway.vercel.sh/v1'),
   AI_GATEWAY_MODEL: z.string().default('openai/gpt-4o-mini'),
-  
   OLLAMA_URL: z.string().default('http://localhost:11434'),
   OLLAMA_FAST_MODEL: z.string().default('llama3.2:1b'),
   OLLAMA_POWERFUL_MODEL: z.string().default('llama3.1:8b'),
@@ -93,6 +97,6 @@ export const env = parsed.data;
 if (env.NODE_ENV === 'production' && (!process.env.CRON_SECRET || process.env.CRON_SECRET.length < 32)) {
   console.warn(
     '[env] CRON_SECRET is unset or shorter than 32 chars — /api/cron/* endpoints will refuse ' +
-    'all requests until it is set (generate one with: openssl rand -hex 32). Nothing else is affected.'
+    'all requests until it is set.'
   );
 }

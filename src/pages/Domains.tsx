@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { domainAPI, getErrorMessage } from '../services/api';
 import { DomainsHeader } from '../components/domains/DomainsHeader';
 import { BimiGuideBanner } from '../components/domains/BimiGuideBanner';
+import { SandboxCard } from '../components/domains/SandboxCard';
 import { DomainCard, DomainCardData } from '../components/domains/DomainCard';
 import { ConnectDomainDrawer } from '../components/domains/drawers/ConnectDomainDrawer';
 import { BimiAvatarDrawer } from '../components/domains/drawers/BimiAvatarDrawer';
@@ -37,6 +38,8 @@ export const Domains: React.FC = () => {
         domainsCount={domains.length}
         onOpenConnectDrawer={() => setIsConnectDrawerOpen(true)}
       />
+
+      <SandboxCard />
 
       <BimiGuideBanner />
 

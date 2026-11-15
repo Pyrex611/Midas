@@ -48,6 +48,7 @@ model Domain {
   
   domainName       String   @unique @map("domain_name")
   status           String   @default("pending_setup")
+  espProvider      String   @default("mailgun") @map("esp_provider")
   
   dkimStatus       Boolean  @default(false)
   spfStatus        Boolean  @default(false)
@@ -55,7 +56,11 @@ model Domain {
   trackingStatus   Boolean  @default(false)
   dnsRecords       String?  @db.Text 
   mailgunApiKeyEncrypted String? @db.Text @map("mailgun_api_key_encrypted")
+  smtpConfigEncrypted    String? @db.Text @map("smtp_config_encrypted")
   mailgunRegion    String?  @map("mailgun_region")
+
+  trackingDomain         String? @map("tracking_domain")
+  trackingHostnameStatus String? @map("tracking_hostname_status")
 
   sendTestPassedAt     DateTime? @map("send_test_passed_at")
   receivingTestCode    String?   @map("receiving_test_code")
@@ -80,8 +85,27 @@ model Domain {
   senders                Sender[]
   outboundEmails         OutboundEmail[]  @relation("OutboundEmailDomain")
   pendingEmails          PendingEmail[]   @relation("PendingEmailDomain")
+  healthSnapshots        DomainHealthSnapshot[]
 
   @@index([userId])
+}
+
+model DomainHealthSnapshot {
+  id             String   @id @default(cuid())
+  domainId       String   @map("domain_id")
+  domain         Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  snapshotDate   String   @map("snapshot_date")
+  sentCount      Int      @default(0) @map("sent_count")
+  rawOpenCount   Int      @default(0) @map("raw_open_count")
+  humanOpenCount Int      @default(0) @map("human_open_count")
+  clickCount     Int      @default(0) @map("click_count")
+  replyCount     Int      @default(0) @map("reply_count")
+  bounceCount    Int      @default(0) @map("bounce_count")
+  complaintCount Int      @default(0) @map("complaint_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([domainId, snapshotDate])
+  @@index([domainId])
 }
 
 model Sender {
@@ -437,14 +461,12 @@ model Gong {
   dedicatedSenderId    String?                @map("dedicated_sender_id")
   dedicatedSender      Sender?                @relation("GongDedicatedSender", fields: [dedicatedSenderId], references: [id], onDelete: SetNull)
   
-  // Welcome Autoresponder
   welcomeEmailEnabled  Boolean                @default(false) @map("welcome_email_enabled")
   welcomeSubject       String?                @map("welcome_subject")
   welcomeBody          String?                @db.Text @map("welcome_body")
   
-  // Embed Styling
   embedTheme           String                 @default("minimal") @map("embed_theme")
-  accentColor          String                 @default("#2563EB") @map("accent_color")
+  accentColor          String                 @default("#4A2559") @map("accent_color")
   headline             String                 @default("Join our newsletter")
   subheadline          String                 @default("Get the latest updates delivered to your inbox.")
   buttonText           String                 @default("Subscribe") @map("button_text")
@@ -534,8 +556,6 @@ model Notification {
   @@index([userId, isRead])
   @@index([userId, createdAt])
 }
-
-// --- BI-DIRECTIONAL OUTBOUND WEBHOOKS ---
 
 model WebhookSubscription {
   id         String            @id @default(cuid())

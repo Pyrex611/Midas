@@ -14,6 +14,12 @@ export interface DomainCardData {
   sendTestPassedAt: string | null;
   receivingConfirmedAt: string | null;
   receivingTestAddress: string | null;
+  spfStatus?: boolean;
+  dkimStatus?: boolean;
+  mxStatus?: boolean;
+  trackingStatus?: boolean;
+  trackingDomain?: string | null;
+  trackingHostnameStatus?: string | null;
   bimiEnabled: boolean;
   bimiSvgUrl: string | null;
   bimiVmcUrl: string | null;
@@ -41,7 +47,46 @@ export const DomainCard: React.FC<DomainCardProps> = ({
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const [inspectingDns, setInspectingDns] = useState(false);
+  const [dnsReport, setDnsReport] = useState<any | null>(null);
+  const [trackingFormOpen, setTrackingFormOpen] = useState(false);
+  const [trackingInput, setTrackingInput] = useState(domain.trackingDomain || `track.${domain.domainName}`);
+  const [savingTracking, setSavingTracking] = useState(false);
+
   const isReceivingConfirmed = domain.receivingConfirmedAt || receivingState?.confirmed;
+
+  const handleInspectDns = async () => {
+    setInspectingDns(true);
+    try {
+      const res = await domainAPI.inspectDns(domain.id);
+      setDnsReport(res.data);
+      toast.success('Authoritative DNS inspection complete', 'DNS Updated');
+      onRefresh();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'DNS lookup failed'), 'DNS Error');
+    } finally {
+      setInspectingDns(false);
+    }
+  };
+
+  const handleSaveTrackingDomain = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!trackingInput.trim()) return;
+    setSavingTracking(true);
+    try {
+      const res = await domainAPI.setTrackingDomain(domain.id, trackingInput.trim());
+      toast.success(
+        `Tracking domain ${res.data.trackingDomain} saved. Point CNAME to ${res.data.expectedCnameTarget}`,
+        'Tracking CNAME'
+      );
+      setTrackingFormOpen(false);
+      onRefresh();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not configure tracking hostname'), 'Error');
+    } finally {
+      setSavingTracking(false);
+    }
+  };
 
   const handleRetrySendTest = async () => {
     try {
@@ -142,7 +187,16 @@ export const DomainCard: React.FC<DomainCardProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleInspectDns}
+            disabled={inspectingDns}
+            className="px-3 py-1.5 bg-white hover:bg-thistle-100 border border-gold-500/40 text-royal-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
+          >
+            <Icons.Refresh className={inspectingDns ? 'animate-spin text-gold-600' : 'text-gold-600'} />
+            <span>{inspectingDns ? 'Scanning DNS...' : 'Verify DNS'}</span>
+          </button>
+
           <button
             onClick={() => onOpenBimiDrawer(domain)}
             className="px-3.5 py-1.5 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
@@ -160,6 +214,72 @@ export const DomainCard: React.FC<DomainCardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Authoritative DNS & Custom Tracking Bar */}
+      <div className="p-3 bg-thistle-50/70 border border-gold-500/35 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-[11px]">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-bold uppercase text-thistle-500">DNS Records:</span>
+          {[
+            ['SPF', domain.spfStatus],
+            ['DKIM', domain.dkimStatus],
+            ['MX', domain.mxStatus],
+            ['DMARC', domain.dmarcPolicy && domain.dmarcPolicy !== 'missing'],
+            ['Tracking CNAME', domain.trackingStatus],
+          ].map(([label, ok]) => (
+            <span
+              key={label as string}
+              className={`px-2 py-0.5 rounded font-mono font-bold border ${
+                ok
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-white text-thistle-500 border-gold-500/30'
+              }`}
+            >
+              {label as string}: {ok ? 'OK' : 'UNSET'}
+            </span>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setTrackingFormOpen((prev) => !prev)}
+          className="text-xs font-bold text-royal-700 hover:underline whitespace-nowrap"
+        >
+          {domain.trackingDomain ? `Tracking: ${domain.trackingDomain}` : '+ Custom Tracking CNAME'}
+        </button>
+      </div>
+
+      {dnsReport && (
+        <div className="p-3.5 bg-white border border-gold-500/40 rounded-xl text-[11px] space-y-1.5">
+          <p className="font-bold text-royal-950">Live Authoritative DNS Lookup Results</p>
+          <p className="font-mono text-thistle-500 truncate">SPF: {dnsReport.spf.record || 'Not published'}</p>
+          <p className="font-mono text-thistle-500 truncate">
+            DKIM: {dnsReport.dkim.verified ? `Selector "${dnsReport.dkim.matchedSelector}" verified` : 'No standard selector found'}
+          </p>
+          <p className="font-mono text-thistle-500 truncate">
+            DMARC: {dnsReport.dmarc.record || 'Missing _dmarc TXT record'}
+          </p>
+        </div>
+      )}
+
+      {trackingFormOpen && (
+        <form onSubmit={handleSaveTrackingDomain} className="p-3.5 bg-thistle-50 border border-gold-500/40 rounded-xl flex flex-wrap items-end gap-3 text-xs">
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+              Custom Tracking Hostname (CNAME Target)
+            </label>
+            <input
+              type="text"
+              value={trackingInput}
+              onChange={(e) => setTrackingInput(e.target.value)}
+              placeholder={`track.${domain.domainName}`}
+              className="w-full px-3 py-1.5 bg-white border border-gold-500/40 rounded-lg font-mono text-xs focus:outline-none focus:border-gold-500"
+            />
+          </div>
+          <button type="submit" disabled={savingTracking} className="px-4 py-1.5 btn-royal rounded-lg text-xs font-bold">
+            {savingTracking ? 'Saving...' : 'Save Tracking CNAME'}
+          </button>
+        </form>
+      )}
 
       {domain.keyDecryptionFailed && (
         <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl text-xs text-rose-900 flex items-center gap-2.5">

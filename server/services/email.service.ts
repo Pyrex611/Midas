@@ -4,26 +4,24 @@ import { encodeOpenToken, encodeClickToken } from '../lib/tracking';
 import { emailTemplateService, BrandEnvelopeOptions } from './emailTemplate.service';
 
 export class EmailService {
-  private appBaseUrl(): string {
+  private trackingBaseUrl(domain?: any): string {
+    if (domain?.trackingDomain && domain?.trackingHostnameStatus === 'active') {
+      return `https://${domain.trackingDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '')}`;
+    }
     const configured = process.env.APP_URL;
     if (configured) return configured.replace(/\/$/, '');
     return 'https://midas-aem.vercel.app';
   }
 
-  /**
-   * Auto-links bare URLs in text-converted HTML segments (outside existing tags/anchors),
-   * rewrites `<a href>` targets into signed click-tracking proxies (preserving mailto:, tel:,
-   * anchors, and unsubscribe links), and injects the 1x1 transparent open-tracking pixel.
-   */
   private instrumentHtmlTracking(
     html: string,
     outboundEmailId: string,
     leadId: string,
-    campaignId?: string | null
+    campaignId?: string | null,
+    domain?: any
   ): string {
-    const baseUrl = this.appBaseUrl();
+    const baseUrl = this.trackingBaseUrl(domain);
 
-    // 1. Tag-aware bare URL auto-linking so plain-text-converted links are click-tracked
     const parts = html.split(/(<[^>]+>)/g);
     let insideAnchor = false;
     const autoLinkedHtml = parts
@@ -35,7 +33,6 @@ export class EmailService {
         }
         if (insideAnchor) return part;
         return part.replace(/https?:\/\/[^\s<>"')]+/gi, (rawUrl) => {
-          // Strip trailing sentence punctuation if present
           const match = rawUrl.match(/^(.*?)([.,;:!?]+)?$/);
           const cleanUrl = match?.[1] || rawUrl;
           const trailing = match?.[2] || '';
@@ -50,7 +47,6 @@ export class EmailService {
       })
       .join('');
 
-    // 2. Rewrite hyperlinks (exclude mailto:, tel:, #, and unsubscribe links)
     const trackedHtml = autoLinkedHtml.replace(
       /<a\s+(?:[^>]*?\s+)?href=(["'])(.*?)\1/gi,
       (match, _quote, originalUrl) => {
@@ -77,7 +73,6 @@ export class EmailService {
       }
     );
 
-    // 3. Append Open Tracking Pixel
     const openToken = encodeOpenToken({
       outboundEmailId,
       leadId,
@@ -123,7 +118,8 @@ export class EmailService {
           finalHtml,
           outboundEmailId,
           trackingContext.leadId,
-          trackingContext.campaignId
+          trackingContext.campaignId,
+          domain
         );
       }
 
