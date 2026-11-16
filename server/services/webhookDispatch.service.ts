@@ -9,6 +9,8 @@ export interface DispatchWebhookInput {
   payload: Record<string, any>;
 }
 
+const MAX_ATTEMPTS = 3;
+
 export class WebhookDispatchService {
   private buildSignatureHeader(rawBody: string, secret: string, timestampSec: number): string {
     const sig = crypto
@@ -39,31 +41,65 @@ export class WebhookDispatchService {
     let responseBody: string | null = null;
     let error: string | null = null;
     let status: 'DELIVERED' | 'FAILED' = 'FAILED';
+    let attempts = 0;
 
+    // SSRF guard before attempting any outbound socket connection
     try {
       await assertSafePublicUrl(subscription.targetUrl);
-
-      const res = await fetch(subscription.targetUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Midas-Webhook-Dispatcher/1.0',
-          'X-Midas-Event': event,
-          'X-Midas-Signature': signatureHeader,
+    } catch (ssrfErr: any) {
+      return prisma.webhookDelivery.create({
+        data: {
+          subscriptionId: subscription.id,
+          event,
+          payload: envelope,
+          statusCode: null,
+          responseBody: null,
+          error: ssrfErr?.message || 'Blocked unsafe webhook target URL',
+          attempts: 1,
+          status: 'FAILED',
+          durationMs: Date.now() - startedAt,
         },
-        body: rawBody,
-        signal: AbortSignal.timeout(8_000),
       });
+    }
 
-      statusCode = res.status;
-      responseBody = (await res.text()).slice(0, 1000);
-      if (res.ok) {
-        status = 'DELIVERED';
-      } else {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      attempts = attempt;
+      try {
+        const res = await fetch(subscription.targetUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Midas-Webhook-Dispatcher/1.0',
+            'X-Midas-Event': event,
+            'X-Midas-Attempt': String(attempt),
+            'X-Midas-Signature': signatureHeader,
+          },
+          body: rawBody,
+          signal: AbortSignal.timeout(8_000),
+        });
+
+        statusCode = res.status;
+        responseBody = (await res.text()).slice(0, 1000);
+
+        if (res.ok) {
+          status = 'DELIVERED';
+          error = null;
+          break;
+        }
+
         error = `Endpoint responded with HTTP ${res.status}`;
+        // Do not retry deterministic 4xx client rejections (except 408 / 429)
+        if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+          break;
+        }
+      } catch (err: any) {
+        error = err?.message || 'Webhook HTTP delivery failed';
       }
-    } catch (err: any) {
-      error = err?.message || 'Webhook HTTP delivery failed';
+
+      if (attempt < MAX_ATTEMPTS) {
+        const backoffMs = attempt === 1 ? 500 : 1500;
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
     }
 
     const durationMs = Date.now() - startedAt;
@@ -76,6 +112,7 @@ export class WebhookDispatchService {
         statusCode,
         responseBody,
         error,
+        attempts,
         status,
         durationMs,
       },

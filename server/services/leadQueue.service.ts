@@ -1,5 +1,6 @@
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
+import { isEmailBlocked } from '../lib/blocklist';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { verificationService } from './verification';
@@ -23,23 +24,6 @@ interface ColumnMappingConfig {
 }
 
 export class LeadQueueService {
-
-  private isEmailBlocked(email: string, blocklist: { pattern: string }[]): boolean {
-    const cleanEmail = email.trim().toLowerCase();
-    const emailDomain = cleanEmail.split('@')[1] || '';
-
-    return blocklist.some(b => {
-      const cleanPattern = b.pattern.trim().toLowerCase().replace(/^\*@?/, '').replace(/^@/, '');
-      if (!cleanPattern) return false;
-      return (
-        cleanEmail === cleanPattern ||
-        emailDomain === cleanPattern ||
-        cleanEmail.endsWith('@' + cleanPattern) ||
-        cleanEmail.endsWith('.' + cleanPattern)
-      );
-    });
-  }
-
   private parseRowWithMapping(row: any, mapping?: ColumnMappingConfig | null): ParsedLeadRow | null {
     if (!row || typeof row !== 'object') return null;
 
@@ -190,7 +174,7 @@ export class LeadQueueService {
               const parsedRow = this.parseRowWithMapping(row, mappingConfig);
               if (!parsedRow) continue;
 
-              if (this.isEmailBlocked(parsedRow.email, blocklist)) {
+              if (isEmailBlocked(parsedRow.email, blocklist)) {
                 blockedCount++;
                 continue;
               }

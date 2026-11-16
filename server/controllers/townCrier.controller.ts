@@ -3,14 +3,13 @@ import multer from 'multer';
 import Papa from 'papaparse';
 import crypto from 'crypto';
 import prisma from '../lib/prisma';
+import { isEmailBlocked } from '../lib/blocklist';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { newsletterQueueService } from '../services/newsletterQueue.service';
 import { logger } from '../config/logger';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 const VALID_TEMPLATE_STYLES = ['card', 'editorial', 'minimal', 'plain'] as const;
-
-// --- Audience Analytics & Metrics ---
 
 export const getTownCrierAnalytics = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -40,8 +39,6 @@ export const getTownCrierAnalytics = async (req: AuthRequest, res: Response, nex
     });
   } catch (error) { next(error); }
 };
-
-// --- Contacts Export (JSON or CSV Attachment) ---
 
 export const exportRecipients = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -82,8 +79,6 @@ export const exportRecipients = async (req: AuthRequest, res: Response, next: Ne
     res.json(recipients);
   } catch (error) { next(error); }
 };
-
-// --- Recipient Management (UI Authed) ---
 
 export const listRecipients = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -143,10 +138,7 @@ export const addRecipient = async (req: AuthRequest, res: Response, next: NextFu
 
     const recipient = await prisma.newsletterRecipient.upsert({
       where: {
-        userId_email: {
-          userId,
-          email: cleanEmail,
-        },
+        userId_email: { userId, email: cleanEmail },
       },
       update: {
         name: name ? String(name).trim() : undefined,
@@ -197,12 +189,7 @@ export const importRecipients = [
         const rowTags = tagsKey && row[tagsKey] ? String(row[tagsKey]).split(/[,;]/).map(t => t.trim()).filter(Boolean) : defaultTag;
 
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
-
-        const isBlocked = blocklist.some(b => {
-          const pattern = b.pattern.replace(/^\*@?/, '').replace(/^@/, '');
-          return email === pattern || email.endsWith('@' + pattern) || email.endsWith('.' + pattern);
-        });
-        if (isBlocked) continue;
+        if (isEmailBlocked(email, blocklist)) continue;
 
         validRecipients.push({
           email,
@@ -236,15 +223,10 @@ export const deleteRecipient = async (req: AuthRequest, res: Response, next: Nex
     const userId = req.user!.id;
     const { id } = req.params;
 
-    await prisma.newsletterRecipient.deleteMany({
-      where: { id, userId },
-    });
-
+    await prisma.newsletterRecipient.deleteMany({ where: { id, userId } });
     res.json({ success: true });
   } catch (error) { next(error); }
 };
-
-// --- Broadcast Management ---
 
 export const listBroadcasts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -253,9 +235,7 @@ export const listBroadcasts = async (req: AuthRequest, res: Response, next: Next
       where: { userId },
       include: {
         gong: { select: { id: true, name: true, slug: true } },
-        _count: {
-          select: { queueItems: true },
-        },
+        _count: { select: { queueItems: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -282,7 +262,7 @@ export const listBroadcasts = async (req: AuthRequest, res: Response, next: Next
 export const createBroadcast = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { subject, body, tagFilter, gongId, templateStyle } = req.body;
+    const { subject, body, tagFilter, gongId, templateStyle, knowledgeBaseId } = req.body;
 
     if (!subject?.trim() || !body?.trim()) {
       return res.status(400).json({ error: 'Subject and body are required' });
@@ -299,21 +279,28 @@ export const createBroadcast = async (req: AuthRequest, res: Response, next: Nex
         },
         select: { id: true, templateStyle: true },
       });
-      if (!gong) {
-        return res.status(404).json({ error: 'Selected Gong channel not found' });
-      }
+      if (!gong) return res.status(404).json({ error: 'Selected Gong channel not found' });
       resolvedGongId = gong.id;
       defaultTemplateStyle = gong.templateStyle || 'card';
     }
 
-    const chosenStyle = VALID_TEMPLATE_STYLES.includes(templateStyle)
-      ? templateStyle
-      : defaultTemplateStyle;
+    let validKbId: string | null = null;
+    if (knowledgeBaseId && typeof knowledgeBaseId === 'string' && knowledgeBaseId.trim()) {
+      const kb = await prisma.knowledgeBase.findFirst({
+        where: { id: knowledgeBaseId.trim(), userId },
+        select: { id: true },
+      });
+      if (!kb) return res.status(404).json({ error: 'Selected Knowledge Base not found' });
+      validKbId = kb.id;
+    }
+
+    const chosenStyle = VALID_TEMPLATE_STYLES.includes(templateStyle) ? templateStyle : defaultTemplateStyle;
 
     const broadcast = await prisma.newsletterBroadcast.create({
       data: {
         userId,
         gongId: resolvedGongId,
+        knowledgeBaseId: validKbId,
         subject: subject.trim(),
         body: body.trim(),
         status: 'DRAFT',
@@ -329,7 +316,7 @@ export const createBroadcast = async (req: AuthRequest, res: Response, next: Nex
   } catch (error) { next(error); }
 };
 
-export const queueBroadcast = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const queueBroadcast = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const { id } = req.params;
@@ -348,13 +335,9 @@ export const queueBroadcast = async (req: AuthRequest, res: Response, next: Next
 
 export const deleteBroadcast = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!.id;
-    const { id } = req.params;
-
     await prisma.newsletterBroadcast.deleteMany({
-      where: { id, userId },
+      where: { id: req.params.id, userId: req.user!.id },
     });
-
     res.json({ success: true });
   } catch (error) { next(error); }
 };
@@ -367,8 +350,6 @@ export const triggerNewsletterSweep = async (_req: AuthRequest, res: Response) =
     res.status(400).json({ error: error.message });
   }
 };
-
-// --- Gong Channel CRUD (authenticated dashboard) ---
 
 export const listGongs = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -405,7 +386,7 @@ function cleanSlug(raw: string): string {
 export const createGong = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
-    const { name, slug, dedicatedSenderId } = req.body;
+    const { name, slug, dedicatedSenderId, knowledgeBaseId } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Gong channel name is required' });
 
     let validSenderId: string | null = null;
@@ -414,10 +395,18 @@ export const createGong = async (req: AuthRequest, res: Response, next: NextFunc
         where: { id: dedicatedSenderId.trim(), userId },
         select: { id: true },
       });
-      if (!sender) {
-        return res.status(404).json({ error: 'Selected dedicated mailbox sender was not found on your account' });
-      }
+      if (!sender) return res.status(404).json({ error: 'Selected dedicated mailbox sender was not found on your account' });
       validSenderId = sender.id;
+    }
+
+    let validKbId: string | null = null;
+    if (knowledgeBaseId && typeof knowledgeBaseId === 'string' && knowledgeBaseId.trim()) {
+      const kb = await prisma.knowledgeBase.findFirst({
+        where: { id: knowledgeBaseId.trim(), userId },
+        select: { id: true },
+      });
+      if (!kb) return res.status(404).json({ error: 'Selected Knowledge Base not found' });
+      validKbId = kb.id;
     }
 
     const data: any = {
@@ -425,6 +414,7 @@ export const createGong = async (req: AuthRequest, res: Response, next: NextFunc
       name: name.trim(),
       slug: cleanSlug(slug || name),
       dedicatedSenderId: validSenderId,
+      knowledgeBaseId: validKbId,
     };
     for (const field of GONG_WRITABLE_FIELDS) {
       if (req.body[field] !== undefined) data[field] = req.body[field];
@@ -467,10 +457,21 @@ export const updateGong = async (req: AuthRequest, res: Response, next: NextFunc
           where: { id: String(req.body.dedicatedSenderId).trim(), userId },
           select: { id: true },
         });
-        if (!sender) {
-          return res.status(404).json({ error: 'Selected dedicated mailbox sender was not found on your account' });
-        }
+        if (!sender) return res.status(404).json({ error: 'Selected dedicated mailbox sender was not found on your account' });
         data.dedicatedSenderId = sender.id;
+      }
+    }
+
+    if (req.body.knowledgeBaseId !== undefined) {
+      if (!req.body.knowledgeBaseId) {
+        data.knowledgeBaseId = null;
+      } else {
+        const kb = await prisma.knowledgeBase.findFirst({
+          where: { id: String(req.body.knowledgeBaseId).trim(), userId },
+          select: { id: true },
+        });
+        if (!kb) return res.status(404).json({ error: 'Selected Knowledge Base not found' });
+        data.knowledgeBaseId = kb.id;
       }
     }
 
@@ -503,9 +504,7 @@ export const updateGong = async (req: AuthRequest, res: Response, next: NextFunc
 
 export const deleteGong = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!.id;
-    const { id } = req.params;
-    await prisma.gong.deleteMany({ where: { id, userId } });
+    await prisma.gong.deleteMany({ where: { id: req.params.id, userId: req.user!.id } });
     res.json({ success: true });
   } catch (error) { next(error); }
 };
