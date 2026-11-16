@@ -2,18 +2,14 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { Webhook } from 'svix';
 import prisma from '../lib/prisma';
+import { env } from '../config/env';
 import { webhooksService } from '../services/webhooks.service';
+import { dodoService } from '../services/billing/dodo.service';
 import { logger } from '../config/logger';
 
 const router = Router();
 const upload = multer();
 
-/**
- * Universal safe wrapper for Vercel's waitUntil.
- * Dynamically resolves @vercel/functions at runtime if present.
- * If running locally or without @vercel/functions installed, it executes
- * the promise in the background gracefully without breaking TypeScript compilation.
- */
 function safeWaitUntil(promise: Promise<any>): void {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -22,17 +18,14 @@ function safeWaitUntil(promise: Promise<any>): void {
       vercel.waitUntil(promise);
       return;
     }
-  } catch {
-    // Not running on Vercel runtime or package not installed
-  }
+  } catch {}
 
-  // Fallback: run unawaited in background
   promise.catch((err) => {
     logger.error({ err: err?.message || err }, '[BACKGROUND TASK ERROR]');
   });
 }
 
-// 1. Mailgun Deliverability Events Webhook (Delivered, Opened, Clicked, Bounced, Complained)
+// 1. Mailgun Deliverability Events Webhook
 router.post('/mailgun', async (req: Request, res: Response) => {
   try {
     const { signature } = req.body;
@@ -46,7 +39,6 @@ router.post('/mailgun', async (req: Request, res: Response) => {
 
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    // Mailgun requires an immediate 200 OK. We process deliverability in the background.
     safeWaitUntil(
       webhooksService.processDeliverabilityEvent(req.body).catch((err) => {
         logger.error({ err }, 'Deliverability event background processing error');
@@ -60,7 +52,7 @@ router.post('/mailgun', async (req: Request, res: Response) => {
   }
 });
 
-// 2. Mailgun Inbound Parse Webhook (Inbound Prospect Replies)
+// 2. Mailgun Inbound Parse Webhook
 router.post('/mailgun/inbound', upload.none(), async (req: Request, res: Response) => {
   try {
     const { timestamp, token, signature } = req.body;
@@ -69,7 +61,6 @@ router.post('/mailgun/inbound', upload.none(), async (req: Request, res: Respons
     const isValid = webhooksService.verifyMailgunSignature(timestamp, token, signature);
     if (!isValid) return res.status(403).send('Invalid Signature');
 
-    // Asynchronously processes AI sentiment analysis and auto-replies
     safeWaitUntil(
       webhooksService.processInboundEmail(req.body).catch((err) => {
         logger.error({ err }, 'Inbound reply processing error');
@@ -83,7 +74,103 @@ router.post('/mailgun/inbound', upload.none(), async (req: Request, res: Respons
   }
 });
 
-// 3. Clerk User Synchronization Webhook
+// 3. Resend Svix Webhook (Deliverability + email.received Inbound Replies)
+router.post('/resend', async (req: Request, res: Response) => {
+  const secret = env.RESEND_WEBHOOK_SECRET;
+  if (!secret) {
+    logger.error('RESEND_WEBHOOK_SECRET is not configured');
+    return res.status(500).json({ error: 'Resend webhook secret not configured' });
+  }
+
+  const svixId = req.headers['svix-id'] as string;
+  const svixTimestamp = req.headers['svix-timestamp'] as string;
+  const svixSignature = req.headers['svix-signature'] as string;
+
+  if (!svixId || !svixTimestamp || !svixSignature) {
+    return res.status(400).json({ error: 'Missing svix headers' });
+  }
+
+  const rawPayload = (req as any).rawBody ? (req as any).rawBody.toString('utf8') : JSON.stringify(req.body);
+  try {
+    const wh = new Webhook(secret);
+    wh.verify(rawPayload, {
+      'svix-id': svixId,
+      'svix-timestamp': svixTimestamp,
+      'svix-signature': svixSignature,
+    });
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, 'Resend Svix signature verification failed');
+    return res.status(401).json({ error: 'Invalid Resend webhook signature' });
+  }
+
+  safeWaitUntil(
+    webhooksService.processResendWebhook(req.body).catch((err) => {
+      logger.error({ err: err?.message }, '[RESEND] Background webhook error');
+    })
+  );
+
+  res.status(200).json({ received: true });
+});
+
+// 4. Generic Custom Inbound Webhook (Cloudflare Email Workers / Make / Zapier Gmail)
+router.post('/inbound/custom/:domainId', async (req: Request, res: Response) => {
+  try {
+    const { domainId } = req.params;
+    const providedToken = (req.headers['x-midas-inbound-token'] as string) || (req.query.token as string);
+
+    if (!webhooksService.verifyCustomInboundToken(domainId, providedToken)) {
+      return res.status(401).json({ error: 'Invalid inbound token' });
+    }
+
+    safeWaitUntil(
+      webhooksService.processInboundEmail({
+        'Message-Id': req.body.messageId || req.body['Message-Id'],
+        'In-Reply-To': req.body.inReplyTo || req.body['In-Reply-To'],
+        References: req.body.references || req.body.References,
+        from: req.body.from,
+        to: req.body.to,
+        subject: req.body.subject,
+        'stripped-text': req.body.text || req.body.body || '',
+        'stripped-html': req.body.html || '',
+        timestamp: req.body.timestamp,
+      })
+    );
+
+    res.status(200).json({ received: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Custom inbound error' });
+  }
+});
+
+// 5. Dodo Payments Standard Webhooks Receiver
+router.post('/dodo', async (req: Request, res: Response) => {
+  try {
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+    const isValid = dodoService.verifyWebhookSignature(rawBody, {
+      webhookId: req.headers['webhook-id'] as string | undefined,
+      webhookTimestamp: req.headers['webhook-timestamp'] as string | undefined,
+      webhookSignature: req.headers['webhook-signature'] as string | undefined,
+    });
+
+    if (!isValid) {
+      logger.warn('[DODO] Rejected webhook due to invalid Standard Webhooks signature');
+      return res.status(401).json({ error: 'Invalid Dodo webhook signature' });
+    }
+
+    safeWaitUntil(
+      dodoService.processWebhook(req.body).catch((err) => {
+        logger.error({ err: err?.message }, '[DODO] Background webhook processing error');
+      })
+    );
+
+    res.status(200).json({ received: true });
+  } catch (error) {
+    logger.error({ error }, 'Dodo Payments webhook error');
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+// 6. Clerk User Synchronization Webhook
 router.post('/clerk', async (req: Request, res: Response) => {
   const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
   if (!webhookSecret) {
@@ -100,7 +187,7 @@ router.post('/clerk', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Missing svix headers' });
   }
 
-  const payload = JSON.stringify(req.body);
+  const payload = (req as any).rawBody ? (req as any).rawBody.toString('utf8') : JSON.stringify(req.body);
   const wh = new Webhook(webhookSecret);
   let evt: any;
 
@@ -127,20 +214,12 @@ router.post('/clerk', async (req: Request, res: Response) => {
         await prisma.user.upsert({
           where: { email },
           update: { clerkId, name },
-          create: {
-            clerkId,
-            email,
-            name,
-          },
+          create: { clerkId, email, name },
         });
-        logger.info({ clerkId, email }, 'Clerk user synced successfully');
       }
     } else if (eventType === 'user.deleted') {
       const { id: clerkId } = evt.data;
-      await prisma.user.deleteMany({
-        where: { clerkId },
-      });
-      logger.info({ clerkId }, 'Clerk user deleted from database');
+      await prisma.user.deleteMany({ where: { clerkId } });
     }
 
     res.json({ success: true });

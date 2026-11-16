@@ -1,14 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  /* Royal Thistle & Pastel Purple Palette */
+  /* Royal Thistle & Pastel Purple Palette (WCAG AA Accessible) */
   --color-thistle-canvas: #F3EBF6;
   --color-thistle-50: #FCFAFD;
   --color-thistle-100: #F7F1F7;
   --color-thistle-200: #EDE2ED;
   --color-thistle-300: #D8BFD8;
   --color-thistle-400: #C39BC3;
-  --color-thistle-500: #9E6E9E;
+  --color-thistle-500: #7A4E7A;
   --color-royal-600: #6D3B82;
   --color-royal-700: #4A2559;
   --color-royal-800: #33183E;
@@ -35,10 +35,19 @@
   hr {
     border-color: rgba(212, 175, 55, 0.42);
   }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid #D4AF37;
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
-  /* Enterprise Midas Card: Gold-tinted Hairline at Rest -> Golden Halo Glow on Hover */
   .card-midas {
     background-color: #FFFFFF;
     border: 1px solid rgba(212, 175, 55, 0.32);
@@ -51,7 +60,6 @@
     box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.35), 0 8px 24px -4px rgba(212, 175, 55, 0.28);
   }
 
-  /* Royal Plum Primary Action matching Developer Docs Aesthetic */
   .btn-royal {
     background: linear-gradient(135deg, #4A2559 0%, #6D3B82 100%);
     color: #FFFFFF;
@@ -71,7 +79,6 @@
     cursor: not-allowed;
   }
 
-  /* Golden Glow Utility for Interactive Buttons & Inputs */
   .glow-gold-hover {
     transition: border-color 180ms ease, box-shadow 220ms ease;
   }
@@ -86,7 +93,6 @@
   }
 }
 
-/* Publication-Grade Print / PDF Export Stylesheet */
 @media print {
   body {
     background-color: #ffffff !important;

@@ -3,6 +3,7 @@ import { domainService } from '../services/domain.service';
 import { senderService } from '../services/sender.service';
 import { dnsService } from '../services/dns.service';
 import { snapshotService } from '../services/snapshot.service';
+import { idempotencyGuard } from '../middleware/idempotency.middleware';
 
 const router = Router();
 
@@ -15,7 +16,7 @@ router.get('/', async (req: any, res) => {
   }
 });
 
-router.post('/', async (req: any, res) => {
+router.post('/', idempotencyGuard(), async (req: any, res) => {
   try {
     const { domainName, mailgunApiKey, region, testRecipientEmail } = req.body;
     if (!domainName) return res.status(400).json({ error: 'domainName is required' });
@@ -34,7 +35,7 @@ router.post('/', async (req: any, res) => {
   }
 });
 
-router.post('/esp', async (req: any, res) => {
+router.post('/esp', idempotencyGuard(), async (req: any, res) => {
   try {
     const { domainName, espProvider, apiKey, smtpConfig } = req.body;
     if (!domainName) return res.status(400).json({ error: 'domainName is required' });

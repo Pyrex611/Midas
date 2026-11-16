@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
+import { tryDecrypt } from '../lib/encryption';
 import { sequenceAgentService } from './sequenceAgent.service';
 import { notificationService } from './notification.service';
 import { webhookDispatchService } from './webhookDispatch.service';
@@ -16,7 +17,113 @@ export class WebhooksService {
       .update(timestamp.concat(token))
       .digest('hex');
 
-    return encodedToken === signature;
+    const a = Buffer.from(encodedToken, 'utf8');
+    const b = Buffer.from(signature || '', 'utf8');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+
+  verifyCustomInboundToken(domainId: string, providedToken?: string): boolean {
+    if (!providedToken) return false;
+    const secret = process.env.ENCRYPTION_KEY || process.env.CRON_SECRET || '';
+    if (!secret) return false;
+    const expected = crypto.createHmac('sha256', secret).update(`inbound:${domainId}`).digest('hex');
+    const a = Buffer.from(expected, 'utf8');
+    const b = Buffer.from(providedToken.trim(), 'utf8');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+
+  /**
+   * Normalizes Resend Svix webhooks:
+   * - `email.received`: fetches full text/html & headers via GET /emails/receiving/:id
+   * - `email.opened` / `email.clicked` / `email.bounced` / `email.complained`: maps into processDeliverabilityEvent
+   */
+  async processResendWebhook(payload: any) {
+    const eventType: string = payload?.type || '';
+    const data = payload?.data || {};
+
+    if (eventType === 'email.received') {
+      const toList: string[] = Array.isArray(data.to) ? data.to : data.to ? [String(data.to)] : [];
+      const firstTo = toList[0] || '';
+      const recipientAddr = (firstTo.match(/<(.+)>/)?.[1] || firstTo).trim().toLowerCase();
+      const recipientDomainName = recipientAddr.split('@')[1];
+
+      let fetchedBodyText = '';
+      let fetchedBodyHtml = '';
+      let inReplyTo: string | null = null;
+      let references: string | null = null;
+      let messageId: string | null = data.message_id || null;
+
+      if (recipientDomainName && data.email_id) {
+        const domain = await prisma.domain.findFirst({
+          where: { domainName: recipientDomainName, espProvider: 'resend' },
+          select: { mailgunApiKeyEncrypted: true },
+        });
+        const resendKey = tryDecrypt(domain?.mailgunApiKeyEncrypted);
+
+        if (resendKey) {
+          try {
+            const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(data.email_id)}`, {
+              headers: { Authorization: `Bearer ${resendKey}` },
+              signal: AbortSignal.timeout(8_000),
+            });
+            if (res.ok) {
+              const fullEmail: any = await res.json();
+              fetchedBodyText = fullEmail.text || '';
+              fetchedBodyHtml = fullEmail.html || '';
+              const hdrs = fullEmail.headers || {};
+              inReplyTo = hdrs['in-reply-to'] || hdrs['In-Reply-To'] || null;
+              references = hdrs['references'] || hdrs['References'] || null;
+              messageId = fullEmail.message_id || messageId;
+            }
+          } catch (err: any) {
+            logger.warn({ err: err?.message, emailId: data.email_id }, '[RESEND-INBOUND] Failed to fetch receiving body');
+          }
+        }
+      }
+
+      await this.processInboundEmail({
+        'Message-Id': messageId,
+        'In-Reply-To': inReplyTo,
+        References: references,
+        from: data.from,
+        to: firstTo,
+        subject: data.subject || 'Re: Outreach',
+        'stripped-text': fetchedBodyText,
+        'stripped-html': fetchedBodyHtml,
+        timestamp: Math.floor(new Date(payload.created_at || Date.now()).getTime() / 1000),
+      });
+      return;
+    }
+
+    const tags = data.tags;
+    let outboundEmailId: string | undefined;
+    if (tags && typeof tags === 'object' && !Array.isArray(tags)) {
+      outboundEmailId = tags.outbound_email_id;
+    } else if (Array.isArray(tags)) {
+      outboundEmailId = tags.find((t: any) => t.name === 'outbound_email_id')?.value;
+    }
+
+    if (!outboundEmailId) return;
+
+    const eventMap: Record<string, string> = {
+      'email.opened': 'opened',
+      'email.clicked': 'clicked',
+      'email.bounced': 'bounced',
+      'email.complained': 'complained',
+      'email.delivery_delayed': 'failed',
+    };
+
+    const mapped = eventMap[eventType];
+    if (!mapped) return;
+
+    await this.processDeliverabilityEvent({
+      'event-data': {
+        event: mapped,
+        timestamp: Math.floor(new Date(payload.created_at || Date.now()).getTime() / 1000),
+        'user-variables': { outbound_email_id: outboundEmailId },
+        'delivery-status': { message: data.bounce?.message || data.reason || eventType },
+      },
+    });
   }
 
   async processDeliverabilityEvent(payload: any) {
@@ -27,25 +134,17 @@ export class WebhooksService {
     if (!outboundEmailId) return;
 
     const eventType = eventData.event;
-    const now = new Date(eventData.timestamp * 1000);
+    const now = new Date((eventData.timestamp || Math.floor(Date.now() / 1000)) * 1000);
 
     try {
-      // BRANCH A: TOWN CRIER NEWSLETTER BROADCAST DELIVERABILITY
       if (outboundEmailId.startsWith('tc_')) {
         const queueItemId = outboundEmailId.replace(/^tc_/, '');
-        const queueItem = await prisma.newsletterQueueItem.findUnique({
-          where: { id: queueItemId },
-        });
+        const queueItem = await prisma.newsletterQueueItem.findUnique({ where: { id: queueItemId } });
         if (!queueItem) return;
 
-        const domainId = eventData['user-variables']?.domain_id;
-        let resolvedDomainId = domainId;
-
+        let resolvedDomainId = eventData['user-variables']?.domain_id;
         if (!resolvedDomainId && eventData.domain) {
-          const domain = await prisma.domain.findFirst({
-            where: { domainName: eventData.domain },
-            select: { id: true },
-          });
+          const domain = await prisma.domain.findFirst({ where: { domainName: eventData.domain }, select: { id: true } });
           resolvedDomainId = domain?.id;
         }
 
@@ -58,24 +157,17 @@ export class WebhooksService {
             where: { id: queueItem.recipientId },
             data: { status: 'BOUNCED' },
           });
-          if (resolvedDomainId) {
-            await this.updateDomainHealth(resolvedDomainId, 'bounce');
-          }
-          logger.warn({ queueItemId, recipientId: queueItem.recipientId }, 'Newsletter delivery bounced');
+          if (resolvedDomainId) await this.updateDomainHealth(resolvedDomainId, 'bounce');
         } else if (eventType === 'complained') {
           await prisma.newsletterRecipient.update({
             where: { id: queueItem.recipientId },
             data: { status: 'UNSUBSCRIBED' },
           });
-          if (resolvedDomainId) {
-            await this.updateDomainHealth(resolvedDomainId, 'complaint');
-          }
-          logger.warn({ queueItemId, recipientId: queueItem.recipientId }, 'Newsletter spam complaint recorded');
+          if (resolvedDomainId) await this.updateDomainHealth(resolvedDomainId, 'complaint');
         }
         return;
       }
 
-      // BRANCH B: COLD CAMPAIGN OUTREACH DELIVERABILITY (OutboundEmail)
       const email = await prisma.outboundEmail.findUnique({
         where: { id: outboundEmailId },
         include: { domain: true },
@@ -119,7 +211,7 @@ export class WebhooksService {
       notificationService.create({
         userId: domain.userId,
         title: `Deliverability Circuit Breaker Tripped: ${domain.domainName}`,
-        message: `Sending has been automatically halted. Bounce rate is ${(newBounceRate * 100).toFixed(1)}% (threshold 5%) or complaint rate is ${(newComplaintRate * 100).toFixed(2)}% (threshold 0.3%).`,
+        message: `Sending halted. Bounce rate ${(newBounceRate * 100).toFixed(1)}% or complaint rate ${(newComplaintRate * 100).toFixed(2)}%.`,
         type: 'URGENT',
         link: '/domains',
         metadata: { domainId, newBounceRate, newComplaintRate },
@@ -141,11 +233,7 @@ export class WebhooksService {
 
     await prisma.domain.update({
       where: { id: domainId },
-      data: {
-        bounceRate: newBounceRate,
-        complaintRate: newComplaintRate,
-        status,
-      },
+      data: { bounceRate: newBounceRate, complaintRate: newComplaintRate, status },
     });
   }
 
@@ -158,11 +246,10 @@ export class WebhooksService {
       const subject = payload.subject || 'Re: Outreach';
       const body = payload['stripped-text'] || payload['body-plain'] || payload['stripped-html'] || '';
 
-      const cleanInReplyTo = rawInReplyTo ? rawInReplyTo.replace(/^<|>$/g, '').trim() : null;
+      const cleanInReplyTo = rawInReplyTo ? String(rawInReplyTo).replace(/^<|>$/g, '').trim() : null;
 
-      // Intercept domain connectivity receiving tests
       if (to) {
-        const recipientAddress = (to.match(/<(.+)>/)?.[1] || to).trim().toLowerCase();
+        const recipientAddress = (String(to).match(/<(.+)>/)?.[1] || String(to)).trim().toLowerCase();
         if (recipientAddress.startsWith('connectivity@')) {
           const recipientDomainName = recipientAddress.split('@')[1];
           const domain = await prisma.domain.findFirst({
@@ -173,8 +260,6 @@ export class WebhooksService {
               where: { id: domain.id },
               data: { receivingConfirmedAt: new Date() },
             });
-            logger.info({ domainId: domain.id, domainName: recipientDomainName }, 'Domain receiving test confirmed');
-
             notificationService.create({
               userId: domain.userId,
               title: `Domain Receiving Confirmed: ${domain.domainName}`,
@@ -192,18 +277,15 @@ export class WebhooksService {
         originalEmail = await prisma.outboundEmail.findFirst({
           where: {
             isIncoming: false,
-            OR: [
-              { messageId: cleanInReplyTo },
-              { messageId: `<${cleanInReplyTo}>` }
-            ]
+            OR: [{ messageId: cleanInReplyTo }, { messageId: `<${cleanInReplyTo}>` }],
           },
-          select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true, draftId: true }
+          select: { id: true, leadId: true, campaignId: true, userId: true, domainId: true, senderId: true, draftId: true },
         });
       }
 
       if (!originalEmail && from && to) {
-        const senderEmailMatch = from.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || from.trim().toLowerCase();
-        const recipientAddress = to.match(/<(.+)>/)?.[1]?.trim().toLowerCase() || to.trim().toLowerCase();
+        const senderEmailMatch = String(from).match(/<(.+)>/)?.[1]?.trim().toLowerCase() || String(from).trim().toLowerCase();
+        const recipientAddress = String(to).match(/<(.+)>/)?.[1]?.trim().toLowerCase() || String(to).trim().toLowerCase();
         const recipientDomainName = recipientAddress.split('@')[1];
 
         const owningDomain = recipientDomainName
@@ -220,9 +302,9 @@ export class WebhooksService {
               sentEmails: {
                 where: { isIncoming: false },
                 orderBy: { sentAt: 'desc' },
-                take: 1
-              }
-            }
+                take: 1,
+              },
+            },
           });
           if (matchedLead && matchedLead.sentEmails.length > 0) {
             const latestSent = matchedLead.sentEmails[0];
@@ -232,6 +314,7 @@ export class WebhooksService {
               campaignId: latestSent.campaignId,
               userId: latestSent.userId,
               domainId: latestSent.domainId,
+              senderId: latestSent.senderId,
               draftId: latestSent.draftId,
             };
           }
@@ -247,24 +330,25 @@ export class WebhooksService {
         data: {
           userId: originalEmail.userId,
           domainId: originalEmail.domainId,
+          senderId: originalEmail.senderId || null,
           leadId: originalEmail.leadId,
           campaignId: originalEmail.campaignId,
           subject,
           body,
           isIncoming: true,
-          messageId: messageId ? messageId.replace(/^<|>$/g, '').trim() : null,
+          messageId: messageId ? String(messageId).replace(/^<|>$/g, '').trim() : null,
           inReplyTo: cleanInReplyTo,
           fromAddress: from,
           toAddress: to,
           replyToId: originalEmail.id,
-          sentAt: new Date(payload.timestamp ? parseInt(payload.timestamp) * 1000 : Date.now()),
+          sentAt: new Date(payload.timestamp ? parseInt(payload.timestamp, 10) * 1000 : Date.now()),
           status: 'DELIVERED',
-        }
+        },
       });
 
       await prisma.outboundEmail.update({
         where: { id: originalEmail.id },
-        data: { repliedAt: new Date() }
+        data: { repliedAt: new Date() },
       });
 
       if (originalEmail.draftId) {
@@ -276,10 +360,7 @@ export class WebhooksService {
 
       const lead = await prisma.lead.update({
         where: { id: originalEmail.leadId },
-        data: {
-          outreachStatus: 'REPLIED',
-          status: 'REPLIED'
-        }
+        data: { outreachStatus: 'REPLIED', status: 'REPLIED' },
       });
 
       await prisma.leadActivityEvent.create({
@@ -330,7 +411,7 @@ export class WebhooksService {
         });
       }
     } catch (error) {
-      logger.error({ error }, 'Failed to process inbound Mailgun email');
+      logger.error({ error }, 'Failed to process inbound email');
     }
   }
 }
