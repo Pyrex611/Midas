@@ -1,112 +1,165 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { knowledgeAPI, getErrorMessage } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { Icons } from '../../lib/icons';
 
-interface KnowledgeItem {
-  id: string;
-  campaignId: string | null;
-  title: string;
-  sourceType: 'TEXT' | 'URL' | 'DOCUMENT';
-  sourceUrl: string | null;
-  content: string;
-  isActive: boolean;
-  createdAt: string;
-}
-
 interface KnowledgeBasePanelProps {
   campaignId?: string;
+  gongId?: string;
+  broadcastId?: string;
   canEdit?: boolean;
 }
 
 export const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({
   campaignId,
+  gongId,
+  broadcastId,
   canEdit = true,
 }) => {
   const { toast } = useToast();
-  const [items, setItems] = useState<KnowledgeItem[]>([]);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const [bases, setBases] = useState<any[]>([]);
+  const [selectedBaseId, setSelectedBaseId] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<'TEXT' | 'URL'>('URL');
 
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [scrapeUrl, setScrapeUrl] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [newKbOpen, setNewKbOpen] = useState(false);
+  const [newKbName, setNewKbName] = useState('');
+  const [newKbDesc, setNewKbDesc] = useState('');
+  const [creatingKb, setCreatingKb] = useState(false);
 
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [resourceMode, setResourceMode] = useState<'URL' | 'FILE' | 'TEXT'>('URL');
+  const [resTitle, setResTitle] = useState('');
+  const [resUrl, setResUrl] = useState('');
+  const [resContent, setResContent] = useState('');
+  const [savingRes, setSavingRes] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<{ type: 'base' | 'resource'; id: string; label: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const fetchItems = async () => {
+  const fetchBases = async () => {
     try {
-      const res = await knowledgeAPI.list(campaignId);
-      setItems(res.data || []);
+      const res = await knowledgeAPI.listBases();
+      const list = res.data || [];
+      setBases(list);
+      if (list.length > 0 && (!selectedBaseId || !list.some((b: any) => b.id === selectedBaseId))) {
+        setSelectedBaseId(list[0].id);
+      }
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Failed to load knowledge base'), 'Error');
+      toast.error(getErrorMessage(err, 'Failed to load Knowledge Bases'), 'Error');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchItems();
-  }, [campaignId]);
+    fetchBases();
+  }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const activeBase = bases.find((b) => b.id === selectedBaseId) || null;
+
+  const handleCreateBase = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
+    if (!newKbName.trim()) return;
+    setCreatingKb(true);
     try {
-      if (mode === 'URL') {
-        await knowledgeAPI.scrapeUrl({
-          url: scrapeUrl.trim(),
-          title: title.trim() || undefined,
-          campaignId: campaignId || null,
-        });
-        toast.success('Website extracted and added to Knowledge Base', 'URL Indexed');
-        setScrapeUrl('');
-        setTitle('');
-      } else {
-        await knowledgeAPI.create({
-          title: title.trim(),
-          content: content.trim(),
-          sourceType: 'TEXT',
-          campaignId: campaignId || null,
-        });
-        toast.success('Knowledge entry saved', 'Added');
-        setTitle('');
-        setContent('');
-      }
-      await fetchItems();
+      const res = await knowledgeAPI.createBase({
+        name: newKbName.trim(),
+        description: newKbDesc.trim() || undefined,
+        isDefault: bases.length === 0,
+      });
+      toast.success(`Knowledge Base "${res.data.name}" created`, 'Created');
+      setNewKbName('');
+      setNewKbDesc('');
+      setNewKbOpen(false);
+      await fetchBases();
+      setSelectedBaseId(res.data.id);
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Could not add knowledge entry'), 'Error');
+      toast.error(getErrorMessage(err, 'Could not create Knowledge Base'), 'Plan Limit');
     } finally {
-      setSubmitting(false);
+      setCreatingKb(false);
     }
   };
 
-  const handleToggleActive = async (item: KnowledgeItem) => {
+  const handleAttachToCurrentEntity = async (baseId: string) => {
+    const targetType = campaignId ? 'campaign' : gongId ? 'gong' : broadcastId ? 'broadcast' : null;
+    const targetId = campaignId || gongId || broadcastId;
+    if (!targetType || !targetId) return;
+
     try {
-      await knowledgeAPI.update(item.id, { isActive: !item.isActive });
-      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, isActive: !i.isActive } : i)));
-      toast.info(
-        `"${item.title}" ${!item.isActive ? 'enabled' : 'muted'} for AI drafting`,
-        'Updated'
-      );
+      await knowledgeAPI.attachToEntity(targetType, targetId, baseId || null);
+      toast.success(`Attached Knowledge Base to this ${targetType}`, 'Linked');
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not attach Knowledge Base'), 'Error');
+    }
+  };
+
+  const handleAddResource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBase) return;
+    setSavingRes(true);
+    try {
+      if (resourceMode === 'URL') {
+        await knowledgeAPI.scrapeUrlResource(activeBase.id, { url: resUrl.trim(), title: resTitle.trim() || undefined });
+        toast.success('Website URL indexed into Knowledge Base', 'URL Indexed');
+        setResUrl('');
+        setResTitle('');
+      } else {
+        await knowledgeAPI.addTextResource(activeBase.id, { title: resTitle.trim(), content: resContent.trim() });
+        toast.success('Playbook resource added', 'Saved');
+        setResTitle('');
+        setResContent('');
+      }
+      await fetchBases();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to add resource'), 'Error');
+    } finally {
+      setSavingRes(false);
+    }
+  };
+
+  const handleUploadResourceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeBase) return;
+    setSavingRes(true);
+    try {
+      await knowledgeAPI.uploadFileResource(activeBase.id, file, resTitle.trim() || undefined);
+      toast.success(`Parsed & indexed "${file.name}"`, 'Document Added');
+      setResTitle('');
+      await fetchBases();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not extract document'), 'Upload Error');
+    } finally {
+      setSavingRes(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const handleToggleResource = async (r: any) => {
+    try {
+      await knowledgeAPI.updateResource(r.id, { isActive: !r.isActive });
+      await fetchBases();
     } catch {
-      toast.error('Failed to update entry', 'Error');
+      toast.error('Failed to update resource', 'Error');
     }
   };
 
   const handleConfirmDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await knowledgeAPI.delete(deleteId);
-      toast.info('Knowledge entry removed', 'Deleted');
-      setDeleteId(null);
-      await fetchItems();
+      if (deleteTarget.type === 'base') {
+        await knowledgeAPI.deleteBase(deleteTarget.id);
+        toast.info('Knowledge Base deleted', 'Deleted');
+      } else {
+        await knowledgeAPI.deleteResource(deleteTarget.id);
+        toast.info('Resource deleted', 'Deleted');
+      }
+      setDeleteTarget(null);
+      await fetchBases();
     } catch {
-      toast.error('Could not delete entry', 'Error');
+      toast.error('Deletion failed', 'Error');
     } finally {
       setDeleting(false);
     }
@@ -114,177 +167,243 @@ export const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({
 
   return (
     <div className="card-midas rounded-2xl p-6 space-y-5">
-      <div className="pb-3 border-b border-gold-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      <div className="pb-3 border-b border-gold-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Icons.Book className="text-gold-600" />
-            <h3 className="text-base font-black text-royal-950 tracking-tight">
-              {campaignId ? 'Campaign Knowledge Context' : 'Company Knowledge Base'}
-            </h3>
+            <h3 className="text-base font-black text-royal-950 tracking-tight">Knowledge Bases</h3>
           </div>
           <p className="text-xs text-thistle-500 mt-0.5">
-            Automatically grounded into AI copywriting and objection-handling replies so claims match your real services.
+            Group URLs, PDF/DOCX/MD files, and playbooks per company or service, then bind to Campaigns or Town Crier.
           </p>
         </div>
-        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-thistle-100 text-royal-800 border border-gold-500/35 self-start sm:self-center">
-          {items.filter((i) => i.isActive).length} Active Source(s)
-        </span>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setNewKbOpen((p) => !p)}
+            className="px-3.5 py-1.5 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5 self-start"
+          >
+            <Icons.Plus className="text-gold-300" />
+            <span>New Knowledge Base</span>
+          </button>
+        )}
       </div>
 
-      {canEdit && (
-        <form onSubmit={handleSubmit} className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-xl space-y-3 text-xs">
-          <div className="flex p-1 bg-thistle-200/60 rounded-xl gap-1 max-w-xs">
-            <button
-              type="button"
-              onClick={() => setMode('URL')}
-              className={`flex-1 py-1.5 font-bold rounded-lg transition-colors ${
-                mode === 'URL' ? 'bg-royal-700 text-white shadow-xs' : 'text-royal-800'
-              }`}
-            >
-              Auto-Scrape URL
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('TEXT')}
-              className={`flex-1 py-1.5 font-bold rounded-lg transition-colors ${
-                mode === 'TEXT' ? 'bg-royal-700 text-white shadow-xs' : 'text-royal-800'
-              }`}
-            >
-              Paste Playbook
-            </button>
+      {newKbOpen && (
+        <form onSubmit={handleCreateBase} className="p-4 bg-thistle-50 border border-gold-500/40 rounded-xl space-y-3 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              type="text"
+              required
+              value={newKbName}
+              onChange={(e) => setNewKbName(e.target.value)}
+              placeholder="KB Name (e.g. Pyrexx Enterprise Offer)"
+              className="px-3 py-2 bg-white border border-gold-500/35 rounded-lg font-semibold focus:outline-none focus:border-gold-500"
+            />
+            <input
+              type="text"
+              value={newKbDesc}
+              onChange={(e) => setNewKbDesc(e.target.value)}
+              placeholder="Optional description"
+              className="px-3 py-2 bg-white border border-gold-500/35 rounded-lg focus:outline-none focus:border-gold-500"
+            />
           </div>
-
-          {mode === 'URL' ? (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Public Website / Pricing / Docs URL *</label>
-                <input
-                  type="url"
-                  value={scrapeUrl}
-                  onChange={(e) => setScrapeUrl(e.target.value)}
-                  placeholder="https://yourcompany.com/services"
-                  required
-                  className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl font-mono focus:outline-none focus:border-gold-500"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Label (Optional)</label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Core Services"
-                  className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Entry Title *</label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Pricing Tiers & Objection Playbook"
-                  required
-                  className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl font-semibold focus:outline-none focus:border-gold-500"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Facts, Case Studies &amp; Positioning *</label>
-                <textarea
-                  rows={4}
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  placeholder="Describe your product capabilities, pricing anchors, typical ROI, and how you differentiate from competitors..."
-                  required
-                  className="w-full p-3 bg-white border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="flex justify-end pt-1">
-            <button
-              type="submit"
-              disabled={submitting}
-              className="px-4 py-2 btn-royal rounded-xl font-bold flex items-center gap-1.5"
-            >
-              <Icons.Bolt className="text-gold-300" />
-              <span>{submitting ? (mode === 'URL' ? 'Extracting Website...' : 'Saving...') : (mode === 'URL' ? 'Extract & Index URL' : 'Save Knowledge')}</span>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setNewKbOpen(false)} className="px-3 py-1.5 font-bold text-thistle-500">Cancel</button>
+            <button type="submit" disabled={creatingKb} className="px-4 py-1.5 btn-royal rounded-lg font-bold">
+              {creatingKb ? 'Creating...' : 'Create Knowledge Base'}
             </button>
           </div>
         </form>
       )}
 
       {loading ? (
-        <p className="py-6 text-center text-xs text-thistle-500">Loading knowledge entries...</p>
-      ) : items.length === 0 ? (
+        <p className="py-6 text-center text-xs text-thistle-500">Loading Knowledge Bases...</p>
+      ) : bases.length === 0 ? (
         <p className="py-8 text-center text-xs text-thistle-500 bg-thistle-50 rounded-xl border border-gold-500/30">
-          No company knowledge indexed yet. Add your website URL or product playbook above to ground AI outreach.
+          No Knowledge Bases created yet. Click "+ New Knowledge Base" to organize your company URLs and files.
         </p>
       ) : (
-        <div className="space-y-2.5">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className={`p-4 rounded-xl border text-xs space-y-1.5 transition-all ${
-                item.isActive
-                  ? 'bg-white border-gold-500/40'
-                  : 'bg-thistle-50/50 border-gold-500/20 opacity-65'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-royal-950">{item.title}</span>
-                  <span className="px-2 py-0.5 rounded bg-thistle-100 text-royal-800 border border-gold-500/30 text-[10px] font-mono">
-                    {item.sourceType}
-                  </span>
-                  {!item.campaignId && campaignId && (
-                    <span className="px-2 py-0.5 rounded bg-gold-200/60 text-royal-950 text-[10px] font-bold">
-                      Workspace Global
-                    </span>
-                  )}
-                </div>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
+              {bases.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => setSelectedBaseId(b.id)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                    selectedBaseId === b.id
+                      ? 'bg-royal-700 text-white border-gold-400/60 shadow-xs'
+                      : 'bg-white text-royal-800 border-gold-500/35 hover:bg-thistle-50'
+                  }`}
+                >
+                  {b.name} ({b.resources?.length || 0})
+                </button>
+              ))}
+            </div>
 
+            {(campaignId || gongId || broadcastId) && activeBase && canEdit && (
+              <button
+                type="button"
+                onClick={() => handleAttachToCurrentEntity(activeBase.id)}
+                className="px-3 py-1.5 bg-thistle-100 hover:bg-thistle-200 border border-gold-500/40 text-royal-800 rounded-xl text-xs font-bold"
+              >
+                Bind "{activeBase.name}" Here
+              </button>
+            )}
+          </div>
+
+          {activeBase && (
+            <div className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-2xl space-y-4 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-royal-950">{activeBase.name}</h4>
+                  {activeBase.description && <p className="text-[11px] text-thistle-500">{activeBase.description}</p>}
+                </div>
                 {canEdit && (
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleActive(item)}
-                      className="text-royal-700 hover:underline font-bold"
-                    >
-                      {item.isActive ? 'Mute' : 'Activate'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteId(item.id)}
-                      className="text-thistle-500 hover:text-rose-600"
-                      title="Delete entry"
-                    >
-                      <Icons.Trash />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget({ type: 'base', id: activeBase.id, label: activeBase.name })}
+                    className="text-rose-600 hover:underline font-bold text-[11px]"
+                  >
+                    Delete KB
+                  </button>
                 )}
               </div>
 
-              {item.sourceUrl && (
-                <p className="text-[11px] font-mono text-royal-700 truncate">{item.sourceUrl}</p>
+              {canEdit && (
+                <div className="p-3.5 bg-white border border-gold-500/35 rounded-xl space-y-3">
+                  <div className="flex p-1 bg-thistle-100 rounded-lg gap-1 max-w-sm">
+                    {(['URL', 'FILE', 'TEXT'] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setResourceMode(m)}
+                        className={`flex-1 py-1 font-bold rounded-md text-[11px] ${
+                          resourceMode === m ? 'bg-royal-700 text-white' : 'text-royal-800'
+                        }`}
+                      >
+                        {m === 'URL' ? 'Website URL' : m === 'FILE' ? 'PDF / DOCX / MD' : 'Text Note'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {resourceMode === 'FILE' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
+                      <input
+                        type="text"
+                        value={resTitle}
+                        onChange={(e) => setResTitle(e.target.value)}
+                        placeholder="Optional Resource Title"
+                        className="px-3 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg"
+                      />
+                      <div>
+                        <input
+                          ref={fileRef}
+                          type="file"
+                          accept=".pdf,.docx,.md,.txt,.csv"
+                          onChange={handleUploadResourceFile}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => fileRef.current?.click()}
+                          disabled={savingRes}
+                          className="w-full px-3 py-1.5 btn-royal rounded-lg font-bold flex items-center justify-center gap-1.5"
+                        >
+                          <Icons.Upload className="text-gold-300" />
+                          <span>{savingRes ? 'Parsing...' : 'Upload PDF / DOCX / MD'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleAddResource} className="space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <input
+                          type="text"
+                          value={resTitle}
+                          onChange={(e) => setResTitle(e.target.value)}
+                          placeholder={resourceMode === 'URL' ? 'Optional Title' : 'Resource Title *'}
+                          required={resourceMode === 'TEXT'}
+                          className="px-3 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg"
+                        />
+                        {resourceMode === 'URL' && (
+                          <input
+                            type="url"
+                            value={resUrl}
+                            onChange={(e) => setResUrl(e.target.value)}
+                            placeholder="https://company.com/docs *"
+                            required
+                            className="px-3 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg font-mono"
+                          />
+                        )}
+                      </div>
+                      {resourceMode === 'TEXT' && (
+                        <textarea
+                          rows={3}
+                          value={resContent}
+                          onChange={(e) => setResContent(e.target.value)}
+                          placeholder="Paste product positioning, pricing, or objection handling notes *"
+                          required
+                          className="w-full p-2.5 bg-thistle-50 border border-gold-500/35 rounded-lg"
+                        />
+                      )}
+                      <div className="flex justify-end">
+                        <button type="submit" disabled={savingRes} className="px-4 py-1.5 btn-royal rounded-lg font-bold">
+                          {savingRes ? 'Indexing...' : resourceMode === 'URL' ? 'Scrape & Add URL' : 'Save Resource'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
               )}
-              <p className="text-royal-950/75 line-clamp-3 leading-relaxed">{item.content}</p>
+
+              <div className="space-y-2">
+                {(activeBase.resources || []).length === 0 ? (
+                  <p className="text-center text-thistle-500 py-4 italic">No resources added to this Knowledge Base yet.</p>
+                ) : (
+                  activeBase.resources.map((r: any) => (
+                    <div key={r.id} className="p-3 bg-white border border-gold-500/35 rounded-xl flex items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-royal-950">{r.title}</span>
+                          <span className="px-1.5 py-0.2 rounded bg-thistle-100 text-royal-800 border border-gold-500/30 text-[10px] font-mono">
+                            {r.sourceType}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-royal-950/75 line-clamp-2">{r.content}</p>
+                      </div>
+                      {canEdit && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button type="button" onClick={() => handleToggleResource(r)} className="text-royal-700 font-bold hover:underline">
+                            {r.isActive ? 'Mute' : 'Enable'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget({ type: 'resource', id: r.id, label: r.title })}
+                            className="text-thistle-500 hover:text-rose-600"
+                          >
+                            <Icons.Trash />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          ))}
+          )}
         </div>
       )}
 
       <ConfirmDialog
-        isOpen={Boolean(deleteId)}
-        onClose={() => setDeleteId(null)}
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
         onConfirm={handleConfirmDelete}
-        title="Delete Knowledge Entry"
-        description="This company context will no longer be injected into future AI drafts or replies."
-        confirmLabel="Delete Entry"
+        title={`Delete ${deleteTarget?.type === 'base' ? 'Knowledge Base' : 'Resource'}`}
+        description={`Are you sure you want to delete "${deleteTarget?.label}"?`}
+        confirmLabel="Delete"
         loading={deleting}
       />
     </div>

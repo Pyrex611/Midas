@@ -4,6 +4,7 @@ import { userAPI, domainAPI, senderAPI, userSettingsAPI } from '../services/api'
 import { UserSettings } from '../components/UserSettings';
 import { WebhookSettings } from '../components/settings/WebhookSettings';
 import { ApiKeySettings } from '../components/settings/ApiKeySettings';
+import { BillingSettings } from '../components/settings/BillingSettings';
 import { KnowledgeBasePanel } from '../components/knowledge/KnowledgeBasePanel';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
@@ -42,6 +43,10 @@ export const Profile: React.FC = () => {
   const [aiKeyDecryptionFailed, setAiKeyDecryptionFailed] = useState(false);
 
   useEffect(() => {
+    if (searchParams.get('checkout') === 'success') {
+      toast.success('Subscription updated via Dodo Payments!', 'Billing Confirmed');
+    }
+
     const fetchProfile = async () => {
       try {
         const [profileRes, domainsRes, sendersRes, settingsRes] = await Promise.all([
@@ -146,7 +151,7 @@ export const Profile: React.FC = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 border-b border-gold-500/40">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-royal-950 tracking-tight">Account &amp; Workspace</h1>
-          <p className="text-xs text-thistle-500 mt-1">Manage personal credentials, Knowledge Base, API keys, delivery throttling, and webhooks.</p>
+          <p className="text-xs text-thistle-500 mt-1">Manage billing plan, Knowledge Bases, API keys, AI Studio, and outbound webhooks.</p>
         </div>
 
         <button
@@ -161,6 +166,7 @@ export const Profile: React.FC = () => {
         <nav className="flex space-x-8 overflow-x-auto">
           {[
             ['profile', 'Operator Profile'],
+            ['billing', 'Plan & Billing'],
             ['knowledge', 'Knowledge Base'],
             ['settings', 'Settings & AI Studio'],
             ['apiKeys', 'Developer API Keys'],
@@ -279,6 +285,7 @@ export const Profile: React.FC = () => {
         </div>
       )}
 
+      {activeTab === 'billing' && <BillingSettings />}
       {activeTab === 'knowledge' && <KnowledgeBasePanel />}
       {activeTab === 'settings' && <UserSettings />}
       {activeTab === 'apiKeys' && <ApiKeySettings />}
@@ -290,7 +297,7 @@ export const Profile: React.FC = () => {
             <div className="pb-3 border-b border-gold-500/30">
               <h3 className="text-base font-black text-royal-950 tracking-tight">Dedicated Newsletter Sender (Domain Isolation)</h3>
               <p className="text-xs text-thistle-500 mt-0.5">
-                Assign a dedicated mailbox identity to send all Town Crier broadcasts and welcome autoresponders, isolating newsletters from cold sales rotation.
+                Assign a dedicated mailbox identity to send all Town Crier broadcasts and welcome autoresponders.
               </p>
             </div>
 
@@ -329,7 +336,7 @@ export const Profile: React.FC = () => {
 
             {domains.length === 0 ? (
               <div className="py-12 text-center text-xs text-thistle-500 bg-thistle-50 rounded-xl border border-gold-500/30">
-                No sending domains connected yet. Authenticate a Mailgun, Resend, or SMTP domain to enable outreach.
+                No sending domains connected yet.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
