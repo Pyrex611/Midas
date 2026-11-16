@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useId } from 'react';
 import { Icons } from '../../lib/icons';
 
 interface SheetProps {
@@ -20,6 +20,9 @@ export const Sheet: React.FC<SheetProps> = ({
   footer,
   width = 'lg',
 }) => {
+  const titleId = useId();
+  const descId = useId();
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -46,8 +49,13 @@ export const Sheet: React.FC<SheetProps> = ({
   }[width];
 
   return (
-    <div className="fixed inset-0 z-40 overflow-hidden">
-      {/* Backdrop */}
+    <div
+      className="fixed inset-0 z-40 overflow-hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={description ? descId : undefined}
+    >
       <div
         className="absolute inset-0 bg-royal-950/65 backdrop-blur-sm transition-opacity animate-in fade-in duration-200"
         onClick={onClose}
@@ -57,13 +65,13 @@ export const Sheet: React.FC<SheetProps> = ({
         <div
           className={`w-screen ${widthClasses} bg-white shadow-2xl border-l border-gold-500/45 flex flex-col transform transition-transform animate-in slide-in-from-right duration-300 ease-out`}
         >
-          {/* Header with Golden Separator */}
           <div className="p-6 border-b border-gold-500/35 flex items-start justify-between bg-thistle-50/80">
             <div>
-              <h2 className="text-lg font-bold text-royal-950 tracking-tight">{title}</h2>
-              {description && <p className="text-xs text-thistle-500 mt-1">{description}</p>}
+              <h2 id={titleId} className="text-lg font-bold text-royal-950 tracking-tight">{title}</h2>
+              {description && <p id={descId} className="text-xs text-thistle-500 mt-1">{description}</p>}
             </div>
             <button
+              type="button"
               onClick={onClose}
               className="text-thistle-500 hover:text-royal-800 transition-colors p-1.5 rounded-lg hover:bg-thistle-100"
               aria-label="Close drawer"
@@ -72,10 +80,8 @@ export const Sheet: React.FC<SheetProps> = ({
             </button>
           </div>
 
-          {/* Body Content */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6">{children}</div>
 
-          {/* Footer with Golden Separator */}
           {footer && (
             <div className="p-4 border-t border-gold-500/35 bg-thistle-50/80 flex justify-end gap-3">
               {footer}

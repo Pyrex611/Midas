@@ -31,14 +31,14 @@ const envSchema = z.object({
   VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
   CLERK_WEBHOOK_SECRET: z.string().optional(),
 
-  // Supabase Infrastructure (Phase E)
+  // Supabase Infrastructure
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_STORAGE_BUCKET: z.string().default('midas-uploads'),
   STORAGE_PROVIDER: z.enum(['auto', 'supabase', 'vercel_blob']).default('auto'),
 
-  // Dodo Payments (Merchant of Record Billing)
+  // Dodo Payments
   DODO_PAYMENTS_API_KEY: z.string().optional(),
   DODO_PAYMENTS_WEBHOOK_SECRET: z.string().optional(),
   DODO_PAYMENTS_MODE: z.enum(['test_mode', 'live_mode']).default('test_mode'),
@@ -47,10 +47,15 @@ const envSchema = z.object({
   DODO_PRODUCT_SYNDICATE_MONTHLY: z.string().optional(),
   DODO_PRODUCT_SYNDICATE_ANNUAL: z.string().optional(),
 
-  // Mailgun Deliverability Infrastructure
+  // ESP Webhooks & Credentials
   MAILGUN_API_KEY: z.string().optional(),
   MAILGUN_WEBHOOK_KEY: z.string().optional(),
   MAILGUN_REGION: z.enum(['us', 'eu']).default('us'),
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
+
+  // Upstash Redis REST
+  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
 
   // Zero-Setup Sandbox Mode
   SANDBOX_DOMAIN: z.string().optional(),

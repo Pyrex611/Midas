@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sheet } from '../../common/Sheet';
-import { townCrierAPI, senderAPI, domainAPI, getErrorMessage } from '../../../services/api';
+import { townCrierAPI, senderAPI, domainAPI, knowledgeAPI, getErrorMessage } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
 
 interface TownCrierGongDrawerProps {
@@ -24,6 +24,9 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
   const [cadence, setCadence] = useState<'daily' | 'weekly' | 'biweekly' | 'monthly'>('weekly');
   const [templateStyle, setTemplateStyle] = useState<'card' | 'editorial' | 'minimal' | 'plain'>('card');
 
+  const [knowledgeBases, setKnowledgeBases] = useState<any[]>([]);
+  const [selectedKbId, setSelectedKbId] = useState('');
+
   const [welcomeEmailEnabled, setWelcomeEmailEnabled] = useState(false);
   const [welcomeSubject, setWelcomeSubject] = useState('');
   const [welcomeBody, setWelcomeBody] = useState('');
@@ -46,16 +49,18 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
 
   const [saving, setSaving] = useState(false);
 
-  const loadSendersAndDomains = async () => {
+  const loadDrawerMetadata = async () => {
     try {
-      const [sRes, dRes] = await Promise.all([
+      const [sRes, dRes, kbRes] = await Promise.all([
         senderAPI.listAll(),
         domainAPI.getAll(),
+        knowledgeAPI.listBases().catch(() => ({ data: [] })),
       ]);
       const validSenders = (sRes.data || []).filter((s: any) => s.status === 'active' && s.domain?.status === 'active');
       const validDomains = (dRes.data || []).filter((d: any) => d.status === 'active' && d.sendTestPassedAt);
       setActiveSenders(validSenders);
       setVerifiedDomains(validDomains);
+      setKnowledgeBases(kbRes.data || []);
       if (validDomains.length > 0 && !newMailboxDomainId) {
         setNewMailboxDomainId(validDomains[0].id);
       }
@@ -64,13 +69,14 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      loadSendersAndDomains();
+      loadDrawerMetadata();
       if (editingGong) {
         setName(editingGong.name || '');
         setSlug(editingGong.slug || '');
         setDescription(editingGong.description || '');
         setCadence(editingGong.cadence || 'weekly');
         setTemplateStyle(editingGong.templateStyle || 'card');
+        setSelectedKbId(editingGong.knowledgeBaseId || '');
         setWelcomeEmailEnabled(Boolean(editingGong.welcomeEmailEnabled));
         setWelcomeSubject(editingGong.welcomeSubject || '');
         setWelcomeBody(editingGong.welcomeBody || '');
@@ -86,6 +92,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
         setDescription('');
         setCadence('weekly');
         setTemplateStyle('card');
+        setSelectedKbId('');
         setWelcomeEmailEnabled(false);
         setWelcomeSubject('');
         setWelcomeBody('');
@@ -112,7 +119,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
         newMailboxDisplayName.trim() || undefined
       );
       toast.success(`Provisioned mailbox ${res.data.localPart}@${res.data.domain.domainName}`, 'Mailbox Ready');
-      await loadSendersAndDomains();
+      await loadDrawerMetadata();
       setSelectedSenderId(res.data.id);
       setIsCreatingMailbox(false);
     } catch (err: any) {
@@ -134,6 +141,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
         description: description.trim() || undefined,
         cadence,
         templateStyle,
+        knowledgeBaseId: selectedKbId || null,
         welcomeEmailEnabled,
         welcomeSubject: welcomeSubject.trim() || undefined,
         welcomeBody: welcomeBody.trim() || undefined,
@@ -148,11 +156,11 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
       const res = editingGong?.id
         ? await townCrierAPI.updateGong(editingGong.id, payload)
         : await townCrierAPI.createGong(payload);
-      toast.success(`Gong channel "${name.trim()}" saved`, 'Gong Active');
+      toast.success(`Newsletter Channel "${name.trim()}" saved`, 'Channel Active');
       onClose();
       onSuccess(res.data?.gong || payload);
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Failed to save Gong channel'), 'Error');
+      toast.error(getErrorMessage(err, 'Failed to save Newsletter Channel'), 'Error');
     } finally {
       setSaving(false);
     }
@@ -162,14 +170,14 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
     <Sheet
       isOpen={isOpen}
       onClose={onClose}
-      title={editingGong ? `Edit Gong: ${editingGong.name}` : 'Create New Gong Channel'}
-      description="Gongs are dedicated newsletter publications with independent welcome lead magnets, embed styles, and isolated senders."
+      title={editingGong ? `Edit Newsletter Channel: ${editingGong.name}` : 'Create Newsletter Channel (Gong)'}
+      description="Isolated subscriber channels with built-in signup forms, Knowledge Base grounding, welcome autoresponders, and dedicated senders."
       width="xl"
     >
       <form onSubmit={handleSaveGong} className="space-y-6 text-xs">
         <div className="space-y-3">
           <div>
-            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Gong Channel Name *</label>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Channel Name *</label>
             <input
               type="text"
               value={name}
@@ -185,7 +193,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Public URL Slug</label>
+              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Public Slug</label>
               <input
                 type="text"
                 value={slug}
@@ -202,12 +210,28 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
                 onChange={(e) => setCadence(e.target.value as any)}
                 className="w-full px-3 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none"
               >
-                <option value="daily">Daily Proclamation</option>
+                <option value="daily">Daily Digest</option>
                 <option value="weekly">Weekly Digest</option>
                 <option value="biweekly">Bi-Weekly Roundup</option>
                 <option value="monthly">Monthly Deep Dive</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Attached Knowledge Base (Optional)</label>
+            <select
+              value={selectedKbId}
+              onChange={(e) => setSelectedKbId(e.target.value)}
+              className="w-full px-3 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-semibold text-royal-950 focus:outline-none"
+            >
+              <option value="">-- Workspace Default Knowledge Base --</option>
+              {knowledgeBases.map((kb) => (
+                <option key={kb.id} value={kb.id}>
+                  {kb.name} ({kb.resources?.length || 0} resources)
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -244,7 +268,7 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-royal-700">Dedicated Sending Mailbox</span>
               <p className="text-[11px] text-thistle-500 mt-0.5">
-                Isolates this newsletter's sending reputation from your cold prospecting mailboxes.
+                Isolates this newsletter&apos;s reputation from your cold prospecting mailboxes.
               </p>
             </div>
 
@@ -258,24 +282,20 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
           </div>
 
           {!isCreatingMailbox ? (
-            <div>
-              <select
-                value={selectedSenderId}
-                onChange={(e) => setSelectedSenderId(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl font-mono text-xs font-bold text-royal-950 focus:outline-none"
-              >
-                <option value="">-- Use Default Newsletter Sender (or 50% Fair-Share Pool) --</option>
-                {activeSenders.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.localPart}@{s.domain?.domainName} ({s.displayName || 'No Name'})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <select
+              value={selectedSenderId}
+              onChange={(e) => setSelectedSenderId(e.target.value)}
+              className="w-full px-3 py-2 bg-white border border-gold-500/40 rounded-xl font-mono text-xs font-bold text-royal-950 focus:outline-none"
+            >
+              <option value="">-- Use Default Newsletter Sender (or 50% Fair-Share Pool) --</option>
+              {activeSenders.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.localPart}@{s.domain?.domainName} ({s.displayName || 'No Name'})
+                </option>
+              ))}
+            </select>
           ) : (
-            <div className="p-3 bg-white border border-gold-500/45 rounded-xl space-y-3 animate-in fade-in duration-100">
-              <span className="text-[10px] font-bold uppercase text-thistle-500">Quick-Provision New Mailbox</span>
-
+            <div className="p-3 bg-white border border-gold-500/45 rounded-xl space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Target Domain</label>
@@ -289,7 +309,6 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
                     ))}
                   </select>
                 </div>
-
                 <div>
                   <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Local Address</label>
                   <input
@@ -301,19 +320,14 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
                   />
                 </div>
               </div>
-
-              <div>
-                <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Sender Display Name (Optional)</label>
-                <input
-                  type="text"
-                  value={newMailboxDisplayName}
-                  onChange={(e) => setNewMailboxDisplayName(e.target.value)}
-                  placeholder="e.g. Pyrexx Community"
-                  className="w-full px-2 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg text-[11px]"
-                />
-              </div>
-
-              <div className="flex justify-end pt-1">
+              <input
+                type="text"
+                value={newMailboxDisplayName}
+                onChange={(e) => setNewMailboxDisplayName(e.target.value)}
+                placeholder="Display Name (e.g. Pyrexx Community)"
+                className="w-full px-2 py-1.5 bg-thistle-50 border border-gold-500/35 rounded-lg text-[11px]"
+              />
+              <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={handleInPlaceCreateSender}
@@ -332,119 +346,95 @@ export const TownCrierGongDrawer: React.FC<TownCrierGongDrawerProps> = ({
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-royal-700">Preset Welcome Autoresponder</span>
               <p className="text-[11px] text-thistle-500 mt-0.5">
-                Automatically dispatches an onboarding email, lead magnet, or discount code within 60s of subscribing.
+                Automatically sends an onboarding email or lead magnet within 60s of subscribing.
               </p>
             </div>
             <input
               type="checkbox"
               checked={welcomeEmailEnabled}
               onChange={(e) => setWelcomeEmailEnabled(e.target.checked)}
-              className="h-4 w-4 rounded border-thistle-400 text-royal-700 focus:ring-0"
+              aria-label="Enable preset welcome autoresponder"
+              className="h-4 w-4 rounded border-thistle-400 text-royal-700"
             />
           </div>
 
           {welcomeEmailEnabled && (
-            <div className="space-y-3 pt-2 border-t border-gold-500/30 animate-in fade-in duration-100">
-              <div>
-                <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Welcome Email Subject</label>
-                <input
-                  type="text"
-                  value={welcomeSubject}
-                  onChange={(e) => setWelcomeSubject(e.target.value)}
-                  placeholder="Welcome to the Inner Circle! Here is your download link"
-                  required={welcomeEmailEnabled}
-                  className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs font-semibold focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Welcome Email Body (Supports Mustache &amp; Spintax)</label>
-                <textarea
-                  rows={6}
-                  value={welcomeBody}
-                  onChange={(e) => setWelcomeBody(e.target.value)}
-                  placeholder="Hi {{name}},\n\nThank you for subscribing! Access your guide here..."
-                  required={welcomeEmailEnabled}
-                  className="w-full p-3 bg-white border border-gold-500/35 rounded-xl text-xs font-mono focus:outline-none"
-                />
-              </div>
+            <div className="space-y-3 pt-2 border-t border-gold-500/30">
+              <input
+                type="text"
+                value={welcomeSubject}
+                onChange={(e) => setWelcomeSubject(e.target.value)}
+                placeholder="Welcome Subject Line"
+                required={welcomeEmailEnabled}
+                className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs font-semibold"
+              />
+              <textarea
+                rows={5}
+                value={welcomeBody}
+                onChange={(e) => setWelcomeBody(e.target.value)}
+                placeholder="Hi {{name}}, Welcome! Access your guide here: {{artifact:welcome-guide}}"
+                required={welcomeEmailEnabled}
+                className="w-full p-3 bg-white border border-gold-500/35 rounded-xl text-xs font-mono"
+              />
             </div>
           )}
         </div>
 
         <div className="p-4 bg-thistle-50/70 border border-gold-500/35 rounded-2xl space-y-3">
           <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500">Embed Appearance</span>
-
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Default Embed Theme</label>
-              <select
-                value={embedTheme}
-                onChange={(e) => setEmbedTheme(e.target.value as any)}
-                className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl font-bold text-royal-950 focus:outline-none"
-              >
-                <option value="minimal">Minimal (Inline Row)</option>
-                <option value="card">Card (Elevated Container)</option>
-                <option value="dark">Dark (Carbon Contrast)</option>
-                <option value="floating">Floating (Expanding Popover)</option>
-              </select>
-            </div>
+            <select
+              value={embedTheme}
+              onChange={(e) => setEmbedTheme(e.target.value as any)}
+              className="px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl font-bold text-royal-950"
+            >
+              <option value="minimal">Minimal (Inline Row)</option>
+              <option value="card">Card (Elevated Container)</option>
+              <option value="dark">Dark (Carbon Contrast)</option>
+              <option value="floating">Floating (Expanding Popover)</option>
+            </select>
 
-            <div>
-              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Brand Accent Color</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={accentColor}
-                  onChange={(e) => setAccentColor(e.target.value)}
-                  className="w-8 h-8 p-0.5 border border-gold-500/35 rounded-lg cursor-pointer bg-white"
-                />
-                <input
-                  type="text"
-                  value={accentColor}
-                  onChange={(e) => setAccentColor(e.target.value)}
-                  className="flex-1 px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl font-mono text-xs font-bold"
-                />
-              </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={accentColor}
+                onChange={(e) => setAccentColor(e.target.value)}
+                aria-label="Brand accent color picker"
+                className="w-8 h-8 p-0.5 border border-gold-500/35 rounded-lg cursor-pointer bg-white"
+              />
+              <input
+                type="text"
+                value={accentColor}
+                onChange={(e) => setAccentColor(e.target.value)}
+                className="flex-1 px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl font-mono text-xs font-bold"
+              />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Form Headline</label>
-              <input
-                type="text"
-                value={headline}
-                onChange={(e) => setHeadline(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Button Label</label>
-              <input
-                type="text"
-                value={buttonText}
-                onChange={(e) => setButtonText(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs font-bold"
-              />
-            </div>
+            <input
+              type="text"
+              value={headline}
+              onChange={(e) => setHeadline(e.target.value)}
+              placeholder="Form Headline"
+              className="px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs"
+            />
+            <input
+              type="text"
+              value={buttonText}
+              onChange={(e) => setButtonText(e.target.value)}
+              placeholder="Button Label"
+              className="px-3 py-1.5 bg-white border border-gold-500/35 rounded-xl text-xs font-bold"
+            />
           </div>
         </div>
 
         <div className="pt-3 border-t border-gold-500/35 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-thistle-500 font-bold hover:text-royal-950"
-          >
+          <button type="button" onClick={onClose} className="px-4 py-2 text-thistle-500 font-bold hover:text-royal-950">
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-5 py-2 btn-royal font-bold rounded-xl"
-          >
-            {saving ? 'Saving Gong...' : 'Save Gong Channel'}
+          <button type="submit" disabled={saving} className="px-5 py-2 btn-royal font-bold rounded-xl">
+            {saving ? 'Saving...' : 'Save Newsletter Channel'}
           </button>
         </div>
       </form>

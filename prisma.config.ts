@@ -1,18 +1,7 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
-// Prisma 7 CLI operations (generate, migrate deploy/dev) read their
-// connection string from here, never from schema.prisma (see P1012 fix).
-//
-// Prefer the DIRECT (non-pooled) connection for CLI/Migrate operations —
-// DDL and Prisma Migrate's own locking behavior are safer off PgBouncer's
-// transaction-mode pooling. This project's Neon-via-Vercel integration
-// injects POSTGRES_URL_NON_POOLING for exactly this; DIRECT_URL is checked
-// too in case that's ever set instead/later. Falls through to whatever
-// pooled string exists rather than hard-blocking a setup with only one
-// connection string configured — but POSTGRES_URL_NON_POOLING being unset
-// here would be worth investigating, not just silently tolerating.
-const directUrl =
+let directUrl =
   process.env.POSTGRES_URL_NON_POOLING ||
   process.env.DIRECT_URL ||
   process.env.DATABASE_URL_POOLED ||
@@ -21,10 +10,22 @@ const directUrl =
 
 if (!directUrl) {
   throw new Error(
-    "Set POSTGRES_URL_NON_POOLING (preferred, Neon-via-Vercel's direct connection string) " +
-    "before running Prisma CLI commands."
+    "Set POSTGRES_URL_NON_POOLING or DATABASE_URL before running Prisma CLI commands."
   );
 }
+
+// Supavisor Transaction Mode (:6543) hangs `prisma db push` / `prisma migrate`
+// indefinitely because DDL advisory locks require Session Mode (:5432).
+try {
+  const parsed = new URL(directUrl);
+  if (
+    (parsed.hostname.includes("pooler.supabase.com") || parsed.hostname.includes("pooler.supabase.co")) &&
+    parsed.port === "6543"
+  ) {
+    parsed.port = "5432";
+    directUrl = parsed.toString();
+  }
+} catch {}
 
 export default defineConfig({
   schema: "prisma/schema.prisma",

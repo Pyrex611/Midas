@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useId } from 'react';
 import { Icons } from '../../lib/icons';
 
 interface ConfirmDialogProps {
@@ -22,6 +22,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   danger = true,
   loading = false,
 }) => {
+  const titleId = useId();
+  const descId = useId();
+
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -34,7 +37,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={descId}
+    >
       <div
         className="fixed inset-0 bg-royal-950/65 backdrop-blur-sm"
         onClick={onClose}
@@ -49,8 +58,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             <Icons.Warning />
           </div>
           <div>
-            <h3 className="text-sm font-black text-royal-950">{title}</h3>
-            <p className="text-xs text-royal-950/75 mt-1 leading-relaxed">{description}</p>
+            <h3 id={titleId} className="text-sm font-black text-royal-950">{title}</h3>
+            <p id={descId} className="text-xs text-royal-950/75 mt-1 leading-relaxed">{description}</p>
           </div>
         </div>
 

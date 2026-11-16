@@ -67,7 +67,7 @@ export const Leads: React.FC = () => {
     }
   };
 
-  const toggleSelect = (id: string, e: React.MouseEvent) => {
+  const toggleSelect = (id: string, e: React.MouseEvent | React.ChangeEvent) => {
     e.stopPropagation();
     const next = new Set(selectedIds);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -104,15 +104,16 @@ export const Leads: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* Top Header with Golden Bottom Separator */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-gold-500/40">
         <div>
           <h1 className="text-2xl font-black text-royal-950 tracking-tight">Leads Command Hub</h1>
-          <p className="text-xs text-thistle-500 mt-1">Manage, verify, and inspect prospective buyers across all active sequences.</p>
+          <p className="text-xs text-thistle-500 mt-1">Manage, enrich, and inspect prospective buyers across all active sequences.</p>
         </div>
 
         <div className="flex items-center gap-3">
+          <label htmlFor="leads-campaign-filter" className="sr-only">Filter leads by campaign</label>
           <select
+            id="leads-campaign-filter"
             value={campaignFilter}
             onChange={(e) => {
               const val = e.target.value;
@@ -134,7 +135,6 @@ export const Leads: React.FC = () => {
         </div>
       </div>
 
-      {/* Floating Action Bar upon multi-selection */}
       {selectedIds.size > 0 && (
         <div className="p-3 bg-royal-950 text-white rounded-2xl border border-gold-500/45 shadow-xl flex items-center justify-between animate-in fade-in duration-150">
           <span className="text-xs font-bold pl-2">{selectedIds.size} lead(s) selected</span>
@@ -157,7 +157,6 @@ export const Leads: React.FC = () => {
         </div>
       )}
 
-      {/* Modern Data Grid */}
       <div className="bg-white rounded-2xl border border-gold-500/40 shadow-xs overflow-hidden">
         {loading ? (
           <div className="py-24 text-center text-xs text-thistle-500">Loading leads data grid...</div>
@@ -171,9 +170,10 @@ export const Leads: React.FC = () => {
                   <th className="p-4 w-10">
                     <input
                       type="checkbox"
+                      aria-label="Select all visible leads"
                       checked={selectedIds.size === leads.length && leads.length > 0}
                       onChange={toggleSelectAll}
-                      className="rounded border-thistle-400 text-royal-700 focus:ring-0"
+                      className="rounded border-thistle-400 text-royal-700"
                     />
                   </th>
                   <th className="py-3 px-4">Contact</th>
@@ -188,15 +188,26 @@ export const Leads: React.FC = () => {
                 {leads.map((lead) => (
                   <tr
                     key={lead.id}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Inspect lead ${lead.name}`}
                     onClick={() => handleRowClick(lead)}
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleRowClick(lead);
+                      }
+                    }}
                     className="hover:bg-thistle-50/80 cursor-pointer transition-colors"
                   >
-                    <td className="p-4" onClick={(e) => toggleSelect(lead.id, e)}>
+                    <td className="p-4" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
+                        aria-label={`Select lead ${lead.name}`}
                         checked={selectedIds.has(lead.id)}
-                        onChange={() => {}}
-                        className="rounded border-thistle-400 text-royal-700 focus:ring-0"
+                        onChange={(e) => toggleSelect(lead.id, e)}
+                        className="rounded border-thistle-400 text-royal-700"
                       />
                     </td>
                     <td className="py-3 px-4">
@@ -217,9 +228,10 @@ export const Leads: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
+                        type="button"
                         onClick={(e) => handleDelete(lead.id, e)}
                         className="text-thistle-500 hover:text-rose-600 text-xs transition-colors p-1"
-                        title="Delete lead"
+                        aria-label={`Delete lead ${lead.name}`}
                       >
                         <Icons.Trash />
                       </button>
