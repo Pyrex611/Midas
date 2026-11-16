@@ -14,6 +14,11 @@ export const AdminDashboard: React.FC = () => {
   const [servicesHealth, setServicesHealth] = useState<any>(null);
   const [probingServices, setProbingServices] = useState(false);
 
+  // On-Platform One-Time Neon -> Supabase Data Transfer State
+  const [neonSourceUrl, setNeonSourceUrl] = useState('');
+  const [migratingNeon, setMigratingNeon] = useState(false);
+  const [migrationReport, setMigrationReport] = useState<any | null>(null);
+
   const [actionTargetDomain, setActionTargetDomain] = useState<{ id: string; name: string; type: 'pause' | 'unpause' } | null>(null);
   const [actionConfirmPassphrase, setActionConfirmPassphrase] = useState('');
   const [submittingAction, setSubmittingAction] = useState(false);
@@ -138,6 +143,27 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleRunNeonMigration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!neonSourceUrl.trim()) return;
+    setMigratingNeon(true);
+    setMigrationReport(null);
+    try {
+      const res = await adminAPI.migrateFromNeon(neonSourceUrl.trim());
+      setMigrationReport(res.data);
+      setNeonSourceUrl('');
+      toast.success(
+        `Transferred ${res.data.totalInsertedRows} rows in ${res.data.durationMs}ms`,
+        'Database Migration Complete'
+      );
+      await fetchAll();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Database migration failed'), 'Migration Error');
+    } finally {
+      setMigratingNeon(false);
+    }
+  };
+
   const handleClearLock = async (lockName: string) => {
     try {
       await adminAPI.clearLock(lockName);
@@ -219,11 +245,10 @@ export const AdminDashboard: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* Top Banner with Golden Separator */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 border-b border-gold-500/40">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-royal-950 tracking-tight">Platform Deliverability Command</h1>
-          <p className="text-xs text-thistle-500 mt-1">Cross-tenant operator visibility, live infrastructure telemetry, and circuit breaker controls.</p>
+          <p className="text-xs text-thistle-500 mt-1">Cross-tenant operator visibility, database transfer, live infrastructure telemetry, and circuit breakers.</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -240,10 +265,59 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* On-Platform One-Time Neon -> Supabase Data Transfer */}
+      <div className="card-midas rounded-2xl p-6 space-y-4">
+        <div className="pb-3 border-b border-gold-500/35">
+          <div className="flex items-center gap-2">
+            <Icons.Bolt className="text-gold-600" />
+            <h2 className="text-base font-black text-royal-950 tracking-tight">One-Time Neon &rarr; Supabase Data Migration</h2>
+          </div>
+          <p className="text-xs text-thistle-500 mt-0.5">
+            Run this after updating Vercel&apos;s <code className="font-mono">DATABASE_URL</code> and <code className="font-mono">POSTGRES_URL_NON_POOLING</code> to Supabase and redeploying. Paste your previous Neon Postgres URL below to copy all records safely with <code className="font-mono">ON CONFLICT DO NOTHING</code>.
+          </p>
+        </div>
+
+        <form onSubmit={handleRunNeonMigration} className="flex flex-col sm:flex-row gap-3">
+          <input
+            type="password"
+            value={neonSourceUrl}
+            onChange={(e) => setNeonSourceUrl(e.target.value)}
+            placeholder="postgresql://neondb_owner:...@ep-...neon.tech/neondb?sslmode=require"
+            required
+            className="flex-1 px-4 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-mono text-royal-950 focus:outline-none focus:border-gold-500"
+          />
+          <button
+            type="submit"
+            disabled={migratingNeon || !neonSourceUrl.trim()}
+            className="px-5 py-2 btn-royal rounded-xl text-xs font-bold whitespace-nowrap"
+          >
+            {migratingNeon ? 'Transferring Tables...' : 'Migrate Data from Neon'}
+          </button>
+        </form>
+
+        {migrationReport && (
+          <div className="p-4 bg-thistle-50 border border-gold-500/40 rounded-xl space-y-2 text-xs">
+            <div className="flex justify-between font-bold text-royal-950">
+              <span>Transfer Summary ({migrationReport.durationMs}ms)</span>
+              <span className="text-emerald-700 font-mono">
+                {migrationReport.totalInsertedRows} / {migrationReport.totalSourceRows} rows inserted
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]">
+              {(migrationReport.tables || []).filter((t: any) => t.status === 'MIGRATED').map((t: any) => (
+                <div key={t.table} className="p-2 bg-white border border-gold-500/30 rounded-lg flex justify-between">
+                  <span className="font-bold truncate">{t.table}</span>
+                  <span className="text-emerald-700">{t.insertedRows}/{t.sourceRows}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       {loading && <div className="py-20 text-center text-xs text-thistle-500">Loading operator metrics...</div>}
       {error && <div className="p-4 bg-rose-50 border border-rose-300 rounded-xl text-xs text-rose-700">{error}</div>}
 
-      {/* Core Infrastructure Telemetry */}
       <div className="card-midas rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-gold-500/35">
           <div>
@@ -271,7 +345,7 @@ export const AdminDashboard: React.FC = () => {
                   {servicesHealth.database?.status || 'UNKNOWN'}
                 </span>
               </div>
-              <p className="font-bold text-royal-950">Neon Serverless PostgreSQL</p>
+              <p className="font-bold text-royal-950">Pooled PostgreSQL</p>
               <p className="text-[11px] text-thistle-500">
                 Ping Latency: <strong className="text-royal-950 font-mono">{servicesHealth.database?.latencyMs ?? '—'} ms</strong>
               </p>
@@ -330,7 +404,6 @@ export const AdminDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* Aggregate Metric Tiles */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
@@ -349,7 +422,6 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Cross-Tenant Domains Table */}
       <div className="card-midas rounded-2xl p-6 space-y-4">
         <div className="pb-3 border-b border-gold-500/35">
           <h2 className="text-base font-black text-royal-950 tracking-tight">Cross-Tenant Sending Domains</h2>
@@ -412,7 +484,6 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Users Overview Table */}
       <div className="card-midas rounded-2xl p-6 space-y-4">
         <div className="pb-3 border-b border-gold-500/35">
           <h2 className="text-base font-black text-royal-950 tracking-tight">Active Workspaces</h2>
@@ -453,7 +524,6 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Action Protection Modal */}
       {actionTargetDomain && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-royal-950/65 backdrop-blur-sm" onClick={() => setActionTargetDomain(null)} />

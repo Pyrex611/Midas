@@ -3,6 +3,7 @@ import cors from 'cors';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import { requireAuth } from './middleware/auth.middleware';
+import { requireAdmin } from './middleware/requireAdmin.middleware';
 import { requireAuthOrApiKey } from './middleware/dualAuth.middleware';
 import { requestTimeoutGuard } from './middleware/requestTimeoutGuard.middleware';
 import { createRateLimiter, limitMetadataSize } from './middleware/rateLimit.middleware';
@@ -20,6 +21,7 @@ import userSettingsRoutes from './routes/userSettings.routes';
 import configRoutes from './routes/config.routes';
 import unsubscribeRoutes from './routes/unsubscribe.routes';
 import adminRoutes from './routes/admin.routes';
+import migrationRoutes from './routes/migration.routes';
 import trackRoutes from './routes/track.routes';
 import townCrierRoutes from './routes/townCrier.routes';
 import townCrierPublicRoutes from './routes/public/townCrier.public.routes';
@@ -28,6 +30,7 @@ import apiKeyRoutes from './routes/apiKey.routes';
 import sandboxRoutes from './routes/sandbox.routes';
 import knowledgeRoutes from './routes/knowledge.routes';
 import artifactRoutes from './routes/artifact.routes';
+import billingRoutes from './routes/billing.routes';
 
 const app = express();
 
@@ -72,7 +75,12 @@ app.get('/api/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use(requestTimeoutGuard(15000));
@@ -90,29 +98,26 @@ const publicTelemetryLimiter = createRateLimiter({
   keyPrefix: 'pub_tel',
 });
 
-// Public Webhooks, Tracking & Embeddable Scripts
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/unsubscribe', publicTelemetryLimiter, unsubscribeRoutes);
 app.use('/api/track', publicTelemetryLimiter, trackRoutes);
 
-// Public Town Crier Universal Subscriber API & Widget (Rate-Limited + Metadata Bounded)
 app.post('/api/public/town-crier/subscribe', publicSubscribeLimiter, limitMetadataSize(16384));
 app.post('/api/public/town-crier/recipients/import', publicSubscribeLimiter);
 app.use('/api/public/town-crier', townCrierPublicRoutes);
 
-// Dual-Authed Core Routes (Accepts Clerk Session OR Scoped API Keys)
 app.use('/api/campaigns', requireAuthOrApiKey, campaignRoutes);
 app.use('/api/leads', requireAuthOrApiKey, leadRoutes);
 app.use('/api/sandbox', requireAuthOrApiKey, sandboxRoutes);
+app.use('/api/artifacts', requireAuthOrApiKey, artifactRoutes);
 
-// Protected Dashboard Application Routes (Clerk Authed)
 app.use('/api/domains', requireAuth, domainRoutes);
 app.use('/api/inbox', requireAuth, inboxRoutes);
 app.use('/api/ai', requireAuth, aiRoutes);
 app.use('/api/knowledge', requireAuth, knowledgeRoutes);
-app.use('/api/artifacts', requireAuth, artifactRoutes);
+app.use('/api/billing', requireAuth, billingRoutes);
 app.use('/api/user', requireAuth, userRoutes);
 app.use('/api/user/settings', requireAuth, userSettingsRoutes);
 app.use('/api/user/webhooks', requireAuth, webhookSubscriptionRoutes);
@@ -120,6 +125,7 @@ app.use('/api/diagnostics', requireAuth, diagnosticRoutes);
 app.use('/api/town-crier', requireAuth, townCrierRoutes);
 app.use('/api/notifications', requireAuth, notificationRoutes);
 app.use('/api/api-keys', requireAuth, apiKeyRoutes);
+app.use('/api/admin/migration', requireAuth, requireAdmin, migrationRoutes);
 app.use('/api/admin', requireAuth, adminRoutes);
 
 export default app;

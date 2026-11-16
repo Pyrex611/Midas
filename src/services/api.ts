@@ -349,6 +349,8 @@ export const adminAPI = {
   clearLock: (lockName: string) => api.post(`/admin/locks/${lockName}/clear`),
   listUsers: () => api.get('/admin/users'),
   listDomains: () => api.get('/admin/domains'),
+  migrateFromNeon: (sourceDatabaseUrl: string) =>
+    api.post('/admin/migration/neon-to-supabase', { sourceDatabaseUrl }),
   pauseDomain: (id: string, actionPassphrase?: string) =>
     api.post(`/admin/domains/${id}/pause`, { actionPassphrase }, {
       headers: actionPassphrase ? { 'x-action-passphrase': actionPassphrase } : undefined,
