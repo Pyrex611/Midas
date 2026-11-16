@@ -12,7 +12,7 @@ interface BucketEntry {
   resetAt: number;
 }
 
-const stores = new Map<string, Map<string, BucketEntry>>();
+const memoryStores = new Map<string, Map<string, BucketEntry>>();
 
 function extractClientIp(req: Request): string {
   const xff = req.headers['x-forwarded-for'];
@@ -25,11 +25,46 @@ function extractClientIp(req: Request): string {
   return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
-/**
- * Zero-dependency, serverless-safe fixed-window rate limiter.
- * Performs lazy bucket pruning when map size grows past 2,000 entries
- * so no background setInterval timers block Lambda shutdown.
- */
+async function checkUpstashRateLimit(key: string, windowMs: number, max: number): Promise<{ count: number; ttlMs: number } | null> {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  try {
+    const cleanBase = url.replace(/\/$/, '');
+    const res = await fetch(`${cleanBase}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([
+        ['INCR', key],
+        ['PTTL', key],
+      ]),
+      signal: AbortSignal.timeout(1_500),
+    });
+
+    if (!res.ok) return null;
+    const results = (await res.json()) as Array<{ result: number }>;
+    const count = Number(results?.[0]?.result || 1);
+    let ttlMs = Number(results?.[1]?.result ?? -1);
+
+    if (ttlMs < 0) {
+      await fetch(`${cleanBase}/pexpire/${encodeURIComponent(key)}/${windowMs}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(1_000),
+      }).catch(() => {});
+      ttlMs = windowMs;
+    }
+
+    return { count, ttlMs };
+  } catch {
+    return null;
+  }
+}
+
 export function createRateLimiter(options: RateLimitOptions) {
   const {
     windowMs,
@@ -38,52 +73,58 @@ export function createRateLimiter(options: RateLimitOptions) {
     message = 'Too many requests. Please slow down and try again shortly.',
   } = options;
 
-  if (!stores.has(keyPrefix)) {
-    stores.set(keyPrefix, new Map());
+  if (!memoryStores.has(keyPrefix)) {
+    memoryStores.set(keyPrefix, new Map());
   }
-  const store = stores.get(keyPrefix)!;
+  const store = memoryStores.get(keyPrefix)!;
 
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
     const ip = extractClientIp(req);
-    const key = `${keyPrefix}:${ip}`;
+    const key = `midas:${keyPrefix}:${ip}`;
 
-    if (store.size > 2000) {
-      for (const [k, entry] of store.entries()) {
-        if (entry.resetAt <= now) store.delete(k);
-      }
-    }
+    const upstash = await checkUpstashRateLimit(key, windowMs, max);
 
-    let entry = store.get(key);
-    if (!entry || entry.resetAt <= now) {
-      entry = { count: 1, resetAt: now + windowMs };
-      store.set(key, entry);
+    let count: number;
+    let resetEpochSec: number;
+    let retryAfterSec: number;
+
+    if (upstash) {
+      count = upstash.count;
+      retryAfterSec = Math.max(1, Math.ceil(upstash.ttlMs / 1000));
+      resetEpochSec = Math.ceil((now + upstash.ttlMs) / 1000);
     } else {
-      entry.count += 1;
+      if (store.size > 2000) {
+        for (const [k, entry] of store.entries()) {
+          if (entry.resetAt <= now) store.delete(k);
+        }
+      }
+      let entry = store.get(key);
+      if (!entry || entry.resetAt <= now) {
+        entry = { count: 1, resetAt: now + windowMs };
+        store.set(key, entry);
+      } else {
+        entry.count += 1;
+      }
+      count = entry.count;
+      retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+      resetEpochSec = Math.ceil(entry.resetAt / 1000);
     }
 
-    const remaining = Math.max(0, max - entry.count);
+    const remaining = Math.max(0, max - count);
     res.setHeader('X-RateLimit-Limit', String(max));
     res.setHeader('X-RateLimit-Remaining', String(remaining));
-    res.setHeader('X-RateLimit-Reset', String(Math.ceil(entry.resetAt / 1000)));
+    res.setHeader('X-RateLimit-Reset', String(resetEpochSec));
 
-    if (entry.count > max) {
-      const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+    if (count > max) {
       res.setHeader('Retry-After', String(retryAfterSec));
-      return res.status(429).json({
-        error: message,
-        retryAfterSeconds: retryAfterSec,
-      });
+      return res.status(429).json({ error: message, retryAfterSeconds: retryAfterSec });
     }
 
     next();
   };
 }
 
-/**
- * Caps arbitrary `metadata` JSON payload sizes on public ingestion endpoints
- * to prevent DB bloat or enumeration abuse.
- */
 export function limitMetadataSize(maxBytes: number = 16384) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (req.body && req.body.metadata !== undefined && req.body.metadata !== null) {

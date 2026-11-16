@@ -3,6 +3,8 @@ import prisma from '../../lib/prisma';
 import { personalisationService } from '../../services/personalisation.service';
 import { emailService } from '../../services/email.service';
 import { senderService } from '../../services/sender.service';
+import { artifactService } from '../../services/artifact.service';
+import { planGuardService } from '../../services/billing/planGuard.service';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { CampaignRequest } from '../../middleware/campaignAccess.middleware';
 import { ensureUnsubscribeToken, buildUnsubscribeUrl } from '../../lib/unsubscribe';
@@ -12,18 +14,24 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
     const campaignId = req.params.campaignId as string;
     const leadId = req.params.leadId as string;
 
-    const [lead, campaign, emails, scheduled] = await Promise.all([
-      prisma.lead.findUnique({ where: { id: leadId } }),
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, campaignId },
+    });
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found in this campaign' });
+    }
+
+    const [campaign, emails, scheduled] = await Promise.all([
       prisma.campaign.findUnique({
         where: { id: campaignId },
         include: { senderLinks: { include: { sender: true } } },
       }),
       prisma.outboundEmail.findMany({
-        where: { campaignId, leadId },
+        where: { campaignId, leadId: lead.id },
         orderBy: { sentAt: 'asc' },
       }),
       prisma.pendingEmail.findMany({
-        where: { campaignId, leadId, status: { in: ['PENDING', 'PROCESSING'] } },
+        where: { campaignId, leadId: lead.id, status: { in: ['PENDING', 'PROCESSING'] } },
         include: { draft: true },
         orderBy: { scheduledAt: 'asc' },
       }),
@@ -68,20 +76,26 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
   }
 };
 
-export const updateScheduledEmail = async (req: CampaignRequest, res: Response, next: NextFunction) => {
+export const updateScheduledEmail = async (req: CampaignRequest, res: Response) => {
   try {
-    const { pendingId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const pendingId = req.params.pendingId as string;
     const { subject, body } = req.body;
 
     if (!subject?.trim() || !body?.trim()) {
       return res.status(400).json({ error: 'Subject and body are required' });
     }
 
-    const updated = await prisma.pendingEmail.update({
-      where: { id: pendingId },
+    const result = await prisma.pendingEmail.updateMany({
+      where: { id: pendingId, campaignId },
       data: { subject: subject.trim(), body: body.trim() },
     });
 
+    if (result.count === 0) {
+      return res.status(404).json({ error: 'Scheduled email not found on this campaign' });
+    }
+
+    const updated = await prisma.pendingEmail.findUnique({ where: { id: pendingId } });
     res.json(updated);
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Failed to update scheduled email' });
@@ -90,11 +104,12 @@ export const updateScheduledEmail = async (req: CampaignRequest, res: Response, 
 
 export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response) => {
   try {
-    const { pendingId } = req.params;
+    const campaignId = req.params.campaignId as string;
+    const pendingId = req.params.pendingId as string;
     const userId = req.user!.id;
 
-    const pending = await prisma.pendingEmail.findUnique({
-      where: { id: pendingId },
+    const pending = await prisma.pendingEmail.findFirst({
+      where: { id: pendingId, campaignId },
       include: {
         lead: true,
         campaign: {
@@ -105,10 +120,14 @@ export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response)
       },
     });
 
-    if (!pending) return res.status(404).json({ error: 'Scheduled email not found' });
+    if (!pending) return res.status(404).json({ error: 'Scheduled email not found on this campaign' });
     if (pending.lead.status === 'UNSUBSCRIBED') {
       await prisma.pendingEmail.delete({ where: { id: pending.id } });
       return res.status(400).json({ error: 'Lead has unsubscribed and cannot be emailed.' });
+    }
+
+    if (await planGuardService.isOverMonthlyEmailLimit(userId)) {
+      return res.status(429).json({ error: 'Monthly workspace email limit reached. Upgrade your plan in Profile -> Billing.' });
     }
 
     const activeSenders = pending.campaign.senderLinks
@@ -135,7 +154,10 @@ export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response)
 
     const unsubscribeToken = await ensureUnsubscribeToken(pending.lead.id, pending.lead.unsubscribeToken);
     const unsubscribeUrl = buildUnsubscribeUrl(unsubscribeToken);
-    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+    const [userSettings, artifacts] = await Promise.all([
+      prisma.userSettings.findUnique({ where: { userId } }),
+      artifactService.getArtifactMapForUser(userId),
+    ]);
 
     const { subject, body } = personalisationService.personalise(
       pending.lead,
@@ -148,13 +170,19 @@ export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response)
         companyName: userSettings?.companyName,
         physicalAddress: userSettings?.physicalAddress,
         customOptOutText: userSettings?.customOptOutText,
+        artifacts,
       }
     );
+
+    const fromEmail = `${sender.localPart}@${sender.domain.domainName}`;
 
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
         domainId: sender.domainId,
+        senderId: sender.id,
+        fromAddress: fromEmail,
+        toAddress: pending.lead.email,
         leadId: pending.leadId,
         campaignId: pending.campaignId,
         draftId: pending.draftId,
@@ -193,13 +221,15 @@ export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response)
         where: { id: outboundRecord.id },
         data: { status: 'FAILED', error: result.error },
       });
-      throw new Error(result.error || 'Failed to dispatch email via Mailgun');
+      throw new Error(result.error || 'Failed to dispatch email via ESP');
     }
 
     await prisma.outboundEmail.update({
       where: { id: outboundRecord.id },
       data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
     });
+
+    await planGuardService.recordEmailSent(userId, 1);
 
     await prisma.lead.update({
       where: { id: pending.leadId },
@@ -213,7 +243,8 @@ export const sendScheduledEmailNow = async (req: CampaignRequest, res: Response)
         eventType: 'EMAIL_SENT',
         metadata: {
           outboundEmailId: outboundRecord.id,
-          sender: `${sender.localPart}@${sender.domain.domainName}`,
+          senderId: sender.id,
+          sender: fromEmail,
           isManualOverride: true,
         },
       },
@@ -238,16 +269,16 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
     const draftId = req.params.draftId as string;
 
     const [lead, campaign, draft] = await Promise.all([
-      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.lead.findFirst({ where: { id: leadId, campaignId } }),
       prisma.campaign.findUnique({
         where: { id: campaignId },
         include: { senderLinks: { include: { sender: true } } },
       }),
-      prisma.draft.findUnique({ where: { id: draftId } }),
+      prisma.draft.findFirst({ where: { id: draftId, campaignId } }),
     ]);
 
     if (!lead || !campaign || !draft) {
-      return res.status(404).json({ error: 'Lead, Campaign, or Draft not found' });
+      return res.status(404).json({ error: 'Lead, Campaign, or Draft not found on this campaign' });
     }
 
     const activeSender = campaign.senderLinks.map(l => l.sender).find(s => s.status === 'active');
@@ -274,7 +305,7 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
     const userId = req.user!.id;
 
     const [lead, campaign] = await Promise.all([
-      prisma.lead.findUnique({ where: { id: leadId } }),
+      prisma.lead.findFirst({ where: { id: leadId, campaignId } }),
       prisma.campaign.findUnique({
         where: { id: campaignId },
         include: {
@@ -284,8 +315,13 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
       }),
     ]);
 
-    if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found' });
+    if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found on this campaign' });
     if (lead.status === 'UNSUBSCRIBED') return res.status(400).json({ error: 'This lead has unsubscribed' });
+
+    if (await planGuardService.isOverMonthlyEmailLimit(userId)) {
+      return res.status(429).json({ error: 'Monthly workspace email limit reached. Upgrade your plan in Profile -> Billing.' });
+    }
+
     const draft = campaign.drafts[0];
     if (!draft) return res.status(400).json({ error: 'No active draft found' });
 
@@ -307,7 +343,10 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
 
     const unsubscribeToken = await ensureUnsubscribeToken(lead.id, lead.unsubscribeToken);
     const unsubscribeUrl = buildUnsubscribeUrl(unsubscribeToken);
-    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+    const [userSettings, artifacts] = await Promise.all([
+      prisma.userSettings.findUnique({ where: { userId } }),
+      artifactService.getArtifactMapForUser(userId),
+    ]);
 
     const { subject, body } = personalisationService.personalise(
       lead,
@@ -320,14 +359,20 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
         companyName: userSettings?.companyName,
         physicalAddress: userSettings?.physicalAddress,
         customOptOutText: userSettings?.customOptOutText,
+        artifacts,
       }
     );
+
+    const fromEmail = `${activeSender.localPart}@${activeSender.domain.domainName}`;
 
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
         domainId: activeSender.domainId,
-        leadId,
+        senderId: activeSender.id,
+        fromAddress: fromEmail,
+        toAddress: lead.email,
+        leadId: lead.id,
         campaignId,
         draftId: draft.id,
         subject,
@@ -373,8 +418,10 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
       data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
     });
 
+    await planGuardService.recordEmailSent(userId, 1);
+
     await prisma.lead.update({
-      where: { id: leadId },
+      where: { id: lead.id },
       data: { outreachStatus: 'SENT', status: 'CONTACTED' },
     });
 
@@ -385,7 +432,8 @@ export const sendLeadEmail = async (req: AuthRequest, res: Response, next: NextF
         eventType: 'EMAIL_SENT',
         metadata: {
           outboundEmailId: outboundRecord.id,
-          sender: `${activeSender.localPart}@${activeSender.domain.domainName}`,
+          senderId: activeSender.id,
+          sender: fromEmail,
           isDirectCampaignSend: true,
         },
       },
@@ -404,16 +452,22 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
     const { subject, body } = req.body;
     const userId = req.user!.id;
 
-    const lead = await prisma.lead.findUnique({ where: { id: leadId } });
-    const campaign = await prisma.campaign.findUnique({
-      where: { id: campaignId },
-      include: { senderLinks: { include: { sender: { include: { domain: true } } } } },
-    });
+    const [lead, campaign] = await Promise.all([
+      prisma.lead.findFirst({ where: { id: leadId, campaignId } }),
+      prisma.campaign.findUnique({
+        where: { id: campaignId },
+        include: { senderLinks: { include: { sender: { include: { domain: true } } } } },
+      }),
+    ]);
 
-    if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found' });
+    if (!lead || !campaign) return res.status(404).json({ error: 'Lead or Campaign not found on this campaign' });
+
+    if (await planGuardService.isOverMonthlyEmailLimit(userId)) {
+      return res.status(429).json({ error: 'Monthly workspace email limit reached. Upgrade your plan in Profile -> Billing.' });
+    }
 
     const latestIncoming = await prisma.outboundEmail.findFirst({
-      where: { leadId, campaignId, isIncoming: true },
+      where: { leadId: lead.id, campaignId, isIncoming: true },
       orderBy: { sentAt: 'desc' },
     });
 
@@ -433,21 +487,31 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       return res.status(429).json({ error: 'Assigned sender mailbox has reached its daily quota limit.' });
     }
 
-    const userSettings = await prisma.userSettings.findUnique({ where: { userId } });
+    const [userSettings, artifacts] = await Promise.all([
+      prisma.userSettings.findUnique({ where: { userId } }),
+      artifactService.getArtifactMapForUser(userId),
+    ]);
 
     const { subject: pSubject, body: pBody } = personalisationService.personalise(
       lead,
       subject,
       body,
       campaign.reference,
-      activeSender.displayName || campaign.senderName
+      activeSender.displayName || campaign.senderName,
+      undefined,
+      { artifacts }
     );
+
+    const fromEmail = `${activeSender.localPart}@${activeSender.domain.domainName}`;
 
     const outboundRecord = await prisma.outboundEmail.create({
       data: {
         userId,
         domainId: activeSender.domainId,
-        leadId,
+        senderId: activeSender.id,
+        fromAddress: fromEmail,
+        toAddress: lead.email,
+        leadId: lead.id,
         campaignId,
         subject: pSubject,
         body: pBody,
@@ -494,6 +558,8 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
       data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
     });
 
+    await planGuardService.recordEmailSent(userId, 1);
+
     await prisma.leadActivityEvent.create({
       data: {
         leadId: lead.id,
@@ -501,13 +567,14 @@ export const sendReplyDraft = async (req: AuthRequest, res: Response, next: Next
         eventType: 'EMAIL_SENT',
         metadata: {
           outboundEmailId: outboundRecord.id,
-          sender: `${activeSender.localPart}@${activeSender.domain.domainName}`,
+          senderId: activeSender.id,
+          sender: fromEmail,
           isReplyDraft: true,
         },
       },
     });
 
-    await prisma.draft.deleteMany({ where: { leadId, campaignId, isReplyDraft: true } });
+    await prisma.draft.deleteMany({ where: { leadId: lead.id, campaignId, isReplyDraft: true } });
 
     res.json({ success: true, message: 'Reply sent' });
   } catch (error) {

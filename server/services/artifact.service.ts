@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { blobService } from './blob.service';
 import { planGuardService } from './billing/planGuard.service';
+import { assertSafePublicUrl } from '../lib/ssrfGuard';
 import { EspAttachment } from './esp/types';
 
 export class ArtifactService {
@@ -48,15 +49,7 @@ export class ArtifactService {
       throw new Error('Title and URL are required');
     }
 
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(input.url.trim());
-    } catch {
-      throw new Error('Provide a valid https:// URL');
-    }
-    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-      throw new Error('Only http:// and https:// URLs are permitted');
-    }
+    const parsedUrl = await assertSafePublicUrl(input.url);
 
     await planGuardService.assertArtifactCapacity(userId, {
       campaignId: input.campaignId,
