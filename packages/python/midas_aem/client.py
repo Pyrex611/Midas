@@ -126,6 +126,43 @@ class MidasClient(_BaseClient):
     def add_leads_to_campaign(self, campaign_id: str, lead_ids: List[str]) -> Dict[str, Any]:
         return self._handle_response(self._client.post(f"/api/campaigns/{campaign_id}/leads", json={"leadIds": lead_ids}))
 
+    def enrich_lead(self, lead_id: str) -> Dict[str, Any]:
+        return self._handle_response(self._client.post(f"/api/leads/{lead_id}/enrich"))
+
+    def list_artifacts(self, campaign_id: Optional[str] = None, gong_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        params = {}
+        if campaign_id:
+            params["campaignId"] = campaign_id
+        if gong_id:
+            params["gongId"] = gong_id
+        return self._handle_response(self._client.get("/api/artifacts", params=params))
+
+    def create_artifact_link(
+        self,
+        title: str,
+        url: str,
+        slug: Optional[str] = None,
+        description: Optional[str] = None,
+        usage_prompt: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+        gong_id: Optional[str] = None,
+        broadcast_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"title": title, "url": url}
+        if slug:
+            payload["slug"] = slug
+        if description:
+            payload["description"] = description
+        if usage_prompt:
+            payload["usagePrompt"] = usage_prompt
+        if campaign_id:
+            payload["campaignId"] = campaign_id
+        if gong_id:
+            payload["gongId"] = gong_id
+        if broadcast_id:
+            payload["broadcastId"] = broadcast_id
+        return self._handle_response(self._client.post("/api/artifacts/link", json=payload))
+
     def send_sandbox_test(self, subject: Optional[str] = None, body: Optional[str] = None) -> Dict[str, Any]:
         return self._handle_response(self._client.post("/api/sandbox/test-send", json={"subject": subject, "body": body}))
 
@@ -188,6 +225,43 @@ class AsyncMidasClient(_BaseClient):
         return self._handle_response(
             await self._client.post(f"/api/campaigns/{campaign_id}/leads", json={"leadIds": lead_ids})
         )
+
+    async def enrich_lead(self, lead_id: str) -> Dict[str, Any]:
+        return self._handle_response(await self._client.post(f"/api/leads/{lead_id}/enrich"))
+
+    async def list_artifacts(self, campaign_id: Optional[str] = None, gong_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        params = {}
+        if campaign_id:
+            params["campaignId"] = campaign_id
+        if gong_id:
+            params["gongId"] = gong_id
+        return self._handle_response(await self._client.get("/api/artifacts", params=params))
+
+    async def create_artifact_link(
+        self,
+        title: str,
+        url: str,
+        slug: Optional[str] = None,
+        description: Optional[str] = None,
+        usage_prompt: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+        gong_id: Optional[str] = None,
+        broadcast_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"title": title, "url": url}
+        if slug:
+            payload["slug"] = slug
+        if description:
+            payload["description"] = description
+        if usage_prompt:
+            payload["usagePrompt"] = usage_prompt
+        if campaign_id:
+            payload["campaignId"] = campaign_id
+        if gong_id:
+            payload["gongId"] = gong_id
+        if broadcast_id:
+            payload["broadcastId"] = broadcast_id
+        return self._handle_response(await self._client.post("/api/artifacts/link", json=payload))
 
     async def send_sandbox_test(self, subject: Optional[str] = None, body: Optional[str] = None) -> Dict[str, Any]:
         res = await self._client.post("/api/sandbox/test-send", json={"subject": subject, "body": body})

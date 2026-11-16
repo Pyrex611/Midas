@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Sheet } from '../common/Sheet';
-import { campaignAPI } from '../../services/api';
+import { campaignAPI, leadAPI, getErrorMessage } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { Lead } from '../../types/lead';
 import { Icons } from '../../lib/icons';
@@ -28,6 +28,9 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
 
+  const [enriched, setEnriched] = useState<Lead['enrichedData'] | null>(null);
+  const [enriching, setEnriching] = useState(false);
+
   const [editingScheduledId, setEditingScheduledId] = useState<string | null>(null);
   const [editSubject, setEditSubject] = useState('');
   const [editBody, setEditBody] = useState('');
@@ -37,8 +40,10 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
   const activeCampaignId = campaignId || lead?.campaignId || undefined;
 
   const loadData = () => {
-    if (!isOpen || !lead || !activeCampaignId) return;
+    if (!isOpen || !lead) return;
+    setEnriched(lead.enrichedData || null);
 
+    if (!activeCampaignId) return;
     setLoading(true);
     Promise.all([
       campaignAPI.getLeadThread(activeCampaignId, lead.id),
@@ -59,6 +64,21 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
     loadData();
   }, [isOpen, lead, activeCampaignId]);
 
+  const handleEnrichLead = async () => {
+    if (!lead) return;
+    setEnriching(true);
+    try {
+      const res = await leadAPI.enrich(lead.id);
+      setEnriched(res.data?.enrichedData || null);
+      toast.success('Lead enriched with corporate insights (2 AI credits)', 'Enriched');
+      if (onUpdate) onUpdate();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Lead enrichment failed'), 'AI Credit / Enrichment Error');
+    } finally {
+      setEnriching(false);
+    }
+  };
+
   const handleStartEditScheduled = (item: any) => {
     setEditingScheduledId(item.id);
     setEditSubject(item.rawSubject);
@@ -67,14 +87,13 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
 
   const handleSaveScheduled = async (pendingId: string) => {
     if (!editSubject.trim() || !editBody.trim() || !activeCampaignId) return;
-
     setSavingScheduled(true);
     try {
       await campaignAPI.updateScheduledEmail(activeCampaignId, pendingId, {
         subject: editSubject.trim(),
         body: editBody.trim(),
       });
-      toast.success('Scheduled email updated and variables preserved', 'Saved');
+      toast.success('Scheduled email updated', 'Saved');
       setEditingScheduledId(null);
       loadData();
     } catch {
@@ -89,11 +108,11 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
     setSendingNowId(pendingId);
     try {
       await campaignAPI.sendScheduledEmailNow(activeCampaignId, pendingId);
-      toast.success('Email dispatched immediately (pause bypassed)', 'Sent');
+      toast.success('Email dispatched immediately', 'Sent');
       loadData();
       if (onUpdate) onUpdate();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to dispatch email', 'Send Error');
+      toast.error(getErrorMessage(err, 'Failed to dispatch email'), 'Send Error');
     } finally {
       setSendingNowId(null);
     }
@@ -126,7 +145,7 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
       loadData();
       if (onUpdate) onUpdate();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to dispatch reply', 'Send Error');
+      toast.error(getErrorMessage(err, 'Failed to dispatch reply'), 'Send Error');
     } finally {
       setSending(false);
     }
@@ -143,34 +162,63 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
       width="xl"
     >
       <div className="space-y-6">
-        <div className="flex flex-wrap gap-2 pb-4 border-b border-gold-500/35">
-          <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-thistle-100 text-royal-950 border border-gold-500/30">
-            Status: {lead.status}
-          </span>
-          <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-royal-700 text-white">
-            Outreach: {lead.outreachStatus || 'UNCONTACTED'}
-          </span>
-          {lead.verificationStatus && (
-            <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg border ${
-              lead.verificationStatus === 'VALID'
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                : 'bg-amber-50 text-amber-800 border-gold-400/50'
-            }`}>
-              {lead.verificationStatus}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-gold-500/35">
+          <div className="flex flex-wrap gap-2">
+            <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-thistle-100 text-royal-950 border border-gold-500/30">
+              Status: {lead.status}
             </span>
-          )}
+            <span className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-royal-700 text-white">
+              Outreach: {lead.outreachStatus || 'UNCONTACTED'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleEnrichLead}
+            disabled={enriching}
+            className="px-3.5 py-1.5 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
+          >
+            <Icons.Sparkles className="text-gold-300" />
+            <span>{enriching ? 'Enriching...' : enriched ? 'Re-Enrich (2 Credits)' : 'Enrich Lead (2 Credits)'}</span>
+          </button>
         </div>
 
-        {/* Upcoming Scheduled Messages */}
+        {/* Enriched Corporate Intelligence */}
+        {enriched && (
+          <div className="p-4 bg-thistle-50/80 border border-gold-500/45 rounded-2xl space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-royal-700">AI Lead Intelligence</span>
+              {enriched.industry && (
+                <span className="px-2 py-0.5 rounded bg-white border border-gold-500/30 text-[10px] font-bold text-royal-800">
+                  {enriched.industry}
+                </span>
+              )}
+            </div>
+            {enriched.companySummary && <p className="text-royal-950/85 leading-relaxed">{enriched.companySummary}</p>}
+            {enriched.personalizationHook && (
+              <div className="p-2.5 bg-white border border-gold-500/35 rounded-xl">
+                <span className="text-[10px] font-bold uppercase text-thistle-500 block">Outreach Opener Hook</span>
+                <p className="font-medium text-royal-950 mt-0.5">{enriched.personalizationHook}</p>
+              </div>
+            )}
+            {enriched.likelyPainPoints && enriched.likelyPainPoints.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {enriched.likelyPainPoints.map((p, idx) => (
+                  <span key={idx} className="px-2 py-0.5 rounded bg-thistle-100 text-royal-800 border border-gold-500/30 text-[10px]">
+                    {p}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {scheduledEmails.length > 0 && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-gold-500 animate-pulse" />
-                Scheduled Dispatch ({scheduledEmails.length})
-              </span>
-              <span className="text-[10px] text-thistle-500">Waiting in queue</span>
-            </div>
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-gold-500 animate-pulse" />
+              Scheduled Dispatch ({scheduledEmails.length})
+            </span>
 
             {scheduledEmails.map((item) => {
               const isEditing = editingScheduledId === item.id;
@@ -180,7 +228,7 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
                 <div key={item.id} className="p-4 rounded-2xl bg-amber-50/60 border border-gold-500/45 space-y-3 text-xs">
                   <div className="flex items-center justify-between pb-2 border-b border-gold-500/35">
                     <span className="font-bold text-amber-950 text-[11px]">
-                      {isEditing ? 'Editing Raw Template (Mustache Mode)' : 'Resolved Live Preview (As Sent)'}
+                      {isEditing ? 'Editing Template' : 'Resolved Live Preview'}
                     </span>
 
                     <div className="flex items-center gap-2">
@@ -188,7 +236,7 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
                         <>
                           <button
                             onClick={() => handleStartEditScheduled(item)}
-                            className="px-2.5 py-1 bg-white hover:bg-thistle-100 text-royal-800 font-bold rounded-lg border border-gold-500/35 text-[10px] transition-colors"
+                            className="px-2.5 py-1 bg-white hover:bg-thistle-100 text-royal-800 font-bold rounded-lg border border-gold-500/35 text-[10px]"
                           >
                             Edit
                           </button>
@@ -203,18 +251,11 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
                         </>
                       ) : (
                         <div className="flex gap-1.5">
-                          <button
-                            onClick={() => setEditingScheduledId(null)}
-                            className="px-2.5 py-1 text-thistle-500 hover:text-royal-950 text-[10px]"
-                          >
+                          <button onClick={() => setEditingScheduledId(null)} className="px-2.5 py-1 text-thistle-500 text-[10px]">
                             Cancel
                           </button>
-                          <button
-                            onClick={() => handleSaveScheduled(item.id)}
-                            disabled={savingScheduled}
-                            className="px-3 py-1 btn-royal font-bold rounded-lg text-[10px]"
-                          >
-                            {savingScheduled ? 'Saving...' : 'Save & Resolve'}
+                          <button onClick={() => handleSaveScheduled(item.id)} disabled={savingScheduled} className="px-3 py-1 btn-royal font-bold rounded-lg text-[10px]">
+                            {savingScheduled ? 'Saving...' : 'Save'}
                           </button>
                         </div>
                       )}
@@ -223,24 +264,18 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
 
                   {isEditing ? (
                     <div className="space-y-2">
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Subject</label>
-                        <input
-                          type="text"
-                          value={editSubject}
-                          onChange={(e) => setEditSubject(e.target.value)}
-                          className="w-full px-3 py-1.5 bg-white border border-gold-500/40 rounded-lg text-xs font-mono focus:outline-none focus:border-gold-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Body Text</label>
-                        <textarea
-                          rows={6}
-                          value={editBody}
-                          onChange={(e) => setEditBody(e.target.value)}
-                          className="w-full p-3 bg-white border border-gold-500/40 rounded-lg text-xs font-mono focus:outline-none focus:border-gold-500"
-                        />
-                      </div>
+                      <input
+                        type="text"
+                        value={editSubject}
+                        onChange={(e) => setEditSubject(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-gold-500/40 rounded-lg text-xs font-mono"
+                      />
+                      <textarea
+                        rows={6}
+                        value={editBody}
+                        onChange={(e) => setEditBody(e.target.value)}
+                        className="w-full p-3 bg-white border border-gold-500/40 rounded-lg text-xs font-mono"
+                      />
                     </div>
                   ) : (
                     <div className="space-y-1">
@@ -254,7 +289,6 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
           </div>
         )}
 
-        {/* Past Conversation Stream */}
         <div>
           <h3 className="text-xs font-bold uppercase tracking-wider text-thistle-500 mb-3">Conversation Stream</h3>
           {loading ? (
@@ -286,7 +320,6 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
           )}
         </div>
 
-        {/* AI Reply Copilot */}
         {activeCampaignId && (
           <div className="pt-4 border-t border-gold-500/35">
             <div className="flex items-center justify-between mb-3">
@@ -314,17 +347,10 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
                   <p className="text-xs text-royal-950/85 whitespace-pre-wrap">{replyDraft.body}</p>
                 </div>
                 <div className="flex justify-end gap-2 pt-2 border-t border-gold-500/35">
-                  <button
-                    onClick={() => setReplyDraft(null)}
-                    className="px-3 py-1 text-xs text-thistle-500 hover:text-royal-950 font-bold"
-                  >
+                  <button onClick={() => setReplyDraft(null)} className="px-3 py-1 text-xs text-thistle-500 font-bold">
                     Discard
                   </button>
-                  <button
-                    onClick={handleSendReply}
-                    disabled={sending}
-                    className="px-4 py-1.5 btn-royal text-xs font-bold rounded-lg"
-                  >
+                  <button onClick={handleSendReply} disabled={sending} className="px-4 py-1.5 btn-royal text-xs font-bold rounded-lg">
                     {sending ? 'Sending...' : 'Approve & Send Reply'}
                   </button>
                 </div>

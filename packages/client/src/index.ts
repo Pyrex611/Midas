@@ -37,6 +37,20 @@ export interface GongPayload {
   buttonText?: string;
 }
 
+export interface ArtifactLinkPayload {
+  title: string;
+  url: string;
+  slug?: string;
+  description?: string;
+  usagePrompt?: string;
+  type?: 'LINK' | 'DOCUMENT' | 'IMAGE';
+  attachmentMode?: 'LINK' | 'MIME_ATTACHMENT';
+  isOneTime?: boolean;
+  campaignId?: string;
+  gongId?: string;
+  broadcastId?: string;
+}
+
 export class MidasAPIError extends Error {
   constructor(public status: number, message: string, public payload?: any) {
     super(message);
@@ -139,6 +153,30 @@ export class MidasClient {
       method: 'POST',
       body: JSON.stringify({ leadIds }),
     });
+  }
+
+  async enrichLead(leadId: string) {
+    return this.request(`/api/leads/${encodeURIComponent(leadId)}/enrich`, { method: 'POST' });
+  }
+
+  async listArtifacts(filters?: { campaignId?: string; gongId?: string; broadcastId?: string }) {
+    const qs = new URLSearchParams();
+    if (filters?.campaignId) qs.set('campaignId', filters.campaignId);
+    if (filters?.gongId) qs.set('gongId', filters.gongId);
+    if (filters?.broadcastId) qs.set('broadcastId', filters.broadcastId);
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request(`/api/artifacts${query}`, { method: 'GET' });
+  }
+
+  async createArtifactLink(payload: ArtifactLinkPayload) {
+    return this.request('/api/artifacts/link', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteArtifact(artifactId: string) {
+    return this.request(`/api/artifacts/${encodeURIComponent(artifactId)}`, { method: 'DELETE' });
   }
 
   async getSandboxStatus() {

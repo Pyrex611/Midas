@@ -2,6 +2,8 @@ import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { promptManager, PromptParams } from './promptManager.service';
 import { knowledgeBaseService } from './knowledgeBase.service';
+import { artifactService } from './artifact.service';
+import { planGuardService } from './billing/planGuard.service';
 import { tryDecrypt } from '../lib/encryption';
 import {
   AIProvider,
@@ -195,6 +197,9 @@ export class AIService {
   }
 
   async complete(prompt: string, system?: string, userId?: string): Promise<string> {
+    if (userId) {
+      await planGuardService.consumeAiCredits(userId, 1, true);
+    }
     const provider = await this.resolveUserProvider(userId);
     return this.attemptComplete(prompt, system, provider, false);
   }
@@ -243,12 +248,21 @@ export class AIService {
       opts = optionsOrTone;
     }
 
-    const provider = await this.resolveUserProvider(opts.userId);
-    const kbContext = opts.userId
-      ? await knowledgeBaseService.buildPromptContext(opts.userId, opts.campaignId).catch(() => null)
-      : null;
+    if (opts.userId) {
+      await planGuardService.consumeAiCredits(opts.userId, 1, true);
+    }
 
-    const mergedCompanyContext = [opts.companyContext, kbContext].filter(Boolean).join('\n\n') || null;
+    const provider = await this.resolveUserProvider(opts.userId);
+    const [kbContext, artifactContext] = opts.userId
+      ? await Promise.all([
+          knowledgeBaseService.buildPromptContext(opts.userId, { campaignId: opts.campaignId }).catch(() => null),
+          artifactService.buildArtifactsPromptContext(opts.userId, { campaignId: opts.campaignId }).catch(() => null),
+        ])
+      : [null, null];
+
+    const mergedCompanyContext =
+      [opts.companyContext, kbContext, artifactContext].filter(Boolean).join('\n\n') || null;
+
     const variationSeed = Math.floor(Math.random() * 1000000);
     const params: PromptParams = {
       useCase: opts.useCase || 'initial',
@@ -313,9 +327,12 @@ ${replyText}
     userId?: string
   ): Promise<{ subject: string; body: string }> {
     const provider = await this.resolveUserProvider(userId);
-    const kbContext = userId
-      ? await knowledgeBaseService.buildPromptContext(userId, campaign.id).catch(() => null)
-      : null;
+    const [kbContext, artifactContext] = userId
+      ? await Promise.all([
+          knowledgeBaseService.buildPromptContext(userId, { campaignId: campaign.id }).catch(() => null),
+          artifactService.buildArtifactsPromptContext(userId, { campaignId: campaign.id }).catch(() => null),
+        ])
+      : [null, null];
 
     const prompt = `You are a world-class sales development representative.
 A prospect has raised an objection of type "${intent}".
@@ -324,6 +341,7 @@ Your goal is to politely resolve the objection, remove friction, and steer towar
 Campaign Strategy Context: "${campaign.context || 'B2B Solutions'}"
 Extended SDR Guidelines: "${campaign.extendedObjective || 'Be concise, low-pressure, and helpful.'}"
 ${kbContext ? `\n${kbContext}\n` : ''}
+${artifactContext ? `\n${artifactContext}\n` : ''}
 Prospect Name: "${lead.name}"
 Prospect Company: "${lead.company || 'their team'}"
 Prospect's Message:
@@ -334,8 +352,9 @@ ${inboundText}
 Rules:
 1. Under 75 words total.
 2. Directly address their specific friction point.
-3. Soft CTA aligned with "${campaign.targetTool || 'the next step'}".
-4. Use Spintax for greetings: {Hi|Hey} {{name}},
+3. If an Artifact matches their question based on its "When to use" prompt, include its {{artifact:slug}} token naturally.
+4. Soft CTA aligned with "${campaign.targetTool || 'the next step'}".
+5. Use Spintax for greetings: {Hi|Hey} {{name}},
 
 Output JSON: {"subject": "Re: ...", "body": "..."}`;
 

@@ -23,6 +23,15 @@ export interface Lead {
   status: LeadStatus;
   outreachStatus?: OutreachStatus;
   verificationStatus?: string;
+  enrichedData?: {
+    companySummary?: string;
+    industry?: string;
+    likelyPainPoints?: string[];
+    recentAchievementOrFocus?: string;
+    personalizationHook?: string;
+    rawSummary?: string;
+  } | null;
+  enrichedAt?: string | null;
   campaignId?: string | null;
   createdAt: string;
   updatedAt: string;
