@@ -2,26 +2,7 @@ import prisma from '../lib/prisma';
 import { blobService } from './blob.service';
 import { extractTextFromDocument } from '../utils/documentExtractor';
 import { planGuardService } from './billing/planGuard.service';
-
-function isPrivateOrLocalHostname(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (
-    h === 'localhost' ||
-    h.endsWith('.local') ||
-    h === '127.0.0.1' ||
-    h === '::1' ||
-    h.startsWith('10.') ||
-    h.startsWith('192.168.') ||
-    h.startsWith('169.254.')
-  ) {
-    return true;
-  }
-  const match172 = h.match(/^172\.(\d+)\./);
-  if (match172 && Number(match172[1]) >= 16 && Number(match172[1]) <= 31) {
-    return true;
-  }
-  return false;
-}
+import { assertSafePublicUrl } from '../lib/ssrfGuard';
 
 export class KnowledgeBaseService {
   async listKnowledgeBases(userId: string) {
@@ -122,16 +103,7 @@ export class KnowledgeBaseService {
     if (!kb) throw new Error('Knowledge Base not found');
     await planGuardService.assertKnowledgeResourceCapacity(userId, knowledgeBaseId);
 
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(urlString.trim());
-    } catch {
-      throw new Error('Invalid URL format. Include https://');
-    }
-
-    if (!['http:', 'https:'].includes(parsedUrl.protocol) || isPrivateOrLocalHostname(parsedUrl.hostname)) {
-      throw new Error('URL must be a public http:// or https:// webpage');
-    }
+    const parsedUrl = await assertSafePublicUrl(urlString);
 
     const res = await fetch(parsedUrl.toString(), {
       headers: { 'User-Agent': 'MidasKnowledgeBot/1.0 (+https://midas-aem.vercel.app)' },
@@ -225,22 +197,13 @@ export class KnowledgeBaseService {
     }
 
     if (targetType === 'campaign') {
-      const res = await prisma.campaign.updateMany({
-        where: { id: targetId, userId },
-        data: { knowledgeBaseId },
-      });
+      const res = await prisma.campaign.updateMany({ where: { id: targetId, userId }, data: { knowledgeBaseId } });
       if (res.count === 0) throw new Error('Campaign not found');
     } else if (targetType === 'gong') {
-      const res = await prisma.gong.updateMany({
-        where: { id: targetId, userId },
-        data: { knowledgeBaseId },
-      });
+      const res = await prisma.gong.updateMany({ where: { id: targetId, userId }, data: { knowledgeBaseId } });
       if (res.count === 0) throw new Error('Gong channel not found');
     } else if (targetType === 'broadcast') {
-      const res = await prisma.newsletterBroadcast.updateMany({
-        where: { id: targetId, userId },
-        data: { knowledgeBaseId },
-      });
+      const res = await prisma.newsletterBroadcast.updateMany({ where: { id: targetId, userId }, data: { knowledgeBaseId } });
       if (res.count === 0) throw new Error('Broadcast not found');
     }
   }
@@ -257,10 +220,7 @@ export class KnowledgeBaseService {
     let targetKbId = options?.knowledgeBaseId || null;
 
     if (!targetKbId && options?.campaignId) {
-      const camp = await prisma.campaign.findUnique({
-        where: { id: options.campaignId },
-        select: { knowledgeBaseId: true },
-      });
+      const camp = await prisma.campaign.findUnique({ where: { id: options.campaignId }, select: { knowledgeBaseId: true } });
       targetKbId = camp?.knowledgeBaseId || null;
     }
 
@@ -273,14 +233,10 @@ export class KnowledgeBaseService {
     }
 
     if (!targetKbId && options?.gongId) {
-      const g = await prisma.gong.findUnique({
-        where: { id: options.gongId },
-        select: { knowledgeBaseId: true },
-      });
+      const g = await prisma.gong.findUnique({ where: { id: options.gongId }, select: { knowledgeBaseId: true } });
       targetKbId = g?.knowledgeBaseId || null;
     }
 
-    // Fallback to user's default Knowledge Base
     if (!targetKbId) {
       const defKb = await prisma.knowledgeBase.findFirst({
         where: { userId },

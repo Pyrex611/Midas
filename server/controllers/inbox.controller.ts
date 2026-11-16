@@ -2,13 +2,11 @@ import { Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
 import { emailService } from '../services/email.service';
 import { senderService } from '../services/sender.service';
+import { artifactService } from '../services/artifact.service';
+import { planGuardService } from '../services/billing/planGuard.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../config/logger';
 
-/**
- * GET /api/inbox?domainId=...&senderId=...
- * Supports filtering threads cleanly by Domain or a specific Sender mailbox.
- */
 export const getUnifiedInbox = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
@@ -87,6 +85,10 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
     }
     if (!senderId) {
       return res.status(400).json({ error: 'Please select an active mailbox sender to send from' });
+    }
+
+    if (await planGuardService.isOverMonthlyEmailLimit(userId)) {
+      return res.status(429).json({ error: 'Monthly workspace email limit reached. Upgrade your plan in Profile -> Billing.' });
     }
 
     let sender = await prisma.sender.findFirst({
@@ -189,6 +191,8 @@ export const startConversation = async (req: AuthRequest, res: Response, next: N
       data: { sentCountToday: { increment: 1 }, lastDispatchedAt: new Date() },
     });
 
+    await planGuardService.recordEmailSent(userId, 1);
+
     await prisma.lead.update({
       where: { id: targetLead.id },
       data: { status: 'CONTACTED', outreachStatus: 'SENT' },
@@ -217,7 +221,11 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
 
     if (!body) return res.status(400).json({ error: 'Reply body is required' });
 
-    const lead = await prisma.lead.findUnique({
+    if (await planGuardService.isOverMonthlyEmailLimit(userId)) {
+      return res.status(429).json({ error: 'Monthly workspace email limit reached. Upgrade your plan in Profile -> Billing.' });
+    }
+
+    const lead = await prisma.lead.findFirst({
       where: { id: leadId, userId },
       include: {
         campaign: true,
@@ -293,6 +301,8 @@ export const sendManualReply = async (req: AuthRequest, res: Response, next: Nex
       where: { id: outboundRecord.id },
       data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
     });
+
+    await planGuardService.recordEmailSent(userId, 1);
 
     res.json({ success: true, email: outboundRecord });
   } catch (error) {

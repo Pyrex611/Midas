@@ -1,13 +1,19 @@
 import { Response, NextFunction } from 'express';
 import multer from 'multer';
+import { z } from 'zod';
 import { blobService } from '../services/blob.service';
 import { leadQueueService } from '../services/leadQueue.service';
 import { enrichmentService } from '../services/enrichment.service';
+import { LeadUpdateSchema } from '../types/lead.types';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../config/logger';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
+
+const LeadUpdateWithEmailSchema = LeadUpdateSchema.extend({
+  email: z.string().email().max(255).optional(),
+}).strict();
 
 export const uploadLeads = [
   upload.single('file'),
@@ -78,7 +84,9 @@ export const getBlocklist = async (req: AuthRequest, res: Response, next: NextFu
 export const addBlocklist = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { pattern } = req.body;
-    if (!pattern) return res.status(400).json({ error: 'Pattern is required' });
+    if (!pattern || typeof pattern !== 'string' || !pattern.trim()) {
+      return res.status(400).json({ error: 'Pattern is required' });
+    }
     const block = await prisma.blocklist.create({
       data: { userId: req.user!.id, pattern: pattern.toLowerCase().trim() },
     });
@@ -103,8 +111,8 @@ export const getLeads = async (req: AuthRequest, res: Response, next: NextFuncti
     const statusStr = req.query.status as string | undefined;
     const campaignIdStr = req.query.campaignId as string | undefined;
 
-    const p = parseInt(pageStr, 10);
-    const s = parseInt(pageSizeStr, 10);
+    const p = Math.max(1, parseInt(pageStr, 10) || 1);
+    const s = Math.min(100, Math.max(1, parseInt(pageSizeStr, 10) || 20));
 
     let where: any = { userId };
 
@@ -150,9 +158,8 @@ export const getLeads = async (req: AuthRequest, res: Response, next: NextFuncti
 export const getLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    const lead = await prisma.lead.findFirstOrThrow({
-      where: { id, userId: req.user!.id },
-    });
+    const lead = await prisma.lead.findFirst({ where: { id, userId: req.user!.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
     res.json(lead);
   } catch (error) {
     next(error);
@@ -168,19 +175,27 @@ export const enrichLead = async (req: AuthRequest, res: Response) => {
   }
 };
 
-const LEAD_UPDATABLE_FIELDS = ['name', 'email', 'company', 'position', 'status', 'outreachStatus'] as const;
-
 export const updateLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    const data: Record<string, any> = {};
-    for (const field of LEAD_UPDATABLE_FIELDS) {
-      if (req.body[field] !== undefined) data[field] = req.body[field];
+    const parsed = LeadUpdateWithEmailSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Invalid lead update fields',
+        details: parsed.error.flatten().fieldErrors,
+      });
     }
-    const lead = await prisma.lead.update({
+
+    const data: Record<string, any> = { ...parsed.data };
+    if (data.email) data.email = data.email.toLowerCase().trim();
+
+    const result = await prisma.lead.updateMany({
       where: { id, userId: req.user!.id },
       data,
     });
+    if (result.count === 0) return res.status(404).json({ error: 'Lead not found' });
+
+    const lead = await prisma.lead.findUnique({ where: { id } });
     res.json(lead);
   } catch (error) {
     next(error);
@@ -190,7 +205,8 @@ export const updateLead = async (req: AuthRequest, res: Response, next: NextFunc
 export const deleteLead = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
-    await prisma.lead.delete({ where: { id, userId: req.user!.id } });
+    const result = await prisma.lead.deleteMany({ where: { id, userId: req.user!.id } });
+    if (result.count === 0) return res.status(404).json({ error: 'Lead not found' });
     res.json({ success: true });
   } catch (error) {
     next(error);
