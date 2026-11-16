@@ -4,11 +4,14 @@ import multer from 'multer';
 import Papa from 'papaparse';
 import crypto from 'crypto';
 import prisma from '../../lib/prisma';
+import { isEmailBlocked } from '../../lib/blocklist';
 import { requireApiKey, requireApiKeyScope, ApiKeyRequest } from '../../middleware/apiKeyAuth.middleware';
 import { emailService } from '../../services/email.service';
 import { personalisationService } from '../../services/personalisation.service';
 import { senderService } from '../../services/sender.service';
 import { newsletterQueueService } from '../../services/newsletterQueue.service';
+import { artifactService } from '../../services/artifact.service';
+import { planGuardService } from '../../services/billing/planGuard.service';
 import { webhookDispatchService } from '../../services/webhookDispatch.service';
 import { reconcileCampaignQueue } from '../../services/queueReconciliation.service';
 import { logger } from '../../config/logger';
@@ -16,7 +19,8 @@ import { logger } from '../../config/logger';
 const router = Router();
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
-router.use(cors({ origin: true, credentials: true }));
+// Public Bearer API-key & drop-in widget endpoints do not use session cookies
+router.use(cors({ origin: '*', credentials: false }));
 
 function safeWaitUntil(promise: Promise<any>): void {
   try {
@@ -26,20 +30,12 @@ function safeWaitUntil(promise: Promise<any>): void {
       vercel.waitUntil(promise);
       return;
     }
-  } catch {
-    // Local dev or non-Vercel Node runtime
-  }
+  } catch {}
   promise.catch((err) => {
     logger.error({ err: err?.message || err }, '[TOWN-CRIER] Background task error');
   });
 }
 
-/**
- * GET /api/public/town-crier/widget.js
- * Autonomous Shadow-DOM Injection Engine (Next.js SPA & Cross-Domain Hardened):
- * - Inline Shadow-DOM error banner (zero native alert() dialogs).
- * - Guaranteed Escape keydown cleanup on all modal close paths.
- */
 router.get('/widget.js', (_req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -116,9 +112,7 @@ router.get('/widget.js', (_req: Request, res: Response) => {
           }
           return parsed;
         }
-      } catch (e) {
-        console.warn('[TownCrier] Invalid data-schema JSON, falling back to data-fields:', e.message);
-      }
+      } catch (e) {}
     }
 
     var raw = (fieldsAttr || 'email').split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
@@ -143,7 +137,7 @@ router.get('/widget.js', (_req: Request, res: Response) => {
     });
   }
 
-  function renderFieldHtml(field, accent, btnTextColor) {
+  function renderFieldHtml(field, accent) {
     var safeName = escapeHtml(field.name);
     var safeLabel = escapeHtml(field.label || field.name);
     var safePlaceholder = escapeHtml(field.placeholder || safeLabel);
@@ -237,7 +231,7 @@ router.get('/widget.js', (_req: Request, res: Response) => {
       .tc-success { display: none; padding: 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; text-align: center; color: #065f46; font-size: 13px; font-weight: 700; margin-top: 10px; }
     \`;
 
-    var fieldsMarkup = schema.map(function(f) { return renderFieldHtml(f, accent, btnTextColor); }).join('');
+    var fieldsMarkup = schema.map(function(f) { return renderFieldHtml(f, accent); }).join('');
 
     shadow.innerHTML = \`
       <style>\${css}</style>
@@ -405,7 +399,7 @@ router.get('/widget.js', (_req: Request, res: Response) => {
         .tc-error { display: none; padding: 8px 10px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; color: #9f1239; font-size: 11px; font-weight: 600; margin-top: 6px; }
       \`;
 
-      var fieldsMarkup = schema.map(function(f) { return renderFieldHtml(f, accent, btnTextColor); }).join('');
+      var fieldsMarkup = schema.map(function(f) { return renderFieldHtml(f, accent); }).join('');
 
       shadow.innerHTML = \`
         <style>\${css}</style>
@@ -519,7 +513,6 @@ router.get('/widget.js', (_req: Request, res: Response) => {
   res.send(script);
 });
 
-// Public Unsubscribe Routes
 async function executeUnsubscribe(identifier: string, isToken: boolean, res: Response) {
   try {
     const recipient = await prisma.newsletterRecipient.findFirst({
@@ -624,9 +617,7 @@ router.get('/gongs', requireApiKeyScope('town_crier:read'), async (req: Request,
     const gongs = await prisma.gong.findMany({
       where: { userId },
       include: {
-        _count: {
-          select: { recipients: true, broadcasts: true },
-        },
+        _count: { select: { recipients: true, broadcasts: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -756,11 +747,6 @@ router.post('/gongs/:id/broadcast', requireApiKeyScope('town_crier:send'), async
   }
 });
 
-/**
- * POST /api/public/town-crier/subscribe
- * Resolves Gongs by CUID or Slug (single AND bulk), auto-tags gong:<slug>,
- * fires welcome autoresponder & outbound webhook inside safeWaitUntil.
- */
 router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Request, res: Response) => {
   const apiReq = req as ApiKeyRequest;
   const userId = apiReq.apiUser!.id;
@@ -768,13 +754,7 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
 
   try {
     const blocklist = await prisma.blocklist.findMany({ where: { userId } });
-    const isSuppressed = (email: string) =>
-      blocklist.some((b) => {
-        const p = b.pattern.replace(/^\*@?/, '').replace(/^@/, '');
-        return email === p || email.endsWith('@' + p) || email.endsWith('.' + p);
-      });
 
-    // 1. Bulk Subscriber Array (Resolves Gong Slugs -> Gong IDs safely)
     if (Array.isArray(payload.subscribers)) {
       const userGongs = await prisma.gong.findMany({
         where: { userId },
@@ -815,7 +795,7 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
             unsubscribeToken: crypto.randomBytes(16).toString('hex'),
           };
         })
-        .filter((s: any) => s.email && s.email.includes('@') && !isSuppressed(s.email));
+        .filter((s: any) => s.email && s.email.includes('@') && !isEmailBlocked(s.email, blocklist));
 
       let insertedCount = 0;
       const CHUNK = 500;
@@ -844,13 +824,12 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
       return res.status(201).json({ success: true, processed: payload.subscribers.length, inserted: insertedCount });
     }
 
-    // 2. Single Subscriber Submission
     const cleanEmail = (payload.email || '').trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       return res.status(400).json({ error: 'A valid email address is required' });
     }
 
-    if (isSuppressed(cleanEmail)) {
+    if (isEmailBlocked(cleanEmail, blocklist)) {
       return res.status(400).json({ error: 'This email is suppressed by workspace blocklist rules.' });
     }
 
@@ -860,10 +839,7 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
       targetGong = await prisma.gong.findFirst({
         where: {
           userId,
-          OR: [
-            { id: gongIdentifier },
-            { slug: gongIdentifier.toLowerCase() },
-          ],
+          OR: [{ id: gongIdentifier }, { slug: gongIdentifier.toLowerCase() }],
         },
         include: {
           dedicatedSender: { include: { domain: true } },
@@ -886,10 +862,7 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
 
     const recipient = await prisma.newsletterRecipient.upsert({
       where: {
-        userId_email: {
-          userId,
-          email: cleanEmail,
-        },
+        userId_email: { userId, email: cleanEmail },
       },
       update: {
         name: payload.name ? String(payload.name).trim() : undefined,
@@ -913,11 +886,15 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
       },
     });
 
-    // 3. Preset Welcome Email Autoresponder (Protected by safeWaitUntil)
     if (targetGong && targetGong.welcomeEmailEnabled && targetGong.welcomeSubject && targetGong.welcomeBody) {
       safeWaitUntil(
         (async () => {
           try {
+            if (await planGuardService.isOverMonthlyEmailLimit(userId)) {
+              logger.warn({ userId, gongId: targetGong.id }, '[GONG] Skipped welcome email: monthly plan limit reached');
+              return;
+            }
+
             const userSettings = await prisma.userSettings.findUnique({
               where: { userId },
               include: { dedicatedNewsletterSender: { include: { domain: true } } },
@@ -946,6 +923,11 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
 
             if (eligibleSender) {
               eligibleSender = await senderService.ensureSenderDailyReset(eligibleSender.id);
+              const [artifacts, mimeAttachments] = await Promise.all([
+                artifactService.getArtifactMapForUser(userId),
+                artifactService.resolveMimeAttachmentsForScope(userId, { gongId: targetGong.id }),
+              ]);
+
               const appBaseUrl = process.env.APP_URL || 'https://midas-aem.vercel.app';
               const unsubUrl = `${appBaseUrl.replace(/\/$/, '')}/api/public/town-crier/recipients/unsubscribe/${recipient.unsubscribeToken}`;
 
@@ -960,10 +942,11 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
                   companyName: userSettings?.companyName,
                   physicalAddress: userSettings?.physicalAddress,
                   customOptOutText: userSettings?.customOptOutText,
+                  artifacts,
                 }
               );
 
-              await emailService.sendEmailNow(
+              const sendRes = await emailService.sendEmailNow(
                 { ...eligibleSender.domain, senderLocalPart: eligibleSender.localPart },
                 recipient.email,
                 subject,
@@ -981,9 +964,14 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
                   logoUrl: userSettings?.logoUrl,
                   brandingEnabled: userSettings?.brandingEnabled ?? true,
                   templateStyle: targetGong.templateStyle || 'card',
-                }
+                },
+                mimeAttachments
               );
-              logger.info({ recipientId: recipient.id, gongId: targetGong.id }, '[GONG] Preset welcome email dispatched');
+
+              if (sendRes.success) {
+                await planGuardService.recordEmailSent(userId, 1);
+                logger.info({ recipientId: recipient.id, gongId: targetGong.id }, '[GONG] Preset welcome email dispatched');
+              }
             }
           } catch (err: any) {
             logger.error({ err: err?.message, recipientId: recipient.id }, '[GONG] Failed to dispatch welcome email');
@@ -1061,12 +1049,7 @@ router.post('/recipients/import', requireApiKeyScope('town_crier:write'), upload
       const name = nameKey ? String(row[nameKey] || '').trim() : null;
 
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
-
-      const isBlocked = blocklist.some((b) => {
-        const pattern = b.pattern.replace(/^\*@?/, '').replace(/^@/, '');
-        return email === pattern || email.endsWith('@' + pattern) || email.endsWith('.' + pattern);
-      });
-      if (isBlocked) continue;
+      if (isEmailBlocked(email, blocklist)) continue;
 
       validRecipients.push({
         email,
