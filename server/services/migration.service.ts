@@ -3,11 +3,11 @@ import { logger } from '../config/logger';
 
 const TABLE_ORDER = [
   'users',
-  'UserSettings',
   'Subscription',
   'Domain',
   'DomainHealthSnapshot',
   'Sender',
+  'UserSettings',
   'KnowledgeBase',
   'KnowledgeResource',
   'Campaign',
@@ -119,7 +119,12 @@ export class MigrationService {
         }
 
         const selectColsSql = sharedColumns.map((c) => `"${c}"`).join(', ');
-        const { rows } = await source.query(`SELECT ${selectColsSql} FROM "${table}"`);
+        const orderClause =
+          table === 'OutboundEmail' && sourceColTypes.has('reply_to_id')
+            ? ` ORDER BY "reply_to_id" NULLS FIRST, "sent_at" ASC`
+            : '';
+
+        const { rows } = await source.query(`SELECT ${selectColsSql} FROM "${table}"${orderClause}`);
 
         if (rows.length === 0) {
           results.push({ table, sourceRows: 0, insertedRows: 0, status: 'EMPTY' });

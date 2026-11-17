@@ -319,8 +319,14 @@ export const townCrierAPI = {
   deleteGong: (id: string) => api.delete(`/town-crier/gongs/${id}`),
 
   getBroadcasts: () => api.get('/town-crier/broadcasts'),
-  createBroadcast: (data: { subject: string; body: string; tagFilter?: string; gongId?: string; templateStyle?: string }) =>
-    api.post('/town-crier/broadcasts', data),
+  createBroadcast: (data: {
+    subject: string;
+    body: string;
+    tagFilter?: string;
+    gongId?: string;
+    templateStyle?: string;
+    knowledgeBaseId?: string;
+  }) => api.post('/town-crier/broadcasts', data),
   queueBroadcast: (id: string) => api.post(`/town-crier/broadcasts/${id}/queue`),
   deleteBroadcast: (id: string) => api.delete(`/town-crier/broadcasts/${id}`),
   triggerSweep: () => api.post('/town-crier/sweep'),

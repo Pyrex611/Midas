@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sheet } from '../../common/Sheet';
-import { townCrierAPI, getErrorMessage } from '../../../services/api';
+import { townCrierAPI, knowledgeAPI, getErrorMessage } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
 import { ArtifactsPanel } from '../../artifacts/ArtifactsPanel';
 
@@ -21,9 +21,20 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
   const [broadcastSubject, setBroadcastSubject] = useState('');
   const [broadcastBody, setBroadcastBody] = useState('');
   const [selectedGongId, setSelectedGongId] = useState('');
+  const [selectedKbId, setSelectedKbId] = useState('');
+  const [knowledgeBases, setKnowledgeBases] = useState<any[]>([]);
   const [templateStyle, setTemplateStyle] = useState<'card' | 'editorial' | 'minimal' | 'plain'>('card');
   const [broadcastTagFilter, setBroadcastTagFilter] = useState('');
   const [savingBroadcast, setSavingBroadcast] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      knowledgeAPI
+        .listBases()
+        .then((res) => setKnowledgeBases(res.data || []))
+        .catch(() => {});
+    }
+  }, [isOpen]);
 
   const handleCreateBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,6 +46,7 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
         subject: broadcastSubject.trim(),
         body: broadcastBody.trim(),
         gongId: selectedGongId || undefined,
+        knowledgeBaseId: selectedKbId || undefined,
         tagFilter: broadcastTagFilter.trim() || undefined,
         templateStyle,
       });
@@ -42,6 +54,7 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
       setBroadcastSubject('');
       setBroadcastBody('');
       setSelectedGongId('');
+      setSelectedKbId('');
       setBroadcastTagFilter('');
       setTemplateStyle('card');
       onClose();
@@ -57,25 +70,43 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
     <Sheet
       isOpen={isOpen}
       onClose={onClose}
-      title="Compose Broadcast Proclamation"
-      description="Stage a newsletter broadcast. Strictly drained through the bounded ≤5/tick queue engine."
+      title="Compose Newsletter Broadcast"
+      description="Stage a newsletter edition. Dispatched via paced 5-send batches to protect domain reputation."
       width="xl"
     >
       <form onSubmit={handleCreateBroadcast} className="space-y-4 text-xs">
-        <div>
-          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Target Gong Channel</label>
-          <select
-            value={selectedGongId}
-            onChange={(e) => setSelectedGongId(e.target.value)}
-            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none focus:border-gold-500"
-          >
-            <option value="">-- All Active Audience Subscribers --</option>
-            {gongs.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name} (/{g.slug} · {g.cadence?.toUpperCase() || 'WEEKLY'})
-              </option>
-            ))}
-          </select>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Target Newsletter Channel</label>
+            <select
+              value={selectedGongId}
+              onChange={(e) => setSelectedGongId(e.target.value)}
+              className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none focus:border-gold-500"
+            >
+              <option value="">-- All Active Subscribers --</option>
+              {gongs.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} (/{g.slug} · {g.cadence?.toUpperCase() || 'WEEKLY'})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Knowledge Base Override</label>
+            <select
+              value={selectedKbId}
+              onChange={(e) => setSelectedKbId(e.target.value)}
+              className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-semibold text-royal-950 focus:outline-none focus:border-gold-500"
+            >
+              <option value="">-- Channel / Workspace Default --</option>
+              {knowledgeBases.map((kb) => (
+                <option key={kb.id} value={kb.id}>
+                  {kb.name} ({kb.resources?.length || 0} resources)
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <ArtifactsPanel gongId={selectedGongId || undefined} compact />
@@ -114,7 +145,7 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
             type="text"
             value={broadcastSubject}
             onChange={(e) => setBroadcastSubject(e.target.value)}
-            placeholder="e.g. Issue #42: How We Scaled Neon Postgres to 10k QPS"
+            placeholder="e.g. Issue #42: Scaling Outbound Infrastructure"
             required
             className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-medium focus:outline-none focus:border-gold-500"
           />
@@ -137,25 +168,17 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
             rows={10}
             value={broadcastBody}
             onChange={(e) => setBroadcastBody(e.target.value)}
-            placeholder="Write your proclamation content here..."
+            placeholder="Write your newsletter edition here..."
             required
             className="w-full p-3.5 bg-thistle-50 border border-gold-500/40 rounded-xl font-sans focus:outline-none focus:border-gold-500 text-xs leading-relaxed"
           />
         </div>
 
         <div className="pt-3 border-t border-gold-500/35 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 font-bold text-thistle-500 hover:text-royal-950"
-          >
+          <button type="button" onClick={onClose} className="px-4 py-2 font-bold text-thistle-500 hover:text-royal-950">
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={savingBroadcast}
-            className="px-5 py-2 btn-royal font-bold rounded-xl"
-          >
+          <button type="submit" disabled={savingBroadcast} className="px-5 py-2 btn-royal font-bold rounded-xl">
             {savingBroadcast ? 'Saving Draft...' : 'Save Broadcast Draft'}
           </button>
         </div>
