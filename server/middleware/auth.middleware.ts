@@ -127,20 +127,25 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
 
   const mode = env.AUTH_PROVIDER || 'dual';
   const issuer = bearerToken ? decodeJwtIssuer(bearerToken) : '';
+  const hasClerkKeys = Boolean(process.env.CLERK_SECRET_KEY && process.env.CLERK_PUBLISHABLE_KEY);
+  const hasSupabaseKeys = Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
+
   const looksLikeSupabase =
     mode === 'supabase' ||
-    (mode === 'dual' && issuer.includes('supabase'));
+    (mode === 'dual' && (issuer.includes('supabase') || (!hasClerkKeys && hasSupabaseKeys)));
 
-  if (looksLikeSupabase && bearerToken) {
+  if (looksLikeSupabase) {
+    if (!bearerToken) {
+      return res.status(401).json({ error: 'Unauthorized: Missing Bearer session token' });
+    }
     return authenticateSupabaseToken(bearerToken, req, res, next);
   }
 
-  if (mode === 'supabase') {
-    return res.status(401).json({ error: 'Unauthorized: Missing Supabase Bearer token' });
-  }
-
-  if (!process.env.CLERK_SECRET_KEY || !process.env.CLERK_PUBLISHABLE_KEY) {
-    logger.error('[AUTH] Clerk keys missing while handling Clerk auth request');
+  if (!hasClerkKeys) {
+    if (!bearerToken) {
+      return res.status(401).json({ error: 'Unauthorized: Missing authentication token' });
+    }
+    logger.error('[AUTH] Neither Clerk keys nor Supabase configuration matched incoming token');
     return res.status(500).json({ error: 'Authentication service not configured' });
   }
 

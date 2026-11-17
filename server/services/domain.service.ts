@@ -3,6 +3,7 @@ import dns from 'dns';
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
 import { encrypt, tryDecrypt } from '../lib/encryption';
+import { planGuardService } from './billing/planGuard.service';
 
 function generateCode(): string {
   return String(crypto.randomInt(100000, 999999));
@@ -129,6 +130,50 @@ export class DomainService {
     return data;
   }
 
+  private async verifyResendKey(apiKey: string) {
+    const res = await fetch('https://api.resend.com/domains', {
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+
+    if (res.ok) return;
+
+    const data: any = await res.json().catch(() => ({}));
+    // Resend send-only restricted keys legitimately return 401 with name === 'restricted_api_key'
+    if (data?.name === 'restricted_api_key') return;
+
+    throw new Error(`Resend API key rejected (${res.status}): ${data?.message || 'Invalid API key'}`);
+  }
+
+  private async verifySmtpCredentials(creds: { host: string; port: number; secure: boolean; user: string; pass: string }) {
+    let nodemailer: any;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      nodemailer = require('nodemailer');
+    } catch {
+      throw new Error('Custom SMTP provider requires the "nodemailer" package to be installed.');
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: creds.host.trim(),
+      port: Number(creds.port) || 587,
+      secure: Boolean(creds.secure),
+      auth: {
+        user: creds.user.trim(),
+        pass: creds.pass,
+      },
+      connectionTimeout: 8_000,
+      greetingTimeout: 8_000,
+      socketTimeout: 8_000,
+    });
+
+    try {
+      await transporter.verify();
+    } catch (err: any) {
+      throw new Error(`SMTP handshake failed: ${err?.message || 'Could not authenticate with SMTP host'}`);
+    }
+  }
+
   private appUrl(): string {
     const configured = process.env.APP_URL;
     if (configured) return configured.replace(/\/$/, '');
@@ -203,6 +248,8 @@ export class DomainService {
   }
 
   async connectWithKey(userId: string, domainName: string, mailgunApiKey: string, region: string | null, testRecipientEmail: string) {
+    await planGuardService.assertDomainCapacity(userId);
+
     const cleanDomain = domainName.toLowerCase().trim();
     const cleanKey = mailgunApiKey.trim();
 
@@ -227,7 +274,7 @@ export class DomainService {
     return this.sanitize(updated);
   }
 
-  /** Connects a Resend (for Town Crier) or Custom SMTP domain cleanly. */
+  /** Connects a Resend (for Town Crier) or Custom SMTP domain with immediate credential verification. */
   async connectEspDomain(
     userId: string,
     input: {
@@ -237,15 +284,22 @@ export class DomainService {
       smtpConfig?: { host: string; port: number; secure: boolean; user: string; pass: string };
     }
   ) {
+    await planGuardService.assertDomainCapacity(userId);
+
     const cleanDomain = input.domainName.toLowerCase().trim();
     const existing = await prisma.domain.findFirst({ where: { userId, domainName: cleanDomain } });
     if (existing) throw new Error('This domain is already connected to your account');
 
-    if (input.espProvider === 'resend' && !input.apiKey?.trim()) {
-      throw new Error('Resend API Key is required');
+    if (input.espProvider === 'resend') {
+      if (!input.apiKey?.trim()) throw new Error('Resend API Key is required');
+      await this.verifyResendKey(input.apiKey.trim());
     }
-    if (input.espProvider === 'smtp' && (!input.smtpConfig?.host || !input.smtpConfig?.user || !input.smtpConfig?.pass)) {
-      throw new Error('SMTP host, user, and password are required');
+
+    if (input.espProvider === 'smtp') {
+      if (!input.smtpConfig?.host || !input.smtpConfig?.user || !input.smtpConfig?.pass) {
+        throw new Error('SMTP host, user, and password are required');
+      }
+      await this.verifySmtpCredentials(input.smtpConfig);
     }
 
     const dmarcCheck = await this.checkDmarcPolicy(cleanDomain);

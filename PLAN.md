@@ -1,67 +1,50 @@
 # PLAN.md — Master Engineering & Product Delivery Roadmap
 
 **Project:** MIDAS Autonomous Email Management System  
-**Version:** 3.0.0-PROD  
+**Version:** 3.1.0-PROD  
 **Goal:** Enterprise-grade outbound orchestration & newsletter infrastructure with Royal Thistle (`#D8BFD8`) + Metallic Gold aesthetic, Lineicons iconography, and 5-minute developer onboarding.
 
 ---
 
-## PHASE 1–3: DELIVERABILITY & SECURITY FOUNDATIONS (COMPLETED)
-- [x] **Phase 1:** Strict CORS, fail-fast secrets, `requireCampaignRole` RBAC, cross-tenant reply protection, modular `verification/` providers.
-- [x] **Phase 2:** `CronLock` mutual exclusion, atomic conditional sender quota claiming, Upstash QStash verification, Campaign Automation UI.
-- [x] **Phase 3:** `Domain` vs `Sender` split, RFC-8058 one-click unsubscribe, BYO encrypted Mailgun keys, `/admin` operator view.
+## PHASE 1–3 & PRE-MAIN FOUNDATIONS (COMPLETED)
+- [x] **Phases 1–3:** Strict CORS, RBAC (`requireCampaignRole`), cross-tenant protection, `CronLock`, atomic sender quotas, QStash verification, `Domain` vs `Sender` split, RFC-8058 unsubscribe, BYO Mailgun keys.
+- [x] **Phases A, B & C.0/C.1:** Bounded `LIMIT 5` sweeps + 20s cooldowns, multi-provider AI Studio, Town Crier & Gong channels, Knowledge Bases, Artifacts, Multi-ESP, Dodo Payments billing, TS/React/Python/CLI SDKs, Royal Thistle UI & `/docs`.
 
 ---
 
-## PHASE A, B & C.0/C.1: DUAL-ENGINE & DEVELOPER INFRASTRUCTURE (COMPLETED)
-- [x] **Phase A:** Bounded `LIMIT 5` sweeps + 20s per-sender cooldown, multi-provider AI Studio (`aigateway`, `openrouter`, `gemini`, `openai`, `deepseek`), variable-first/pipe-Spintax engine, modular `campaign/*` controllers.
-- [x] **Phase B:** Town Crier bounded newsletter engine, DMARC/BIMI DNS verification, priority Notification Center + desktop alerts.
-- [x] **Phase C.0 & C.1:** Scoped API keys (`midas_live_`), Gong channels + preset welcome autoresponders, CRM webhook engine, Shadow-DOM `widget.js` with progressive profiling, 4 email envelopes, `@midas-aem/client` dual-build SDK + `GongQuickstartModal`.
+## SEQUENCED EXECUTION ROADMAP (ACTIVE)
+
+### STAGE 1: Stabilization Patch Sprint (COMPLETED IN THIS DELIVERY)
+- [x] **PATCH-1.1 (Public Widget CORS):** Partitioned `publicCors` (`origin: '*'`) ahead of rate limiters on `/api/public/town-crier*`, `/api/track*`, and `/api/unsubscribe*` so third-party `widget.js` `OPTIONS` preflights and `429`/`413` responses succeed cleanly (`server/app.ts`).
+- [x] **PATCH-1.2 (AI Grounding & Salvaged Campaign Editing):** Fixed `PromptManager.buildPrompt()` dropping `params.companyContext` (Knowledge Base & Artifact usage prompts), propagated `campaignId` from `campaign.core` & `campaign.drafts` controllers, and salvaged `context`, `reference`, and `senderName` editing from legacy `EditCampaignModal`/`EditSenderModal` directly into `EditStrategyModal.tsx`.
+- [x] **PATCH-1.3 (Inbox Polling Closure):** Fixed 20s polling stale closure in `src/pages/Inbox.tsx` so active threads never snap back to index 0 mid-reply.
+- [x] **PATCH-1.4 (Follow-Up, State-Graph OOO & Bounce Hygiene):**
+  - Stored raw template copy in `FollowUpService` so `{{artifact:slug}}` tokens & Spintax resolve cleanly at dispatch time (`followUp.service.ts`).
+  - Fixed `OUT_OF_OFFICE` sequence freeze via `OOO_FROZEN` status + `LeadActivityEvent` `frozenUntil` evaluation (`sequenceAgent.service.ts`, `followUp.service.ts`).
+  - Propagated `userId`/`campaignId`, `brandOptions`, `PlanGuard`, atomic sender quota claiming, and `LeadActivityEvent` inside `SequenceAgentService`.
+  - Purged `PendingEmail` rows on bounce/complaint webhooks (`webhooks.service.ts`) and skipped `BOUNCED` leads in `emailQueue.service.ts`.
+- [x] **PATCH-1.5 (PlanGuard & Artifact Parity Across Queues):**
+  - Enforced `isOverMonthlyEmailLimit()` and `recordEmailSent()` inside `emailQueue.service.ts` and `newsletterQueue.service.ts`.
+  - Wired `artifactService` (`{{artifact:slug}}` + `MIME_ATTACHMENT` resolution) into `newsletterQueue.service.ts`.
+  - Implemented & enforced remaining `PLAN_TIERS` quotas (`maxDomains`, `maxSenders`, `maxGongs`, `maxLeads`, `maxSubscribers`, `allowAutoReplyAgent`, `allowTeamInvites`, `allowCustomTrackingDomain`) with net-new deduplication checks.
+- [x] **PATCH-1.6 (Multi-ESP, Auth, Webhooks, Invites & Cron Snapshots):**
+  - Added `nodemailer` + `@types/nodemailer` to `package.json`; added live Resend/SMTP credential verification in `domain.service.ts`.
+  - Scheduled `/api/cron/snapshots` in `vercel.json` and `.github/workflows/frequent-scheduler.yml`.
+  - Hardened `webhookDispatch.service.ts` (`redirect: 'manual'`), `auth.middleware.ts` (`dual` mode 401 vs 500), `src/services/api.ts` (removed stale `midas_auth_token` LIFO interceptor), `lead.routes.ts` (`leads:*` API scopes), and `campaign.collab.controller.ts` (`sender` projection in `getMyInvites` + email verification & `upsert` in `acceptInvite`).
 
 ---
 
-## PRE-MAIN DEVELOPMENT SPRINT (PM-1 THROUGH PM-4) — COMPLETED
-
-### Sprint PM-1: Critical Integrity, Wiring & Reliability
-- [x] **Dual-Auth SDK Support:** Created `dualAuth.middleware.ts` (`requireAuthOrApiKey` + `requireScopeIfApiKey`) so `@midas-aem/client` campaign/lead endpoints authenticate seamlessly via `midas_live_` keys.
-- [x] **Live CRM Webhooks:** Fixed `webhookSubscription.routes.ts`, mounted `/api/user/webhooks` in `app.ts`, and wired live dispatch events (`lead.replied`, `deliverability.circuit_tripped`, `gong.subscribed`, `deal.booked`).
-- [x] **Town Crier End-to-End Parity:** Persisted `Gong.dedicatedSenderId` in `schema.prisma`, preserved `gongId`/`templateStyle`/`tagFilter` across `createBroadcast` & `queueBroadcast`, loaded Gongs on mount in `TownCrier.tsx`, resolved Gong slugs in bulk/broadcast public routes, wrapped async work in `safeWaitUntil()`, and removed native `alert()` from `widget.js`.
-- [x] **Sequencer & AI Parity:** Eliminated N+1 queries and wired `preferredSenderId` in `followUp.service.ts`; extracted `queueReconciliation.service.ts`; added bare-URL auto-linking in `email.service.ts`; added direct-send quota/telemetry parity in `campaign.leads.controller.ts`; restored `OllamaProvider` and fixed `MockProvider` intent detection; unified `APP_URL` in `unsubscribe.ts`.
-
-### Sprint PM-2: Security Hardening, CI Gate & Hygiene Purge
-- [x] **Public Rate Limiting & Decryption Visibility:** Added zero-dep `rateLimit.middleware.ts` + 16 KB `metadata` cap on `/subscribe`; surfaced `keyDecryptionFailed` / `aiKeyDecryptionFailed` alerts on `ENCRYPTION_KEY` mismatches. *(Operator passphrase display intentionally retained in `AdminDashboard.tsx` until operator removal).*
-- [x] **Codebase Purge & CI Gate:** Purged dead legacy auth/modal/TownCrier API-key UI artifacts and duplicate `/town-crier/api-keys` routes; added root `tsconfig.json`, `npm run typecheck`, `baseUrl` prop on `@midas-aem/client/react`, and `.github/workflows/ci.yml`.
-
-### Sprint PM-3: Royal Thistle + Pastel Purple + Gold & Lineicons Overhaul
-- [x] **Design System (`src/index.css`):** Set `#F3EBF6` pastel purple canvas, Royal Plum (`#4A2559`) `btn-royal` actions, Metallic Gold separators (`border-gold-500/40`), and `.card-midas` golden hover glows.
-- [x] **100% Lineicons & Interaction Consolidation:** Replaced all raw emojis and hand-rolled SVGs with Lineicons 4.0 (`src/lib/icons.tsx`), replaced `window.confirm()`/`alert()` with `<ConfirmDialog />` & `useToast()`, and upgraded `TownCrierHeader`'s Export menu to click-toggle.
-
-### Sprint PM-4: Standalone Enterprise Developer Docs
-- [x] **Vercel/Claude-Grade Docs Portal (`/docs`):** Removed Docs from workspace sidebar (retained in `Cmd+K`), detached `/docs` into a standalone 3-column portal with live search, full REST/Auth/Webhook payload references, `npm install @midas-aem/client` + Gong slug quickstarts, and live `<iframe srcDoc>` envelope previews.
+### STAGE 2: Sprint S2 — Cleanup, Consolidation & Pre-Public-Launch Gate (NEXT UP)
+- [ ] **CLEANUP-2.1 (Dead File Purge):** Delete verified superseded backend services (`campaign.service.ts`, `draft.service.ts`, `autoReply.service.ts`, `lead.service.ts`) and 10 superseded frontend components (`CampaignRepliesModal.tsx`, `CustomDraftModal.tsx`, `EditCampaignModal.tsx`, `EditDraftModal.tsx`, `EditSenderModal.tsx`, `EmailSelectionModal.tsx`, `LeadEmailPreviewModal.tsx`, `MailboxStatsModal.tsx`, `UploadPreviewTable.tsx`, `UploadSummaryCard.tsx`).
+- [ ] **CLEANUP-2.2 (Repo Docs Consolidation):** Audit and consolidate root documentation (`README.md`, `INTEGRATION.md`, `GUIDE.md`).
+- [ ] **LAUNCH-2.3 (Pre-Public-Launch Gate):**
+  - Generate consolidated Prisma baseline SQL migration covering all post-`20260926000000` schema additions before switching `package.json` `vercel-build` from `prisma db push` to `prisma migrate deploy`.
+  - Remove hardcoded fallback passphrase/secret in `operatorAuth.ts` and remove default passphrase hint from `AdminDashboard.tsx`.
 
 ---
 
-## NEXT UP: POST PRE-MAIN ROADMAP (PHASE C.2 ONWARD)
-
-### Sprint C.2: Automated NPM CI/CD & CLI Scaffolder
-- [ ] **GitHub Actions NPM Release Workflow (`.github/workflows/npm-publish.yml`):** Tag-triggered `tsup` build $\rightarrow$ `npm publish --provenance` with `NODE_AUTH_TOKEN`.
-- [ ] **Package Hygiene Polish:** Add `LICENSE` and `README.md` inside `packages/client/` when ready for next minor bump.
-- [ ] **Interactive CLI Scaffolder (`npx @midas-aem/client init`):** Scaffold framework newsletter modals and Next.js server actions automatically.
-
-### Sprint C.3: Zero-Setup Sandbox Mode & Ecosystem Distribution
-- [ ] **Shared Sandbox Domain/Sender:** Allow newly onboarded developers to test `.subscribe()` and `.dispatchCampaign()` to their own verified email within 3 minutes—no DNS/Mailgun prerequisite.
-- [ ] **Ecosystem Connectors:** Publish Zapier, Make, n8n, and One-Click Vercel Deploy templates.
-
-### Sprint C.4: Multi-Language SDKs & Subdomain NS Delegation
-- [ ] **Python SDK (`midas-python`):** Async `httpx` client for AI startups & FastAPI teams.
-- [ ] **Automated Subdomain NS Delegation:** Provision `mail.clientdomain.com` DNS records behind the scenes via Cloudflare Zones API.
-
-### Sprint C.5: Multi-ESP Abstraction & Time-Series Domain Telemetry
-- [ ] **Pluggable `ESPProvider` Adapter:** Support Resend, Postmark, and SMTP alongside Mailgun.
-- [ ] **Time-Series `DomainHealthSnapshot` & Apple MPP Open Filtering:** Track daily reputation trends and suppress scanner pre-fetch false opens.
-
-### Phase D: Ultra-Personalization & Account Research Agents
-- [ ] **Web-Grounded Research Agent:** Add `Lead.enrichedData` column and synthesize live company intelligence into dynamic tokens (`{{recent_achievement}}`).
-
-### Phase E: Auth Evolution — Neon Auth (Managed Better Auth)
-- [ ] **Migrate from Clerk to Neon Auth:** Consolidate auth tables directly into Neon Postgres (60k MAU free, branch-isolated auth, zero webhook sync lag) and build 100% custom Royal Thistle & Gold login/signup interfaces.
+### STAGE 3: Sprint S3 — MCP Server, AEO/SEO & Self-Healing Autopilot
+- [ ] **SPRINT3-3.1 (Remote Stateless MCP Server):** Implement `POST /api/mcp` authenticated via scoped `midas_live_` keys exposing `midas_create_gong_channel`, `midas_get_embed_snippet`, `midas_send_sandbox_test`, `midas_get_campaign_health`, and `midas_create_artifact`, plus `npx @midas-aem/client mcp` stdio bridge.
+- [ ] **SPRINT3-3.2 (AEO & SEO Infrastructure):** Serve `/llms.txt`, `/llms-full.txt`, `/openapi.json`, `/docs.md`, `robots.txt`, `sitemap.xml`, and JSON-LD `SoftwareApplication` metadata.
+- [ ] **SPRINT3-3.3 (First-3-Minutes Interactive Onboarding Drawer):** Guided workspace setup checklist inside `AppShell`.
+- [ ] **SPRINT3-3.4 (Self-Healing Deliverability Warmup Autopilot):** Automatically scale `Sender.dailyLimit` up/down from 7-day `DomainHealthSnapshot` human-open vs bounce curves.

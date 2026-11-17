@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma';
+import { planGuardService } from './billing/planGuard.service';
 
 export class SenderService {
   /**
@@ -40,6 +41,8 @@ export class SenderService {
     displayName?: string | null,
     dailyLimit: number = 20
   ) {
+    await planGuardService.assertSenderCapacity(userId);
+
     const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
     if (!domain.sendTestPassedAt) {

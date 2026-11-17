@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { senderAPI } from '../../services/api';
+import { senderAPI, getErrorMessage } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { Icons } from '../../lib/icons';
@@ -49,8 +49,8 @@ export const DomainSenderList: React.FC<DomainSenderListProps> = ({
       setDisplayName('');
       setFormOpen(false);
       onRefresh();
-    } catch {
-      toast.error('Could not create sender mailbox', 'Error');
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not create sender mailbox'), 'Sender Limit / Error');
     } finally {
       setAddingSender(false);
     }

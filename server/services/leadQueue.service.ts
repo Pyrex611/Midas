@@ -5,6 +5,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { verificationService } from './verification';
 import { reconcileCampaignQueue } from './queueReconciliation.service';
+import { planGuardService } from './billing/planGuard.service';
 
 interface ParsedLeadRow {
   name: string;
@@ -125,7 +126,7 @@ export class LeadQueueService {
 
           await tx.uploadJob.updateMany({
             where: { id: { in: ids }, status: 'PENDING' },
-            data: { status: 'PROCESSING' }
+            data: { status: 'PROCESSING' },
           });
 
           return ids;
@@ -217,8 +218,7 @@ export class LeadQueueService {
             });
             jobsProcessed++;
             logger.info(`Job ${job.id} sent to ${verificationService.providerName} for verification.`);
-          }
-          else if (job.status === 'VERIFYING' && job.verificationId) {
+          } else if (job.status === 'VERIFYING' && job.verificationId) {
             const rawRows: ParsedLeadRow[] = JSON.parse(job.pendingRows || '[]');
             const emails = rawRows.map(r => r.email);
 
@@ -280,6 +280,19 @@ export class LeadQueueService {
     counts: { totalRows: number; blockedLeads: number; catchAllLeads: number; invalidLeads: number },
     campaignId?: string | null
   ) {
+    // Only count genuinely net-new leads against the workspace's plan quota
+    const dedupedByEmail = Array.from(new Map(leads.map(l => [l.email, l])).values());
+    const existingRows = await prisma.lead.findMany({
+      where: { userId, email: { in: dedupedByEmail.map(l => l.email) } },
+      select: { email: true },
+    });
+    const existingSet = new Set(existingRows.map(r => r.email));
+    const netNewCount = dedupedByEmail.filter(l => !existingSet.has(l.email)).length;
+
+    if (netNewCount > 0) {
+      await planGuardService.assertLeadCapacity(userId, netNewCount);
+    }
+
     const CHUNK_SIZE = 500;
     let insertedCount = 0;
     let duplicatesCount = 0;

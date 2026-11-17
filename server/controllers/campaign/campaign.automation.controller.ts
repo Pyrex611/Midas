@@ -1,14 +1,27 @@
 import { Response, NextFunction } from 'express';
 import prisma from '../../lib/prisma';
 import { AuthRequest } from '../../middleware/auth.middleware';
+import { CampaignRequest } from '../../middleware/campaignAccess.middleware';
+import { planGuardService } from '../../services/billing/planGuard.service';
 
-export const updateAutoReply = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const updateAutoReply = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const id = req.params.id as string;
     const { autoReplyEnabled } = req.body;
+    const enabled = Boolean(autoReplyEnabled);
+
+    if (enabled) {
+      const ownerId = req.campaign?.userId || req.user!.id;
+      try {
+        await planGuardService.assertFeatureAccess(ownerId, 'allowAutoReplyAgent');
+      } catch (guardErr: any) {
+        return res.status(403).json({ error: guardErr.message });
+      }
+    }
+
     const updated = await prisma.campaign.update({
       where: { id },
-      data: { autoReplyEnabled: !!autoReplyEnabled },
+      data: { autoReplyEnabled: enabled },
     });
     res.json(updated);
   } catch (error) { next(error); }

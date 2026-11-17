@@ -650,6 +650,12 @@ router.post('/gongs', requireApiKeyScope('town_crier:write'), async (req: Reques
     return res.status(400).json({ error: 'Gong channel name is required' });
   }
 
+  try {
+    await planGuardService.assertGongCapacity(userId);
+  } catch (guardErr: any) {
+    return res.status(403).json({ error: guardErr.message });
+  }
+
   const generatedSlug = (slug || name)
     .toLowerCase()
     .trim()
@@ -797,6 +803,24 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
         })
         .filter((s: any) => s.email && s.email.includes('@') && !isEmailBlocked(s.email, blocklist));
 
+      const uniqueEmails = Array.from(new Set(validSubscribers.map((s: any) => s.email)));
+      const existingRows = uniqueEmails.length > 0
+        ? await prisma.newsletterRecipient.findMany({
+            where: { userId, email: { in: uniqueEmails } },
+            select: { email: true },
+          })
+        : [];
+      const existingSet = new Set(existingRows.map(r => r.email));
+      const netNewCount = uniqueEmails.filter(e => !existingSet.has(e)).length;
+
+      if (netNewCount > 0) {
+        try {
+          await planGuardService.assertSubscriberCapacity(userId, netNewCount);
+        } catch (guardErr: any) {
+          return res.status(403).json({ error: guardErr.message });
+        }
+      }
+
       let insertedCount = 0;
       const CHUNK = 500;
       for (let i = 0; i < validSubscribers.length; i += CHUNK) {
@@ -831,6 +855,18 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
 
     if (isEmailBlocked(cleanEmail, blocklist)) {
       return res.status(400).json({ error: 'This email is suppressed by workspace blocklist rules.' });
+    }
+
+    const existingSub = await prisma.newsletterRecipient.findUnique({
+      where: { userId_email: { userId, email: cleanEmail } },
+      select: { id: true },
+    });
+    if (!existingSub) {
+      try {
+        await planGuardService.assertSubscriberCapacity(userId, 1);
+      } catch (guardErr: any) {
+        return res.status(403).json({ error: guardErr.message });
+      }
     }
 
     let targetGong: any = null;
@@ -1060,6 +1096,24 @@ router.post('/recipients/import', requireApiKeyScope('town_crier:write'), upload
         tags: ['csv_import'],
         unsubscribeToken: crypto.randomBytes(16).toString('hex'),
       });
+    }
+
+    const uniqueEmails = Array.from(new Set(validRecipients.map((r) => r.email)));
+    const existingRows = uniqueEmails.length > 0
+      ? await prisma.newsletterRecipient.findMany({
+          where: { userId, email: { in: uniqueEmails } },
+          select: { email: true },
+        })
+      : [];
+    const existingSet = new Set(existingRows.map((r) => r.email));
+    const netNewCount = uniqueEmails.filter((e) => !existingSet.has(e)).length;
+
+    if (netNewCount > 0) {
+      try {
+        await planGuardService.assertSubscriberCapacity(userId, netNewCount);
+      } catch (guardErr: any) {
+        return res.status(403).json({ error: guardErr.message });
+      }
     }
 
     let insertedCount = 0;

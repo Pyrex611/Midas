@@ -39,6 +39,7 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
 
     const activeSender = campaign?.senderLinks.map(l => l.sender).find(s => s.status === 'active');
     const senderName = activeSender?.displayName || activeSender?.localPart || campaign?.senderName || 'The Team';
+    const artifacts = campaign ? await artifactService.getArtifactMapForUser(campaign.userId) : undefined;
 
     const parsedEmails = emails.map(email => ({
       ...email,
@@ -51,7 +52,9 @@ export const getLeadEmailThread = async (req: AuthRequest, res: Response, next: 
         item.subject,
         item.body,
         campaign?.reference,
-        senderName
+        senderName,
+        undefined,
+        { artifacts }
       );
 
       return {
@@ -283,13 +286,16 @@ export const previewLeadWithDraft = async (req: AuthRequest, res: Response, next
 
     const activeSender = campaign.senderLinks.map(l => l.sender).find(s => s.status === 'active');
     const senderName = activeSender?.displayName || activeSender?.localPart || campaign.senderName || 'The Team';
+    const artifacts = await artifactService.getArtifactMapForUser(campaign.userId);
 
     const { subject, body } = personalisationService.personalise(
       lead,
       draft.subject,
       draft.body,
       campaign.reference,
-      senderName
+      senderName,
+      undefined,
+      { artifacts }
     );
 
     res.json({ leadId, campaignId, draftId, subject, body });

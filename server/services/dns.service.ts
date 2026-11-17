@@ -2,6 +2,7 @@ import dns from 'dns';
 import prisma from '../lib/prisma';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
+import { planGuardService } from './billing/planGuard.service';
 
 export interface DnsInspectionReport {
   domainName: string;
@@ -86,7 +87,6 @@ export class DnsService {
           break;
         }
       } catch {
-        // Also check CNAME-delegated DKIM (used by SendGrid/Resend/Mailgun CNAME setups)
         try {
           const fqdn = `${selector}._domainkey.${cleanDomain}`;
           const cnames = await dns.promises.resolveCname(fqdn);
@@ -125,7 +125,6 @@ export class DnsService {
         } catch {}
       }
     }
-    const dmarcVerified = dmarcPolicy !== 'missing';
 
     // 5. Tracking CNAME Inspection
     const configuredHostname = domain.trackingDomain || `track.${cleanDomain}`;
@@ -161,7 +160,7 @@ export class DnsService {
       spf: { verified: spfVerified, record: spfRecord },
       dkim: { verified: dkimVerified, matchedSelector, record: dkimRecord },
       mx: { verified: mxVerified, records: mxRecords },
-      dmarc: { verified: dmarcVerified, policy: dmarcPolicy, record: dmarcRecord },
+      dmarc: { verified: dmarcPolicy !== 'missing', policy: dmarcPolicy, record: dmarcRecord },
       tracking: {
         configuredHostname: domain.trackingDomain || null,
         verified: trackingVerified,
@@ -172,10 +171,11 @@ export class DnsService {
 
   /**
    * Configures a custom branded tracking CNAME (e.g. `track.clientdomain.com`),
-   * optionally registering it as a Cloudflare for SaaS Custom Hostname when
-   * CLOUDFLARE_API_TOKEN & CLOUDFLARE_ZONE_ID are provisioned.
+   * gated by PlanGuard and optionally registering via Cloudflare for SaaS Custom Hostnames.
    */
   async configureTrackingDomain(userId: string, domainId: string, rawHostname: string) {
+    await planGuardService.assertFeatureAccess(userId, 'allowCustomTrackingDomain');
+
     const domain = await prisma.domain.findFirst({ where: { id: domainId, userId } });
     if (!domain) throw new Error('Domain not found');
 
@@ -216,7 +216,6 @@ export class DnsService {
       }
     }
 
-    // Also run immediate live CNAME check
     const expectedTarget = this.expectedTrackingTarget();
     let cnameResolved = false;
     try {

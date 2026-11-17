@@ -43,7 +43,6 @@ export class WebhookDispatchService {
     let status: 'DELIVERED' | 'FAILED' = 'FAILED';
     let attempts = 0;
 
-    // SSRF guard before attempting any outbound socket connection
     try {
       await assertSafePublicUrl(subscription.targetUrl);
     } catch (ssrfErr: any) {
@@ -75,11 +74,18 @@ export class WebhookDispatchService {
             'X-Midas-Signature': signatureHeader,
           },
           body: rawBody,
+          // Prevent redirect-based SSRF to internal/metadata endpoints
+          redirect: 'manual',
           signal: AbortSignal.timeout(8_000),
         });
 
         statusCode = res.status;
         responseBody = (await res.text()).slice(0, 1000);
+
+        if (res.status >= 300 && res.status < 400) {
+          error = 'Webhook HTTP redirects are blocked for SSRF protection';
+          break;
+        }
 
         if (res.ok) {
           status = 'DELIVERED';
@@ -88,7 +94,6 @@ export class WebhookDispatchService {
         }
 
         error = `Endpoint responded with HTTP ${res.status}`;
-        // Do not retry deterministic 4xx client rejections (except 408 / 429)
         if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
           break;
         }

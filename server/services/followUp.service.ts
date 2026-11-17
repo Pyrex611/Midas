@@ -1,17 +1,15 @@
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
-import { personalisationService } from './personalisation.service';
 
 export class FollowUpService {
-
   /**
    * Batched O(1)-roundtrip-per-campaign follow-up sequencer:
-   * - Excludes UNSUBSCRIBED and BOUNCED leads.
-   * - Eliminates N+1 per-lead queries by loading campaign OutboundEmails, PendingEmails,
-   *   and follow-up Drafts once per campaign.
-   * - Resolves `preferredSenderId` from the initial outbound email's domain senders so
-   *   follow-ups continue from the exact same mailbox address.
-   * - Queues at most ONE due follow-up step per lead per tick.
+   * - Excludes UNSUBSCRIBED, BOUNCED, and terminal REPLIED leads.
+   * - Supports OOO_FROZEN leads: pauses scheduling until `frozenUntil` expires,
+   *   ignoring prior OOO inbound messages while stopping permanently on any real reply.
+   * - Stores raw draft template (`subject`, `body`) into `PendingEmail` so
+   *   `emailQueueService` resolves Spintax, {{artifact:slug}} links, sender
+   *   display names, and RFC-8058 unsubscribe footers accurately at dispatch time.
    */
   async checkFollowUps(): Promise<{ queued: number; campaignsScanned: number }> {
     let queued = 0;
@@ -43,8 +41,8 @@ export class FollowUpService {
         const leads = await prisma.lead.findMany({
           where: {
             campaignId: campaign.id,
-            outreachStatus: 'SENT',
-            status: { notIn: ['UNSUBSCRIBED', 'BOUNCED'] },
+            outreachStatus: { in: ['SENT', 'OOO_FROZEN'] },
+            status: { notIn: ['UNSUBSCRIBED', 'BOUNCED', 'REPLIED'] },
           },
         });
 
@@ -52,8 +50,7 @@ export class FollowUpService {
 
         const leadIds = leads.map(l => l.id);
 
-        // Batch-load all outbound/inbound emails and pending queue items for this campaign's leads
-        const [allEmails, allPending] = await Promise.all([
+        const [allEmails, allPending, oooEvents] = await Promise.all([
           prisma.outboundEmail.findMany({
             where: {
               campaignId: campaign.id,
@@ -68,6 +65,14 @@ export class FollowUpService {
               leadId: { in: leadIds },
             },
             include: { draft: { select: { stepNumber: true } } },
+          }),
+          prisma.leadActivityEvent.findMany({
+            where: {
+              campaignId: campaign.id,
+              leadId: { in: leadIds },
+              eventType: 'EMAIL_REPLIED',
+            },
+            orderBy: { createdAt: 'desc' },
           }),
         ]);
 
@@ -85,7 +90,18 @@ export class FollowUpService {
           pendingByLead.set(p.leadId, list);
         }
 
-        // Index follow-up drafts by stepNumber
+        const latestOooUntilByLead = new Map<string, Date>();
+        for (const ev of oooEvents) {
+          if (latestOooUntilByLead.has(ev.leadId)) continue;
+          const meta = ev.metadata as any;
+          if (meta?.intent === 'OUT_OF_OFFICE' && meta?.frozenUntil) {
+            const parsed = new Date(meta.frozenUntil);
+            if (!isNaN(parsed.getTime())) {
+              latestOooUntilByLead.set(ev.leadId, parsed);
+            }
+          }
+        }
+
         const draftByStep = new Map<number, (typeof campaign.drafts)[number]>();
         for (const d of campaign.drafts) {
           if (d.stepNumber && !draftByStep.has(d.stepNumber)) {
@@ -93,7 +109,6 @@ export class FollowUpService {
           }
         }
 
-        // Index active campaign senders by domainId for consistent thread sender matching
         const senderByDomain = new Map<string, string>();
         for (const link of campaign.senderLinks) {
           if (link.sender.status === 'active' && !senderByDomain.has(link.sender.domainId)) {
@@ -107,10 +122,18 @@ export class FollowUpService {
           const leadEmails = emailsByLead.get(lead.id) || [];
           const leadPending = pendingByLead.get(lead.id) || [];
 
-          // Stop follow-ups immediately if prospect has replied
-          if (leadEmails.some(e => e.isIncoming)) continue;
+          // Stop follow-ups permanently if prospect sent any real non-OOO reply
+          const hasHumanReply = leadEmails.some(e => e.isIncoming && e.intent !== 'OUT_OF_OFFICE');
+          if (hasHumanReply) continue;
 
-          // If a pending email is already in-flight for this lead, wait for it
+          // Respect active OOO freeze window until prospect returns
+          if (lead.outreachStatus === 'OOO_FROZEN') {
+            const frozenUntil = latestOooUntilByLead.get(lead.id);
+            if (frozenUntil && now < frozenUntil) {
+              continue;
+            }
+          }
+
           if (leadPending.some(p => p.status === 'PENDING' || p.status === 'PROCESSING')) continue;
 
           const initialEmail = leadEmails.find(e => !e.isIncoming);
@@ -145,14 +168,6 @@ export class FollowUpService {
                 ? senderByDomain.get(initialEmail.domainId) || null
                 : null;
 
-              const { subject, body } = personalisationService.personalise(
-                lead,
-                draft.subject,
-                draft.body,
-                campaign.reference,
-                campaign.senderName
-              );
-
               try {
                 await prisma.pendingEmail.create({
                   data: {
@@ -160,8 +175,8 @@ export class FollowUpService {
                     campaignId: campaign.id,
                     leadId: lead.id,
                     draftId: draft.id,
-                    subject,
-                    body,
+                    subject: draft.subject,
+                    body: draft.body,
                     inReplyTo: initialEmail.messageId,
                     domainId: initialEmail.domainId,
                     preferredSenderId,
@@ -170,6 +185,14 @@ export class FollowUpService {
                     scheduledAt: now,
                   },
                 });
+
+                if (lead.outreachStatus === 'OOO_FROZEN') {
+                  await prisma.lead.update({
+                    where: { id: lead.id },
+                    data: { outreachStatus: 'SENT', status: 'FOLLOW_UP' },
+                  });
+                }
+
                 queued++;
                 logger.info({ leadId: lead.id, campaignId: campaign.id, step: step.stepNumber }, 'Follow-up queued in PendingEmail');
               } catch (queueErr: any) {

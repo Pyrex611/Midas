@@ -6,6 +6,7 @@ import prisma from '../lib/prisma';
 import { isEmailBlocked } from '../lib/blocklist';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { newsletterQueueService } from '../services/newsletterQueue.service';
+import { planGuardService } from '../services/billing/planGuard.service';
 import { logger } from '../config/logger';
 
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
@@ -121,6 +122,18 @@ export const addRecipient = async (req: AuthRequest, res: Response, next: NextFu
       return res.status(400).json({ error: 'A valid email address is required' });
     }
 
+    const existing = await prisma.newsletterRecipient.findUnique({
+      where: { userId_email: { userId, email: cleanEmail } },
+      select: { id: true },
+    });
+    if (!existing) {
+      try {
+        await planGuardService.assertSubscriberCapacity(userId, 1);
+      } catch (guardErr: any) {
+        return res.status(403).json({ error: guardErr.message });
+      }
+    }
+
     let resolvedGongId: string | undefined;
     if (gongId && typeof gongId === 'string' && gongId.trim()) {
       const gong = await prisma.gong.findFirst({
@@ -200,6 +213,24 @@ export const importRecipients = [
           tags: rowTags,
           unsubscribeToken: crypto.randomBytes(16).toString('hex'),
         });
+      }
+
+      const uniqueEmails = Array.from(new Set(validRecipients.map(r => r.email)));
+      const existingRows = uniqueEmails.length > 0
+        ? await prisma.newsletterRecipient.findMany({
+            where: { userId, email: { in: uniqueEmails } },
+            select: { email: true },
+          })
+        : [];
+      const existingSet = new Set(existingRows.map(e => e.email));
+      const netNewCount = uniqueEmails.filter(e => !existingSet.has(e)).length;
+
+      if (netNewCount > 0) {
+        try {
+          await planGuardService.assertSubscriberCapacity(userId, netNewCount);
+        } catch (guardErr: any) {
+          return res.status(403).json({ error: guardErr.message });
+        }
       }
 
       let insertedCount = 0;
@@ -388,6 +419,12 @@ export const createGong = async (req: AuthRequest, res: Response, next: NextFunc
     const userId = req.user!.id;
     const { name, slug, dedicatedSenderId, knowledgeBaseId } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Gong channel name is required' });
+
+    try {
+      await planGuardService.assertGongCapacity(userId);
+    } catch (guardErr: any) {
+      return res.status(403).json({ error: guardErr.message });
+    }
 
     let validSenderId: string | null = null;
     if (dedicatedSenderId && typeof dedicatedSenderId === 'string' && dedicatedSenderId.trim()) {

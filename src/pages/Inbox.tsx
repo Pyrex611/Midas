@@ -43,17 +43,18 @@ export const Inbox: React.FC = () => {
       });
       const list = res.data || [];
       setThreads(list);
-      if (list.length > 0 && (!activeThreadId || !list.some((t: any) => t.id === activeThreadId))) {
-        setActiveThreadId(list[0].id);
-      } else if (list.length === 0) {
-        setActiveThreadId(null);
-      }
+      // Functional update prevents stale closure from resetting user's selected thread on poll ticks
+      setActiveThreadId((prev) => {
+        if (list.length === 0) return null;
+        if (prev && list.some((t: any) => t.id === prev)) return prev;
+        return list[0].id;
+      });
     } catch {
       toast.error('Failed to load incoming replies', 'Network Error');
     } finally {
       setLoading(false);
     }
-  }, [selectedDomainFilter, selectedSenderFilter, activeThreadId, toast]);
+  }, [selectedDomainFilter, selectedSenderFilter, toast]);
 
   const loadSendersDomainsAndLeads = async () => {
     try {
@@ -81,7 +82,7 @@ export const Inbox: React.FC = () => {
     fetchInbox();
     const interval = setInterval(fetchInbox, 20000);
     return () => clearInterval(interval);
-  }, [selectedDomainFilter, selectedSenderFilter]);
+  }, [fetchInbox]);
 
   const scopedSendersForFilter = useMemo(() => {
     if (selectedDomainFilter === 'all') return allSenders;
@@ -243,7 +244,6 @@ export const Inbox: React.FC = () => {
             </button>
           </div>
 
-          {/* Cascading Domain -> Mailbox Selector */}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[9px] font-bold uppercase text-thistle-500 mb-0.5">Domain</label>

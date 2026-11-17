@@ -54,20 +54,20 @@ export const CampaignSettingsTab: React.FC<CampaignSettingsTabProps> = ({
       <div className="p-6 card-midas rounded-2xl space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-gold-500/35">
           <div>
-            <h3 className="text-sm font-bold text-royal-950">SDR Strategy &amp; Conversion Goal</h3>
-            <p className="text-xs text-thistle-500 mt-0.5">The core objective guiding AI personalization and objection handling.</p>
+            <h3 className="text-sm font-bold text-royal-950">SDR Strategy, Copy Context &amp; Sender Identity</h3>
+            <p className="text-xs text-thistle-500 mt-0.5">Core objective, AI context, reference case study, and fallback sender name guiding outreach.</p>
           </div>
           {canEdit && (
             <button
               onClick={onEditStrategyClick}
               className="px-3.5 py-1.5 bg-thistle-100 hover:bg-thistle-200 border border-gold-500/35 text-royal-800 rounded-xl text-xs font-bold transition-colors"
             >
-              Edit Strategy
+              Edit Strategy &amp; Context
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
           <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/30">
             <span className="text-[10px] font-bold uppercase text-thistle-500">Primary Objective</span>
             <p className="font-semibold text-royal-950 mt-0.5">{campaign.objective || 'Not specified'}</p>
@@ -75,6 +75,25 @@ export const CampaignSettingsTab: React.FC<CampaignSettingsTabProps> = ({
           <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/30">
             <span className="text-[10px] font-bold uppercase text-thistle-500">Target Conversion Tool</span>
             <p className="font-semibold text-royal-950 mt-0.5">{campaign.targetTool || 'Not specified'}</p>
+          </div>
+          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/30">
+            <span className="text-[10px] font-bold uppercase text-thistle-500">Fallback Sender Name</span>
+            <p className="font-semibold text-royal-950 mt-0.5">{campaign.senderName || 'Sender display name'}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/30">
+            <span className="text-[10px] font-bold uppercase text-thistle-500">Campaign Goal / Context</span>
+            <p className="text-royal-950/85 mt-1 whitespace-pre-wrap leading-relaxed">
+              {campaign.context || 'No context configured.'}
+            </p>
+          </div>
+          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/30">
+            <span className="text-[10px] font-bold uppercase text-thistle-500">Reference Story / Case Study</span>
+            <p className="text-royal-950/85 mt-1 whitespace-pre-wrap leading-relaxed">
+              {campaign.reference || 'No reference story configured.'}
+            </p>
           </div>
         </div>
       </div>

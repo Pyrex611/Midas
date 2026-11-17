@@ -4,6 +4,7 @@ import prisma from '../../lib/prisma';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { CampaignRequest } from '../../middleware/campaignAccess.middleware';
 import { reconcileCampaignQueue } from './campaign.queue.controller';
+import { planGuardService } from '../../services/billing/planGuard.service';
 
 export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
@@ -17,11 +18,7 @@ export const addLeadsToCampaign = async (req: CampaignRequest, res: Response, ne
     const campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-    // SECURITY: requireCampaignRole already confirmed the caller has EDITOR+
-    // access to THIS campaign — but without scoping by `userId` here, any
-    // collaborator could attach another tenant's leadIds by guessing/
-    // enumerating cuids (cross-tenant IDOR). Leads a user adds must be
-    // leads that user owns, regardless of whose campaign they're joining.
+    // SECURITY: Leads a user adds must belong to that user (prevents cross-tenant IDOR).
     const claimResult = await prisma.lead.updateMany({
       where: { id: { in: leadIds }, userId },
       data: { campaignId: id, outreachStatus: 'PENDING' },
@@ -60,6 +57,7 @@ export const getMyInvites = async (req: AuthRequest, res: Response, next: NextFu
       },
       include: {
         campaign: { select: { name: true } },
+        sender: { select: { name: true, email: true } },
       },
     });
     res.json(invites);
@@ -71,6 +69,7 @@ export const getMyInvites = async (req: AuthRequest, res: Response, next: NextFu
 export const acceptInvite = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.id;
+    const userEmail = (req.user!.email || '').toLowerCase().trim();
     const { token } = req.params;
 
     const invite = await prisma.campaignInvite.findUnique({ where: { token } });
@@ -79,13 +78,26 @@ export const acceptInvite = async (req: AuthRequest, res: Response, next: NextFu
       return res.status(400).json({ error: 'Invalid or expired invitation token.' });
     }
 
+    if (invite.email.toLowerCase().trim() !== userEmail) {
+      return res.status(403).json({
+        error: 'This invitation was issued to a different email address.',
+      });
+    }
+
     await prisma.$transaction([
       prisma.campaignInvite.update({
         where: { id: invite.id },
         data: { accepted: true },
       }),
-      prisma.campaignMember.create({
-        data: {
+      prisma.campaignMember.upsert({
+        where: {
+          campaignId_userId: {
+            campaignId: invite.campaignId,
+            userId,
+          },
+        },
+        update: { role: invite.role },
+        create: {
           campaignId: invite.campaignId,
           userId,
           role: invite.role,
@@ -102,10 +114,17 @@ export const acceptInvite = async (req: AuthRequest, res: Response, next: NextFu
 export const createInvite = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const senderId = req.user!.id;
+    const ownerId = req.campaign?.userId || senderId;
     const campaignId = req.params.id;
     const { email, role } = req.body;
 
     if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    try {
+      await planGuardService.assertFeatureAccess(ownerId, 'allowTeamInvites');
+    } catch (guardErr: any) {
+      return res.status(403).json({ error: guardErr.message });
+    }
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date();

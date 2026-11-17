@@ -1,6 +1,5 @@
 import { Response, NextFunction } from 'express';
 import prisma from '../../lib/prisma';
-import { personalisationService } from '../../services/personalisation.service';
 import { emailQueueService } from '../../services/emailQueue.service';
 import { reconcileCampaignQueue } from '../../services/queueReconciliation.service';
 import { CampaignRequest } from '../../middleware/campaignAccess.middleware';
@@ -48,8 +47,9 @@ export const reconcileQueueEndpoint = async (req: CampaignRequest, res: Response
 
 /**
  * POST /api/campaigns/:id/repersonalize-queue
- * Refreshes all queued emails using the latest active draft templates from the copy reserves,
- * completely replacing stale or literal placeholder copy with personalized variables.
+ * Refreshes pending queue items from the latest active draft templates in copy
+ * reserves, keeping raw templates intact so emailQueueService resolves Spintax,
+ * {{artifact:slug}} links, and unsubscribe headers cleanly at dispatch time.
  */
 export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
@@ -59,7 +59,6 @@ export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Resp
       where: { id: campaignId },
       include: {
         drafts: { where: { isActive: true }, orderBy: { createdAt: 'desc' } },
-        senderLinks: { include: { sender: true } },
       },
     });
 
@@ -74,15 +73,12 @@ export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Resp
 
     const pendingList = await prisma.pendingEmail.findMany({
       where: { campaignId, status: 'PENDING' },
-      include: { lead: true },
+      select: { id: true },
     });
 
     if (pendingList.length === 0) {
       return res.json({ success: true, updatedCount: 0, message: 'No pending emails in queue to refresh.' });
     }
-
-    const activeSender = campaign.senderLinks.map(l => l.sender).find(s => s.status === 'active');
-    const senderName = activeSender?.displayName || activeSender?.localPart || campaign.senderName || 'The Team';
 
     let updatedCount = 0;
     for (let i = 0; i < pendingList.length; i++) {
@@ -91,30 +87,22 @@ export const repersonalizeCampaignQueue = async (req: CampaignRequest, res: Resp
         ? activeInitialDrafts[i % activeInitialDrafts.length]
         : latestInitialDraft;
 
-      const { subject, body } = personalisationService.personalise(
-        item.lead,
-        targetDraft.subject,
-        targetDraft.body,
-        campaign.reference,
-        senderName
-      );
-
       await prisma.pendingEmail.update({
         where: { id: item.id },
         data: {
           draftId: targetDraft.id,
-          subject,
-          body,
+          subject: targetDraft.subject,
+          body: targetDraft.body,
         },
       });
       updatedCount++;
     }
 
-    logger.info({ campaignId, updatedCount }, 'Queue refreshed from copy reserves and re-personalized');
+    logger.info({ campaignId, updatedCount }, 'Queue refreshed with fresh templates from copy reserves');
     res.json({
       success: true,
       updatedCount,
-      message: `Refreshed ${updatedCount} queued email(s) with clean copy from active draft reserves.`,
+      message: `Refreshed ${updatedCount} queued email(s) with fresh templates from active draft reserves.`,
     });
   } catch (error: any) {
     logger.error({ error: error.message }, 'Failed to refresh queue');

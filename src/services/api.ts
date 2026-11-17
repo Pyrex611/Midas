@@ -9,11 +9,6 @@ const api = axios.create({
 axios.defaults.withCredentials = true;
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('midas_auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-
   const operatorToken = sessionStorage.getItem('midas_operator_token');
   if (operatorToken) {
     config.headers['x-operator-token'] = operatorToken;
@@ -269,8 +264,17 @@ export const campaignAPI = {
   createInvite: (campaignId: string, data: { email: string; role: string }) =>
     api.post(`/campaigns/${campaignId}/invites`, data),
 
-  updateStrategy: (campaignId: string, data: { objective?: string; targetTool?: string; extendedObjective?: string }) =>
-    api.put(`/campaigns/${campaignId}/strategy`, data),
+  updateStrategy: (
+    campaignId: string,
+    data: {
+      objective?: string;
+      targetTool?: string;
+      extendedObjective?: string;
+      context?: string;
+      reference?: string;
+      senderName?: string;
+    }
+  ) => api.put(`/campaigns/${campaignId}/strategy`, data),
 
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),

@@ -334,9 +334,9 @@ export const CampaignDetail: React.FC = () => {
     try {
       await campaignAPI.updateAutoReply(id, { autoReplyEnabled: checked });
       toast.success(`Autonomous AI auto-reply is now ${checked ? 'ACTIVE' : 'PAUSED'}`, 'Auto-Reply');
-    } catch {
+    } catch (err: any) {
       setAutoReplyEnabled(!checked);
-      toast.error('Could not update auto-reply setting', 'Error');
+      toast.error(getErrorMessage(err, 'Could not update auto-reply setting'), 'Plan / Feature Gate');
     } finally {
       setSavingAutoReply(false);
     }

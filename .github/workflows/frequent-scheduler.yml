@@ -1,18 +1,13 @@
 name: midas-frequent-scheduler
 
 # Vercel's Hobby (free) plan only allows a cron job to run ONCE PER DAY.
-# The email queue, lead-upload verification, follow-up sequencer, and
-# Town Crier newsletter drainer all need to run far more often than that
-# to feel "live". This workflow calls the same /api/cron/* endpoints on a
-# tight interval, entirely free, using GitHub's own scheduler. It runs
-# ALONGSIDE Vercel's native crons and QStash schedules (all are safe to
-# run concurrently due to DB-backed CronLocks and atomic claims).
+# The email queue, lead-upload verification, follow-up sequencer, Town Crier
+# newsletter drainer, and daily domain health snapshots need reliable runs.
+# All /api/cron/* endpoints are protected by DB-backed CronLocks and atomic claims.
 on:
   schedule:
-    # GitHub's minimum interval is 5 minutes, and under load it can lag by a
-    # few extra minutes — treat this as "roughly every 5 minutes", not exact.
     - cron: '*/5 * * * *'
-  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
+  workflow_dispatch: {}
 
 jobs:
   trigger-queue:
@@ -41,3 +36,9 @@ jobs:
           curl -sf -X POST "${{ secrets.MIDAS_BASE_URL }}/api/cron/newsletter" \
             -H "Authorization: Bearer ${{ secrets.MIDAS_CRON_SECRET }}" \
             || echo "newsletter trigger failed (non-fatal, will retry in 5 min)"
+
+      - name: Capture daily domain health snapshots
+        run: |
+          curl -sf -X POST "${{ secrets.MIDAS_BASE_URL }}/api/cron/snapshots" \
+            -H "Authorization: Bearer ${{ secrets.MIDAS_CRON_SECRET }}" \
+            || echo "snapshots trigger failed (non-fatal, will retry in 5 min)"

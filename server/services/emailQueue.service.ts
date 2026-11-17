@@ -4,6 +4,7 @@ import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
 import { senderService } from './sender.service';
 import { artifactService } from './artifact.service';
+import { planGuardService } from './billing/planGuard.service';
 import { ensureUnsubscribeToken, buildUnsubscribeUrl } from '../lib/unsubscribe';
 import { env } from '../config/env';
 
@@ -45,6 +46,7 @@ export class EmailQueueService {
   async processQueue(): Promise<{ claimed: number; sent: number; deferred: number; failed: number; skippedUnsubscribed: number }> {
     const summary = { claimed: 0, sent: 0, deferred: 0, failed: 0, skippedUnsubscribed: 0 };
     const userLimitCache = new Map<string, boolean>();
+    const planLimitCache = new Map<string, boolean>();
     const userSettingsCache = new Map<string, any>();
     const artifactMapCache = new Map<string, Record<string, { url: string; type: string; title: string }>>();
 
@@ -119,13 +121,25 @@ export class EmailQueueService {
             continue;
           }
 
-          if (lead.status === 'UNSUBSCRIBED') {
+          if (lead.status === 'UNSUBSCRIBED' || lead.status === 'BOUNCED') {
             await prisma.pendingEmail.delete({ where: { id: pending.id } });
             summary.skippedUnsubscribed++;
             continue;
           }
 
           if (!this.checkTimezone(campaign.timezone, campaign.activeStartHour, campaign.activeEndHour)) {
+            await prisma.pendingEmail.update({
+              where: { id: pending.id },
+              data: { status: 'PENDING', scheduledAt: new Date(Date.now() + 60 * 60 * 1000) },
+            });
+            summary.deferred++;
+            continue;
+          }
+
+          if (!planLimitCache.has(pending.userId)) {
+            planLimitCache.set(pending.userId, await planGuardService.isOverMonthlyEmailLimit(pending.userId));
+          }
+          if (planLimitCache.get(pending.userId)) {
             await prisma.pendingEmail.update({
               where: { id: pending.id },
               data: { status: 'PENDING', scheduledAt: new Date(Date.now() + 60 * 60 * 1000) },
@@ -272,6 +286,8 @@ export class EmailQueueService {
               data: { status: 'SENT', messageId: result.messageId, sentAt: new Date() },
             });
 
+            await planGuardService.recordEmailSent(pending.userId, 1);
+
             await prisma.campaign.update({
               where: { id: campaign.id },
               data: { lastDomainIndex: { increment: 1 } },
@@ -306,6 +322,10 @@ export class EmailQueueService {
             await prisma.sender.update({
               where: { id: selectedSender.id },
               data: { sentCountToday: { decrement: 1 } },
+            });
+            await prisma.outboundEmail.update({
+              where: { id: outboundRecord.id },
+              data: { status: 'FAILED', error: result.error },
             });
             throw new Error(result.error);
           }

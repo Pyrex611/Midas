@@ -3,7 +3,6 @@ import prisma from '../../lib/prisma';
 import { aiService } from '../../services/ai.service';
 import { complianceService } from '../../services/compliance.service';
 import { AuthRequest } from '../../middleware/auth.middleware';
-import { CampaignRequest } from '../../middleware/campaignAccess.middleware';
 import { logger } from '../../config/logger';
 
 const DRAFT_UPDATABLE_FIELDS = ['subject', 'body', 'isActive'] as const;
@@ -73,6 +72,7 @@ export const generateCampaignDraft = async (req: AuthRequest, res: Response, nex
       campaignContext: campaign.context,
       reference: campaign.reference,
       userId: campaign.userId || req.user!.id,
+      campaignId: campaign.id,
     });
 
     const draft = await prisma.draft.create({
@@ -109,6 +109,7 @@ export const generateStepDraft = async (req: AuthRequest, res: Response, next: N
       reference: campaign.reference,
       stepNumber: stepNum,
       userId: campaign.userId || req.user!.id,
+      campaignId: campaign.id,
     });
 
     const draft = await prisma.draft.create({
@@ -189,7 +190,8 @@ export const generateReplyDraft = async (req: AuthRequest, res: Response, next: 
       reference: campaign?.reference,
       originalEmail: latestReply.body,
       sentiment: analysis.sentiment,
-      userId,
+      userId: campaign?.userId || userId,
+      campaignId,
     });
 
     await prisma.draft.deleteMany({

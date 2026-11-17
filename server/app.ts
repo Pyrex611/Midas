@@ -39,7 +39,7 @@ const allowedOrigins = (env.CORS_ORIGIN || '')
   .map(o => o.trim().replace(/\/$/, ''))
   .filter(Boolean);
 
-app.use(cors({
+const dashboardCors = cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
 
@@ -60,7 +60,28 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-operator-token', 'x-action-passphrase'],
-}));
+});
+
+const publicWildcardCors = cors({
+  origin: '*',
+  credentials: false,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+});
+
+// Isolate public embed, tracking, and unsubscribe endpoints from restrictive
+// dashboard CORS so third-party widget.js OPTIONS preflights and rate-limit
+// error responses always retain Access-Control-Allow-Origin: *.
+app.use((req, res, next) => {
+  if (
+    req.path.startsWith('/api/public/town-crier') ||
+    req.path.startsWith('/api/track') ||
+    req.path.startsWith('/api/unsubscribe')
+  ) {
+    return publicWildcardCors(req, res, next);
+  }
+  return dashboardCors(req, res, next);
+});
 
 app.use((req, res, next) => {
   const start = Date.now();

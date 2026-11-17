@@ -73,6 +73,7 @@ export const createCampaign = async (req: AuthRequest, res: Response, next: Next
           campaignContext: context,
           reference,
           userId,
+          campaignId: campaign.id,
         }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('AI initial draft generation timed out')), 4000)
@@ -274,15 +275,19 @@ export const getCampaignDetails = async (req: CampaignRequest, res: Response, ne
 export const updateCampaignStrategy = async (req: CampaignRequest, res: Response, next: NextFunction) => {
   try {
     const campaignId = req.params.id;
-    const { objective, targetTool, extendedObjective } = req.body;
+    const { objective, targetTool, extendedObjective, context, reference, senderName } = req.body;
+
+    const data: Record<string, any> = {};
+    if (objective !== undefined) data.objective = objective;
+    if (targetTool !== undefined) data.targetTool = targetTool;
+    if (extendedObjective !== undefined) data.extendedObjective = extendedObjective;
+    if (context !== undefined) data.context = context;
+    if (reference !== undefined) data.reference = reference;
+    if (senderName !== undefined) data.senderName = senderName;
 
     const updated = await prisma.campaign.update({
       where: { id: campaignId },
-      data: {
-        objective,
-        targetTool,
-        extendedObjective,
-      },
+      data,
     });
 
     res.json(updated);

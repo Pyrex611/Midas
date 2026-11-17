@@ -5437,188 +5437,6 @@ export class EspRouterService {
 export const espRouter = new EspRouterService();
 </file>
 
-<file path="server/services/migration.service.ts">
-import { Pool } from 'pg';
-import { logger } from '../config/logger';
-
-const TABLE_ORDER = [
-  'users',
-  'UserSettings',
-  'Subscription',
-  'Domain',
-  'DomainHealthSnapshot',
-  'Sender',
-  'KnowledgeBase',
-  'KnowledgeResource',
-  'Campaign',
-  'CampaignSender',
-  'CampaignMember',
-  'CampaignInvite',
-  'Blocklist',
-  'UploadJob',
-  'Lead',
-  'LeadActivityEvent',
-  'Draft',
-  'FollowUpStep',
-  'OutboundEmail',
-  'PendingEmail',
-  'ApiKey',
-  'Gong',
-  'NewsletterRecipient',
-  'NewsletterBroadcast',
-  'NewsletterQueueItem',
-  'Artifact',
-  'Notification',
-  'WebhookSubscription',
-  'WebhookDelivery',
-  'CronLock',
-];
-
-export interface TableMigrationResult {
-  table: string;
-  sourceRows: number;
-  insertedRows: number;
-  status: 'MIGRATED' | 'EMPTY' | 'SKIPPED';
-}
-
-export class MigrationService {
-  private async getColumnTypes(pool: Pool, tableName: string): Promise<Map<string, string>> {
-    const res = await pool.query<{ column_name: string; data_type: string }>(
-      `SELECT column_name, data_type
-       FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = $1`,
-      [tableName]
-    );
-    const map = new Map<string, string>();
-    for (const row of res.rows) {
-      map.set(row.column_name, row.data_type.toLowerCase());
-    }
-    return map;
-  }
-
-  async migrateFromNeon(sourceDatabaseUrl: string): Promise<{
-    success: boolean;
-    durationMs: number;
-    totalSourceRows: number;
-    totalInsertedRows: number;
-    tables: TableMigrationResult[];
-  }> {
-    const cleanSource = (sourceDatabaseUrl || '').trim();
-    if (!/^postgres(ql)?:\/\//i.test(cleanSource)) {
-      throw new Error('Source database URL must start with postgresql:// or postgres://');
-    }
-
-    const targetUrl =
-      process.env.POSTGRES_URL_NON_POOLING ||
-      process.env.DIRECT_URL ||
-      process.env.DATABASE_URL_POOLED ||
-      process.env.DATABASE_URL;
-
-    if (!targetUrl) {
-      throw new Error('Target Supabase DATABASE_URL is not configured on this server.');
-    }
-
-    const source = new Pool({
-      connectionString: cleanSource,
-      ssl: { rejectUnauthorized: false },
-      connectionTimeoutMillis: 8_000,
-      max: 2,
-    });
-
-    const target = new Pool({
-      connectionString: targetUrl,
-      ssl: { rejectUnauthorized: false },
-      connectionTimeoutMillis: 8_000,
-      max: 2,
-    });
-
-    const startedAt = Date.now();
-    const results: TableMigrationResult[] = [];
-    let totalSourceRows = 0;
-    let totalInsertedRows = 0;
-
-    try {
-      await source.query('SELECT 1');
-      await target.query('SELECT 1');
-
-      for (const table of TABLE_ORDER) {
-        const [targetColTypes, sourceColTypes] = await Promise.all([
-          this.getColumnTypes(target, table),
-          this.getColumnTypes(source, table),
-        ]);
-
-        if (targetColTypes.size === 0 || sourceColTypes.size === 0) {
-          results.push({ table, sourceRows: 0, insertedRows: 0, status: 'SKIPPED' });
-          continue;
-        }
-
-        const sharedColumns = Array.from(targetColTypes.keys()).filter((c) => sourceColTypes.has(c));
-        if (sharedColumns.length === 0) {
-          results.push({ table, sourceRows: 0, insertedRows: 0, status: 'SKIPPED' });
-          continue;
-        }
-
-        const selectColsSql = sharedColumns.map((c) => `"${c}"`).join(', ');
-        const { rows } = await source.query(`SELECT ${selectColsSql} FROM "${table}"`);
-
-        if (rows.length === 0) {
-          results.push({ table, sourceRows: 0, insertedRows: 0, status: 'EMPTY' });
-          continue;
-        }
-
-        const BATCH_SIZE = 300;
-        let inserted = 0;
-
-        for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-          const batch = rows.slice(i, i + BATCH_SIZE);
-          const values: any[] = [];
-          const valueClauses: string[] = [];
-          let paramIdx = 1;
-
-          for (const row of batch) {
-            const placeholders: string[] = [];
-            for (const col of sharedColumns) {
-              let val = row[col];
-              const dtype = targetColTypes.get(col);
-              if (val !== null && val !== undefined && (dtype === 'json' || dtype === 'jsonb')) {
-                val = typeof val === 'string' ? val : JSON.stringify(val);
-              }
-              values.push(val);
-              placeholders.push(`$${paramIdx++}`);
-            }
-            valueClauses.push(`(${placeholders.join(', ')})`);
-          }
-
-          const insertSql = `INSERT INTO "${table}" (${selectColsSql}) VALUES ${valueClauses.join(', ')} ON CONFLICT DO NOTHING`;
-          const insertRes = await target.query(insertSql, values);
-          inserted += insertRes.rowCount || 0;
-        }
-
-        totalSourceRows += rows.length;
-        totalInsertedRows += inserted;
-        results.push({ table, sourceRows: rows.length, insertedRows: inserted, status: 'MIGRATED' });
-      }
-
-      const durationMs = Date.now() - startedAt;
-      logger.info({ durationMs, totalSourceRows, totalInsertedRows }, '[MIGRATION] On-platform Neon -> Supabase transfer completed');
-
-      return {
-        success: true,
-        durationMs,
-        totalSourceRows,
-        totalInsertedRows,
-        tables: results,
-      };
-    } finally {
-      await source.end().catch(() => {});
-      await target.end().catch(() => {});
-    }
-  }
-}
-
-export const migrationService = new MigrationService();
-</file>
-
 <file path="server/services/notification.service.ts">
 import prisma from '../lib/prisma';
 import { logger } from '../config/logger';
@@ -11723,6 +11541,193 @@ export class LeadService {
 export const leadService = new LeadService();
 </file>
 
+<file path="server/services/migration.service.ts">
+import { Pool } from 'pg';
+import { logger } from '../config/logger';
+
+const TABLE_ORDER = [
+  'users',
+  'Subscription',
+  'Domain',
+  'DomainHealthSnapshot',
+  'Sender',
+  'UserSettings',
+  'KnowledgeBase',
+  'KnowledgeResource',
+  'Campaign',
+  'CampaignSender',
+  'CampaignMember',
+  'CampaignInvite',
+  'Blocklist',
+  'UploadJob',
+  'Lead',
+  'LeadActivityEvent',
+  'Draft',
+  'FollowUpStep',
+  'OutboundEmail',
+  'PendingEmail',
+  'ApiKey',
+  'Gong',
+  'NewsletterRecipient',
+  'NewsletterBroadcast',
+  'NewsletterQueueItem',
+  'Artifact',
+  'Notification',
+  'WebhookSubscription',
+  'WebhookDelivery',
+  'CronLock',
+];
+
+export interface TableMigrationResult {
+  table: string;
+  sourceRows: number;
+  insertedRows: number;
+  status: 'MIGRATED' | 'EMPTY' | 'SKIPPED';
+}
+
+export class MigrationService {
+  private async getColumnTypes(pool: Pool, tableName: string): Promise<Map<string, string>> {
+    const res = await pool.query<{ column_name: string; data_type: string }>(
+      `SELECT column_name, data_type
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1`,
+      [tableName]
+    );
+    const map = new Map<string, string>();
+    for (const row of res.rows) {
+      map.set(row.column_name, row.data_type.toLowerCase());
+    }
+    return map;
+  }
+
+  async migrateFromNeon(sourceDatabaseUrl: string): Promise<{
+    success: boolean;
+    durationMs: number;
+    totalSourceRows: number;
+    totalInsertedRows: number;
+    tables: TableMigrationResult[];
+  }> {
+    const cleanSource = (sourceDatabaseUrl || '').trim();
+    if (!/^postgres(ql)?:\/\//i.test(cleanSource)) {
+      throw new Error('Source database URL must start with postgresql:// or postgres://');
+    }
+
+    const targetUrl =
+      process.env.POSTGRES_URL_NON_POOLING ||
+      process.env.DIRECT_URL ||
+      process.env.DATABASE_URL_POOLED ||
+      process.env.DATABASE_URL;
+
+    if (!targetUrl) {
+      throw new Error('Target Supabase DATABASE_URL is not configured on this server.');
+    }
+
+    const source = new Pool({
+      connectionString: cleanSource,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 8_000,
+      max: 2,
+    });
+
+    const target = new Pool({
+      connectionString: targetUrl,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 8_000,
+      max: 2,
+    });
+
+    const startedAt = Date.now();
+    const results: TableMigrationResult[] = [];
+    let totalSourceRows = 0;
+    let totalInsertedRows = 0;
+
+    try {
+      await source.query('SELECT 1');
+      await target.query('SELECT 1');
+
+      for (const table of TABLE_ORDER) {
+        const [targetColTypes, sourceColTypes] = await Promise.all([
+          this.getColumnTypes(target, table),
+          this.getColumnTypes(source, table),
+        ]);
+
+        if (targetColTypes.size === 0 || sourceColTypes.size === 0) {
+          results.push({ table, sourceRows: 0, insertedRows: 0, status: 'SKIPPED' });
+          continue;
+        }
+
+        const sharedColumns = Array.from(targetColTypes.keys()).filter((c) => sourceColTypes.has(c));
+        if (sharedColumns.length === 0) {
+          results.push({ table, sourceRows: 0, insertedRows: 0, status: 'SKIPPED' });
+          continue;
+        }
+
+        const selectColsSql = sharedColumns.map((c) => `"${c}"`).join(', ');
+        const orderClause =
+          table === 'OutboundEmail' && sourceColTypes.has('reply_to_id')
+            ? ` ORDER BY "reply_to_id" NULLS FIRST, "sent_at" ASC`
+            : '';
+
+        const { rows } = await source.query(`SELECT ${selectColsSql} FROM "${table}"${orderClause}`);
+
+        if (rows.length === 0) {
+          results.push({ table, sourceRows: 0, insertedRows: 0, status: 'EMPTY' });
+          continue;
+        }
+
+        const BATCH_SIZE = 300;
+        let inserted = 0;
+
+        for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+          const batch = rows.slice(i, i + BATCH_SIZE);
+          const values: any[] = [];
+          const valueClauses: string[] = [];
+          let paramIdx = 1;
+
+          for (const row of batch) {
+            const placeholders: string[] = [];
+            for (const col of sharedColumns) {
+              let val = row[col];
+              const dtype = targetColTypes.get(col);
+              if (val !== null && val !== undefined && (dtype === 'json' || dtype === 'jsonb')) {
+                val = typeof val === 'string' ? val : JSON.stringify(val);
+              }
+              values.push(val);
+              placeholders.push(`$${paramIdx++}`);
+            }
+            valueClauses.push(`(${placeholders.join(', ')})`);
+          }
+
+          const insertSql = `INSERT INTO "${table}" (${selectColsSql}) VALUES ${valueClauses.join(', ')} ON CONFLICT DO NOTHING`;
+          const insertRes = await target.query(insertSql, values);
+          inserted += insertRes.rowCount || 0;
+        }
+
+        totalSourceRows += rows.length;
+        totalInsertedRows += inserted;
+        results.push({ table, sourceRows: rows.length, insertedRows: inserted, status: 'MIGRATED' });
+      }
+
+      const durationMs = Date.now() - startedAt;
+      logger.info({ durationMs, totalSourceRows, totalInsertedRows }, '[MIGRATION] On-platform Neon -> Supabase transfer completed');
+
+      return {
+        success: true,
+        durationMs,
+        totalSourceRows,
+        totalInsertedRows,
+        tables: results,
+      };
+    } finally {
+      await source.end().catch(() => {});
+      await target.end().catch(() => {});
+    }
+  }
+}
+
+export const migrationService = new MigrationService();
+</file>
+
 <file path="server/services/sender.service.ts">
 import prisma from '../lib/prisma';
 
@@ -13154,185 +13159,6 @@ export const CampaignAutomationTab: React.FC<CampaignAutomationTabProps> = ({
 };
 </file>
 
-<file path="src/components/campaigns/tabs/CampaignOverviewTab.tsx">
-import React from 'react';
-import { Icons } from '../../../lib/icons';
-
-type DrilldownCategory = 'ALL' | 'CONTACTED' | 'OPENED' | 'CLICKED' | 'REPLIED' | 'BOUNCED' | 'UNSUBSCRIBED';
-
-interface CampaignOverviewTabProps {
-  analytics: {
-    totalLeads: number;
-    contactedCount: number;
-    queuedCount: number;
-    sentCount: number;
-    openRate: number;
-    openedCount: number;
-    clickRate: number;
-    clickedCount: number;
-    replyRate: number;
-    replyCount: number;
-    bounceRate: number;
-    bounceCount: number;
-    unsubscribedCount: number;
-  };
-  unsubscribeRate: number;
-  campaign: any;
-  onSelectCategory: (category: DrilldownCategory) => void;
-  onReconcileQueue: () => void;
-  onDispatchNow: () => void;
-  isReconciling: boolean;
-  isDispatchingNow: boolean;
-}
-
-export const CampaignOverviewTab: React.FC<CampaignOverviewTabProps> = ({
-  analytics,
-  unsubscribeRate,
-  campaign,
-  onSelectCategory,
-  onReconcileQueue,
-  onDispatchNow,
-  isReconciling,
-  isDispatchingNow,
-}) => {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-        <div
-          onClick={() => onSelectCategory('ALL')}
-          className="p-4 card-midas rounded-2xl cursor-pointer group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-royal-800">Total Leads</span>
-            <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
-          </div>
-          <p className="text-xl font-black text-royal-950 mt-1">{analytics.totalLeads}</p>
-          <p className="text-[10px] text-thistle-500 mt-0.5">In sequence</p>
-        </div>
-
-        <div
-          onClick={() => onSelectCategory('CONTACTED')}
-          className="p-4 card-midas rounded-2xl cursor-pointer group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-royal-800">Contacted</span>
-            <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
-          </div>
-          <p className="text-xl font-black text-royal-800 mt-1">{analytics.contactedCount}</p>
-          <p className="text-[10px] text-thistle-500 mt-0.5">Sent outreach</p>
-        </div>
-
-        <div
-          onClick={() => onSelectCategory('OPENED')}
-          className="p-4 card-midas rounded-2xl cursor-pointer group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-royal-800">Opened</span>
-            <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
-          </div>
-          <p className="text-xl font-black text-royal-700 mt-1">{analytics.openRate}%</p>
-          <p className="text-[10px] text-thistle-500 mt-0.5">{analytics.openedCount} unique</p>
-        </div>
-
-        <div
-          onClick={() => onSelectCategory('CLICKED')}
-          className="p-4 card-midas rounded-2xl cursor-pointer group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-royal-800">Clicked</span>
-            <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
-          </div>
-          <p className="text-xl font-black text-royal-600 mt-1">{analytics.clickRate}%</p>
-          <p className="text-[10px] text-thistle-500 mt-0.5">{analytics.clickedCount} clicks</p>
-        </div>
-
-        <div
-          onClick={() => onSelectCategory('REPLIED')}
-          className="p-4 card-midas rounded-2xl cursor-pointer group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-emerald-700">Replied</span>
-            <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
-          </div>
-          <p className="text-xl font-black text-emerald-700 mt-1">{analytics.replyRate}%</p>
-          <p className="text-[10px] text-thistle-500 mt-0.5">{analytics.replyCount} replies</p>
-        </div>
-
-        <div
-          onClick={() => onSelectCategory('BOUNCED')}
-          className="p-4 card-midas rounded-2xl cursor-pointer group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-rose-600">Bounce Rate</span>
-            <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
-          </div>
-          <p className={`text-xl font-black mt-1 ${analytics.bounceRate > 5 ? 'text-rose-600' : 'text-royal-950'}`}>
-            {analytics.bounceRate}%
-          </p>
-          <p className="text-[10px] text-thistle-500 mt-0.5">{analytics.bounceCount} bounces</p>
-        </div>
-
-        <div
-          onClick={() => onSelectCategory('UNSUBSCRIBED')}
-          className="p-4 card-midas rounded-2xl cursor-pointer group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-amber-700">Unsubscribe</span>
-            <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
-          </div>
-          <p className="text-xl font-black text-amber-700 mt-1">{unsubscribeRate}%</p>
-          <p className="text-[10px] text-thistle-500 mt-0.5">{analytics.unsubscribedCount} opt-outs</p>
-        </div>
-      </div>
-
-      {/* Operational Status Card */}
-      <div className="p-6 card-midas rounded-2xl space-y-4">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gold-500/35">
-          <div>
-            <h3 className="text-sm font-bold text-royal-950">Sequence Operational Status</h3>
-            <p className="text-xs text-thistle-500 mt-0.5">Queue status, active mailboxes, and deliverability health.</p>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={onReconcileQueue}
-              disabled={isReconciling}
-              className="px-3.5 py-1.5 bg-thistle-100 hover:bg-thistle-200 border border-gold-500/35 text-royal-800 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
-            >
-              <Icons.Bolt className="text-gold-600" />
-              <span>{isReconciling ? 'Syncing...' : 'Reconcile Queue'}</span>
-            </button>
-            <button
-              onClick={onDispatchNow}
-              disabled={isDispatchingNow || campaign.queuedCount === 0}
-              className="px-4 py-1.5 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
-            >
-              <Icons.Send className="text-gold-300" />
-              <span>{isDispatchingNow ? 'Sending Batch...' : 'Send next batch (≤5)'}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/35">
-            <span className="text-[10px] font-bold uppercase text-thistle-500">Queue &amp; Status</span>
-            <p className="font-bold text-royal-950 mt-1">{campaign.queuedCount || 0} Emails Waiting ({campaign.status})</p>
-          </div>
-          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/35">
-            <span className="text-[10px] font-bold uppercase text-thistle-500">Sending Mailboxes</span>
-            <p className="font-bold text-royal-950 mt-1">{campaign.senderLinks?.length || 0} Assigned in Rotation</p>
-          </div>
-          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/35">
-            <span className="text-[10px] font-bold uppercase text-thistle-500">Deliverability Health</span>
-            <p className="font-bold text-royal-950 mt-1">{analytics.bounceRate}% Bounce Rate ({analytics.unsubscribedCount} Unsubs)</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-</file>
-
 <file path="src/components/common/ConfirmDialog.tsx">
 import React, { useEffect, useId } from 'react';
 import { Icons } from '../../lib/icons';
@@ -14344,205 +14170,6 @@ export const BimiAvatarDrawer: React.FC<BimiAvatarDrawerProps> = ({
         )}
       </div>
     </Sheet>
-  );
-};
-</file>
-
-<file path="src/components/EditStrategyModal.tsx">
-import React, { useState, useEffect } from 'react';
-import { campaignAPI, getErrorMessage } from '../services/api';
-import { useToast } from '../context/ToastContext';
-import { Icons } from '../lib/icons';
-
-interface Props {
-  isOpen: boolean;
-  onClose: () => void;
-  campaign: any;
-  onSuccess: () => void;
-}
-
-export const EditStrategyModal: React.FC<Props> = ({ isOpen, onClose, campaign, onSuccess }) => {
-  const { toast } = useToast();
-  const [objective, setObjective] = useState(campaign.objective || '');
-  const [targetTool, setTargetTool] = useState(campaign.targetTool || '');
-  const [extendedObjective, setExtendedObjective] = useState(campaign.extendedObjective || '');
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (isOpen && campaign) {
-      setObjective(campaign.objective || '');
-      setTargetTool(campaign.targetTool || '');
-      setExtendedObjective(campaign.extendedObjective || '');
-    }
-  }, [isOpen, campaign]);
-
-  if (!isOpen) return null;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    try {
-      await campaignAPI.updateStrategy(campaign.id, {
-        objective,
-        targetTool,
-        extendedObjective,
-      });
-      toast.success('Campaign SDR strategy updated', 'Strategy Saved');
-      onSuccess();
-      onClose();
-    } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Failed to update strategy'), 'Error');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-royal-950/65 backdrop-blur-sm" onClick={onClose} />
-
-      <div className="relative bg-white border border-gold-500/45 rounded-3xl w-full max-w-xl shadow-2xl p-6 z-10 animate-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between pb-3 mb-5 border-b border-gold-500/35">
-          <h3 className="text-lg font-black text-royal-950 tracking-tight">Refine Campaign Strategy</h3>
-          <button onClick={onClose} className="text-thistle-500 hover:text-royal-950 p-1">
-            <Icons.Close />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div>
-            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Global Objective</label>
-            <input
-              className="w-full p-3 bg-thistle-50 rounded-xl border border-gold-500/40 focus:border-gold-500 outline-none font-semibold text-royal-950"
-              value={objective}
-              onChange={(e) => setObjective(e.target.value)}
-              placeholder="e.g. Book a discovery call"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Conversion Tool (Phone/Link)</label>
-            <input
-              className="w-full p-3 bg-thistle-100/70 rounded-xl border border-gold-500/40 focus:border-gold-500 outline-none text-royal-800 font-bold"
-              value={targetTool}
-              onChange={(e) => setTargetTool(e.target.value)}
-              placeholder="e.g. +1 (400) XXX-XXXX or Calendly link"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Extended SDR Instructions</label>
-            <textarea
-              className="w-full p-3 bg-thistle-50 rounded-xl border border-gold-500/40 focus:border-gold-500 outline-none text-xs"
-              rows={4}
-              value={extendedObjective}
-              onChange={(e) => setExtendedObjective(e.target.value)}
-              placeholder="Explain the nuance of how the AI should handle objections and talk to leads..."
-            />
-          </div>
-          <div className="flex justify-end gap-3 pt-4 border-t border-gold-500/35">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-thistle-500 hover:text-royal-950 font-bold">
-              Cancel
-            </button>
-            <button type="submit" disabled={submitting} className="px-5 py-2 btn-royal font-bold rounded-xl">
-              {submitting ? 'Updating...' : 'Save Strategy'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
-</file>
-
-<file path="src/components/InviteCollaboratorModal.tsx">
-import React, { useState } from 'react';
-import { campaignAPI, getErrorMessage } from '../services/api';
-import { useToast } from '../context/ToastContext';
-import { Icons } from '../lib/icons';
-
-interface Props {
-  isOpen: boolean;
-  onClose: () => void;
-  campaignId: string;
-  onSuccess: () => void;
-}
-
-export const InviteCollaboratorModal: React.FC<Props> = ({ isOpen, onClose, campaignId, onSuccess }) => {
-  const { toast } = useToast();
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState('EDITOR');
-  const [submitting, setSubmitting] = useState(false);
-
-  if (!isOpen) return null;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    try {
-      await campaignAPI.createInvite(campaignId, { email, role });
-      toast.success(`Invitation sent to ${email}`, 'Collaborator Invited');
-      setEmail('');
-      onSuccess();
-      onClose();
-    } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Failed to send invite. Ensure the user is registered.'), 'Invite Error');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-royal-950/65 backdrop-blur-sm" onClick={onClose} />
-
-      <div className="relative bg-white border border-gold-500/45 p-6 rounded-3xl shadow-2xl w-full max-w-md z-10 animate-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between pb-3 mb-4 border-b border-gold-500/35">
-          <h2 className="text-base font-black text-royal-950 flex items-center gap-2">
-            <Icons.Users className="text-gold-600" />
-            <span>Invite Collaborator</span>
-          </h2>
-          <button onClick={onClose} className="text-thistle-500 hover:text-royal-950 p-1">
-            <Icons.Close />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div>
-            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Email Address</label>
-            <input
-              type="email"
-              required
-              className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-mono focus:outline-none focus:border-gold-500"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="colleague@company.com"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Role</label>
-            <select
-              className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-semibold text-royal-950 focus:outline-none"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-            >
-              <option value="EDITOR">Editor (Can manage leads/drafts)</option>
-              <option value="VIEWER">Viewer (Read-only)</option>
-            </select>
-          </div>
-          <div className="flex justify-end gap-3 pt-3 border-t border-gold-500/35">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-thistle-500 hover:text-royal-950 font-bold">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="px-5 py-2 btn-royal rounded-xl font-bold"
-            >
-              {submitting ? 'Sending...' : 'Send Invitation'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
   );
 };
 </file>
@@ -17761,27 +17388,41 @@ export default defineConfig([
 ## NEXT UP: POST PRE-MAIN ROADMAP (PHASE C.2 ONWARD)
 
 ### Sprint C.2: Automated NPM CI/CD & CLI Scaffolder
-- [ ] **GitHub Actions NPM Release Workflow (`.github/workflows/npm-publish.yml`):** Tag-triggered `tsup` build $\rightarrow$ `npm publish --provenance` with `NODE_AUTH_TOKEN`.
-- [ ] **Package Hygiene Polish:** Add `LICENSE` and `README.md` inside `packages/client/` when ready for next minor bump.
-- [ ] **Interactive CLI Scaffolder (`npx @midas-aem/client init`):** Scaffold framework newsletter modals and Next.js server actions automatically.
+- [x] **GitHub Actions NPM Release Workflow (`.github/workflows/npm-publish.yml`):** Tag-triggered `tsup` build $\rightarrow$ `npm publish --provenance` with `NODE_AUTH_TOKEN`.
+- [x] **Package Hygiene Polish:** Add `LICENSE` and `README.md` inside `packages/client/` when ready for next minor bump.
+- [x] **Interactive CLI Scaffolder (`npx @midas-aem/client init`):** Scaffold framework newsletter modals and Next.js server actions automatically.
 
 ### Sprint C.3: Zero-Setup Sandbox Mode & Ecosystem Distribution
-- [ ] **Shared Sandbox Domain/Sender:** Allow newly onboarded developers to test `.subscribe()` and `.dispatchCampaign()` to their own verified email within 3 minutes—no DNS/Mailgun prerequisite.
-- [ ] **Ecosystem Connectors:** Publish Zapier, Make, n8n, and One-Click Vercel Deploy templates.
+- [x] **Shared Sandbox Domain/Sender:** Allow newly onboarded developers to test `.subscribe()` and `.dispatchCampaign()` to their own verified email within 3 minutes—no DNS/Mailgun prerequisite.
+- [x] **Ecosystem Connectors:** Publish Zapier, Make, n8n, and One-Click Vercel Deploy templates.
 
 ### Sprint C.4: Multi-Language SDKs & Subdomain NS Delegation
-- [ ] **Python SDK (`midas-python`):** Async `httpx` client for AI startups & FastAPI teams.
-- [ ] **Automated Subdomain NS Delegation:** Provision `mail.clientdomain.com` DNS records behind the scenes via Cloudflare Zones API.
+- [x] **Python SDK (`midas-python`):** Async `httpx` client for AI startups & FastAPI teams.
+- [x] **Automated Subdomain NS Delegation:** Provision `mail.clientdomain.com` DNS records behind the scenes via Cloudflare Zones API.
 
 ### Sprint C.5: Multi-ESP Abstraction & Time-Series Domain Telemetry
-- [ ] **Pluggable `ESPProvider` Adapter:** Support Resend, Postmark, and SMTP alongside Mailgun.
-- [ ] **Time-Series `DomainHealthSnapshot` & Apple MPP Open Filtering:** Track daily reputation trends and suppress scanner pre-fetch false opens.
+- [x] **Pluggable `ESPProvider` Adapter:** Support Resend, Postmark, and SMTP alongside Mailgun.
+- [x] **Time-Series `DomainHealthSnapshot` & Apple MPP Open Filtering:** Track daily reputation trends and suppress scanner pre-fetch false opens.
 
 ### Phase D: Ultra-Personalization & Account Research Agents
-- [ ] **Web-Grounded Research Agent:** Add `Lead.enrichedData` column and synthesize live company intelligence into dynamic tokens (`{{recent_achievement}}`).
+- [x] **Web-Grounded Research Agent:** Add `Lead.enrichedData` column and synthesize live company intelligence into dynamic tokens (`{{recent_achievement}}`).
 
 ### Phase E: Auth Evolution — Neon Auth (Managed Better Auth)
-- [ ] **Migrate from Clerk to Neon Auth:** Consolidate auth tables directly into Neon Postgres (60k MAU free, branch-isolated auth, zero webhook sync lag) and build 100% custom Royal Thistle & Gold login/signup interfaces.
+- [x] **Migrate from Clerk to Neon Auth:** Consolidate auth tables directly into Neon Postgres (60k MAU free, branch-isolated auth, zero webhook sync lag) and build 100% custom Royal Thistle & Gold login/signup interfaces.
+
+
+## REMAINING ROADMAP (ACTIVE & UPCOMING)
+
+### Sprint S2 — Drop 2B/2C (Accessibility & UX Consolidation Finish)
+- [x] Add Knowledge Base picker to `TownCrierComposerDrawer.tsx` (in this drop: check `CampaignDetail.tsx` keyboard rows too).
+- [x] Convert `EditStrategyModal.tsx` and `InviteCollaboratorModal.tsx` to `<Sheet />` drawers.
+- [ ] Consolidate root docs (`README.md` cleanup) and run dead-file purge commands.
+- [ ] *(Pre-Public-Launch Gate)* Remove `operatorAuth.ts` fallback secrets & default passphrase hint from `AdminDashboard.tsx`, and switch `vercel-build` from `db push` to `prisma migrate deploy`.
+
+### Sprint S3 — MCP Server, AEO/SEO & Distribution Engine
+- [ ] **Remote Stateless MCP Server (`POST /api/mcp`):** Expose `midas_create_gong_channel`, `midas_get_embed_snippet`, `midas_send_sandbox_test`, `midas_get_campaign_health`, and `midas_create_artifact` for Claude Code / Cursor / Codex, plus `npx @midas-aem/client mcp` local stdio bridge.
+- [ ] **AEO & SEO Infrastructure:** Serve `/llms.txt`, `/llms-full.txt`, `/openapi.json`, `/docs.md`, `robots.txt`, `sitemap.xml`, and JSON-LD `SoftwareApplication` metadata so coding agents default to MIDAS.
+- [ ] **First-3-Minutes Interactive Onboarding Checklist Drawer** + **Self-Healing Deliverability Warmup Autopilot**.
 </file>
 
 <file path="postcss.config.js">
@@ -20132,6 +19773,143 @@ export const CampaignDraftsTab: React.FC<CampaignDraftsTabProps> = ({
 };
 </file>
 
+<file path="src/components/campaigns/tabs/CampaignOverviewTab.tsx">
+import React from 'react';
+import { Icons } from '../../../lib/icons';
+
+type DrilldownCategory = 'ALL' | 'CONTACTED' | 'OPENED' | 'CLICKED' | 'REPLIED' | 'BOUNCED' | 'UNSUBSCRIBED';
+
+interface CampaignOverviewTabProps {
+  analytics: {
+    totalLeads: number;
+    contactedCount: number;
+    queuedCount: number;
+    sentCount: number;
+    openRate: number;
+    openedCount: number;
+    clickRate: number;
+    clickedCount: number;
+    replyRate: number;
+    replyCount: number;
+    bounceRate: number;
+    bounceCount: number;
+    unsubscribedCount: number;
+  };
+  unsubscribeRate: number;
+  campaign: any;
+  onSelectCategory: (category: DrilldownCategory) => void;
+  onReconcileQueue: () => void;
+  onDispatchNow: () => void;
+  isReconciling: boolean;
+  isDispatchingNow: boolean;
+}
+
+export const CampaignOverviewTab: React.FC<CampaignOverviewTabProps> = ({
+  analytics,
+  unsubscribeRate,
+  campaign,
+  onSelectCategory,
+  onReconcileQueue,
+  onDispatchNow,
+  isReconciling,
+  isDispatchingNow,
+}) => {
+  const metricCards: Array<{
+    cat: DrilldownCategory;
+    label: string;
+    value: string | number;
+    sub: string;
+    valueColor: string;
+  }> = [
+    { cat: 'ALL', label: 'Total Leads', value: analytics.totalLeads, sub: 'In sequence', valueColor: 'text-royal-950' },
+    { cat: 'CONTACTED', label: 'Contacted', value: analytics.contactedCount, sub: 'Sent outreach', valueColor: 'text-royal-800' },
+    { cat: 'OPENED', label: 'Human Opens', value: `${analytics.openRate}%`, sub: `${analytics.openedCount} unique`, valueColor: 'text-royal-700' },
+    { cat: 'CLICKED', label: 'Clicked', value: `${analytics.clickRate}%`, sub: `${analytics.clickedCount} clicks`, valueColor: 'text-royal-600' },
+    { cat: 'REPLIED', label: 'Replied', value: `${analytics.replyRate}%`, sub: `${analytics.replyCount} replies`, valueColor: 'text-emerald-700' },
+    {
+      cat: 'BOUNCED',
+      label: 'Bounce Rate',
+      value: `${analytics.bounceRate}%`,
+      sub: `${analytics.bounceCount} bounces`,
+      valueColor: analytics.bounceRate > 5 ? 'text-rose-600' : 'text-royal-950',
+    },
+    { cat: 'UNSUBSCRIBED', label: 'Opt-Outs', value: `${unsubscribeRate}%`, sub: `${analytics.unsubscribedCount} unsubs`, valueColor: 'text-amber-700' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        {metricCards.map((m) => (
+          <button
+            key={m.cat}
+            type="button"
+            onClick={() => onSelectCategory(m.cat)}
+            className="p-4 card-midas rounded-2xl cursor-pointer group text-left w-full"
+            aria-label={`Inspect ${m.label}: ${m.value}`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500 group-hover:text-royal-800">
+                {m.label}
+              </span>
+              <Icons.ChevronLeft className="rotate-180 text-gold-500 text-xs" />
+            </div>
+            <p className={`text-xl font-black mt-1 ${m.valueColor}`}>{m.value}</p>
+            <p className="text-[10px] text-thistle-500 mt-0.5">{m.sub}</p>
+          </button>
+        ))}
+      </div>
+
+      <div className="p-6 card-midas rounded-2xl space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gold-500/35">
+          <div>
+            <h3 className="text-sm font-bold text-royal-950">Sequence Dispatch Controls</h3>
+            <p className="text-xs text-thistle-500 mt-0.5">
+              Emails dispatch automatically in paced batches of 5 per sweep to protect mailbox reputation.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onReconcileQueue}
+              disabled={isReconciling}
+              className="px-3.5 py-1.5 bg-thistle-100 hover:bg-thistle-200 border border-gold-500/35 text-royal-800 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
+            >
+              <Icons.Bolt className="text-gold-600" />
+              <span>{isReconciling ? 'Syncing...' : 'Sync Unqueued Leads'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onDispatchNow}
+              disabled={isDispatchingNow || campaign.queuedCount === 0}
+              className="px-4 py-1.5 btn-royal rounded-xl text-xs font-bold flex items-center gap-1.5"
+            >
+              <Icons.Send className="text-gold-300" />
+              <span>{isDispatchingNow ? 'Sending Batch...' : 'Dispatch Next Batch (5 Safe Sends)'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/35">
+            <span className="text-[10px] font-bold uppercase text-thistle-500">Queue &amp; Status</span>
+            <p className="font-bold text-royal-950 mt-1">{campaign.queuedCount || 0} Emails Waiting ({campaign.status})</p>
+          </div>
+          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/35">
+            <span className="text-[10px] font-bold uppercase text-thistle-500">Sending Mailboxes</span>
+            <p className="font-bold text-royal-950 mt-1">{campaign.senderLinks?.length || 0} Assigned in Rotation</p>
+          </div>
+          <div className="p-3 bg-thistle-50/70 rounded-xl border border-gold-500/35">
+            <span className="text-[10px] font-bold uppercase text-thistle-500">Deliverability Health</span>
+            <p className="font-bold text-royal-950 mt-1">{analytics.bounceRate}% Bounce Rate ({analytics.unsubscribedCount} Unsubs)</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+</file>
+
 <file path="src/components/campaigns/tabs/CampaignSettingsTab.tsx">
 import React from 'react';
 import { KnowledgeBasePanel } from '../../knowledge/KnowledgeBasePanel';
@@ -20588,59 +20366,50 @@ export const ConnectDomainDrawer: React.FC<ConnectDomainDrawerProps> = ({
 };
 </file>
 
-<file path="src/components/townCrier/drawers/TownCrierComposerDrawer.tsx">
-import React, { useState } from 'react';
-import { Sheet } from '../../common/Sheet';
-import { townCrierAPI, getErrorMessage } from '../../../services/api';
-import { useToast } from '../../../context/ToastContext';
-import { ArtifactsPanel } from '../../artifacts/ArtifactsPanel';
+<file path="src/components/EditStrategyModal.tsx">
+import React, { useState, useEffect } from 'react';
+import { campaignAPI, getErrorMessage } from '../services/api';
+import { useToast } from '../context/ToastContext';
+import { Sheet } from './common/Sheet';
 
-interface TownCrierComposerDrawerProps {
+interface Props {
   isOpen: boolean;
   onClose: () => void;
+  campaign: any;
   onSuccess: () => void;
-  gongs?: any[];
 }
 
-export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = ({
-  isOpen,
-  onClose,
-  onSuccess,
-  gongs = [],
-}) => {
+export const EditStrategyModal: React.FC<Props> = ({ isOpen, onClose, campaign, onSuccess }) => {
   const { toast } = useToast();
-  const [broadcastSubject, setBroadcastSubject] = useState('');
-  const [broadcastBody, setBroadcastBody] = useState('');
-  const [selectedGongId, setSelectedGongId] = useState('');
-  const [templateStyle, setTemplateStyle] = useState<'card' | 'editorial' | 'minimal' | 'plain'>('card');
-  const [broadcastTagFilter, setBroadcastTagFilter] = useState('');
-  const [savingBroadcast, setSavingBroadcast] = useState(false);
+  const [objective, setObjective] = useState(campaign?.objective || '');
+  const [targetTool, setTargetTool] = useState(campaign?.targetTool || '');
+  const [extendedObjective, setExtendedObjective] = useState(campaign?.extendedObjective || '');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleCreateBroadcast = async (e: React.FormEvent) => {
+  useEffect(() => {
+    if (isOpen && campaign) {
+      setObjective(campaign.objective || '');
+      setTargetTool(campaign.targetTool || '');
+      setExtendedObjective(campaign.extendedObjective || '');
+    }
+  }, [isOpen, campaign]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!broadcastSubject.trim() || !broadcastBody.trim()) return;
-
-    setSavingBroadcast(true);
+    setSubmitting(true);
     try {
-      await townCrierAPI.createBroadcast({
-        subject: broadcastSubject.trim(),
-        body: broadcastBody.trim(),
-        gongId: selectedGongId || undefined,
-        tagFilter: broadcastTagFilter.trim() || undefined,
-        templateStyle,
+      await campaignAPI.updateStrategy(campaign.id, {
+        objective,
+        targetTool,
+        extendedObjective,
       });
-      toast.success('Broadcast created as Draft', 'Saved');
-      setBroadcastSubject('');
-      setBroadcastBody('');
-      setSelectedGongId('');
-      setBroadcastTagFilter('');
-      setTemplateStyle('card');
-      onClose();
+      toast.success('Campaign SDR strategy updated', 'Strategy Saved');
       onSuccess();
+      onClose();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Could not create broadcast'), 'Error');
+      toast.error(getErrorMessage(err, 'Failed to update strategy'), 'Error');
     } finally {
-      setSavingBroadcast(false);
+      setSubmitting(false);
     }
   };
 
@@ -20648,106 +20417,127 @@ export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = (
     <Sheet
       isOpen={isOpen}
       onClose={onClose}
-      title="Compose Broadcast Proclamation"
-      description="Stage a newsletter broadcast. Strictly drained through the bounded ≤5/tick queue engine."
-      width="xl"
+      title="Refine Campaign Strategy"
+      description="Guide AI personalization and autonomous objection handling for this sequence."
+      width="lg"
     >
-      <form onSubmit={handleCreateBroadcast} className="space-y-4 text-xs">
+      <form onSubmit={handleSubmit} className="space-y-4 text-xs">
         <div>
-          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Target Gong Channel</label>
-          <select
-            value={selectedGongId}
-            onChange={(e) => setSelectedGongId(e.target.value)}
-            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none focus:border-gold-500"
-          >
-            <option value="">-- All Active Audience Subscribers --</option>
-            {gongs.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name} (/{g.slug} · {g.cadence?.toUpperCase() || 'WEEKLY'})
-              </option>
-            ))}
-          </select>
+          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Global Objective</label>
+          <input
+            className="w-full p-3 bg-thistle-50 rounded-xl border border-gold-500/40 focus:border-gold-500 outline-none font-semibold text-royal-950"
+            value={objective}
+            onChange={(e) => setObjective(e.target.value)}
+            placeholder="e.g. Book a 15-minute discovery call"
+          />
         </div>
-
-        <ArtifactsPanel gongId={selectedGongId || undefined} compact />
-
         <div>
           <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">
-            Email Layout Design (Card Enabled by Default)
+            Primary Call-to-Action (Calendly / Booking Link / Phone)
           </label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {[
-              ['card', 'Card Envelope', 'Centered 580px rounded box'],
-              ['editorial', 'Editorial', 'Substack/Beehiiv publication'],
-              ['minimal', 'Clean Minimal', 'Accent line & header'],
-              ['plain', 'Conversational', 'Raw HTML format'],
-            ].map(([id, label, desc]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setTemplateStyle(id as any)}
-                className={`p-2.5 rounded-xl border text-left transition-all ${
-                  templateStyle === id
-                    ? 'border-gold-500 bg-thistle-100 text-royal-950 shadow-2xs font-bold'
-                    : 'border-gold-500/35 bg-white hover:bg-thistle-50 text-royal-800'
-                }`}
-              >
-                <p className="text-xs">{label}</p>
-                <p className="text-[10px] text-thistle-500 font-normal mt-0.5">{desc}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Broadcast Subject Line *</label>
           <input
-            type="text"
-            value={broadcastSubject}
-            onChange={(e) => setBroadcastSubject(e.target.value)}
-            placeholder="e.g. Issue #42: How We Scaled Neon Postgres to 10k QPS"
-            required
-            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-medium focus:outline-none focus:border-gold-500"
+            className="w-full p-3 bg-thistle-100/70 rounded-xl border border-gold-500/40 focus:border-gold-500 outline-none text-royal-800 font-bold"
+            value={targetTool}
+            onChange={(e) => setTargetTool(e.target.value)}
+            placeholder="e.g. https://cal.com/team/intro"
           />
         </div>
-
         <div>
-          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Subscriber Tag Filter (Optional)</label>
-          <input
-            type="text"
-            value={broadcastTagFilter}
-            onChange={(e) => setBroadcastTagFilter(e.target.value)}
-            placeholder="e.g. vip, webflow (leave blank for all channel subscribers)"
-            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-mono text-[11px] focus:outline-none focus:border-gold-500"
-          />
-        </div>
-
-        <div>
-          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Newsletter Body (Mustache, Spintax &amp; {'{{artifact:slug}}'} Enabled)</label>
+          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Extended SDR Guidelines</label>
           <textarea
-            rows={10}
-            value={broadcastBody}
-            onChange={(e) => setBroadcastBody(e.target.value)}
-            placeholder="Write your proclamation content here..."
-            required
-            className="w-full p-3.5 bg-thistle-50 border border-gold-500/40 rounded-xl font-sans focus:outline-none focus:border-gold-500 text-xs leading-relaxed"
+            className="w-full p-3 bg-thistle-50 rounded-xl border border-gold-500/40 focus:border-gold-500 outline-none text-xs"
+            rows={5}
+            value={extendedObjective}
+            onChange={(e) => setExtendedObjective(e.target.value)}
+            placeholder="Explain tone, pricing boundaries, and how the AI should handle objections..."
           />
         </div>
-
-        <div className="pt-3 border-t border-gold-500/35 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 font-bold text-thistle-500 hover:text-royal-950"
-          >
+        <div className="flex justify-end gap-3 pt-4 border-t border-gold-500/35">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-thistle-500 hover:text-royal-950 font-bold">
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={savingBroadcast}
-            className="px-5 py-2 btn-royal font-bold rounded-xl"
+          <button type="submit" disabled={submitting} className="px-5 py-2 btn-royal font-bold rounded-xl">
+            {submitting ? 'Updating...' : 'Save Strategy'}
+          </button>
+        </div>
+      </form>
+    </Sheet>
+  );
+};
+</file>
+
+<file path="src/components/InviteCollaboratorModal.tsx">
+import React, { useState } from 'react';
+import { campaignAPI, getErrorMessage } from '../services/api';
+import { useToast } from '../context/ToastContext';
+import { Sheet } from './common/Sheet';
+
+interface Props {
+  isOpen: boolean;
+  onClose: () => void;
+  campaignId: string;
+  onSuccess: () => void;
+}
+
+export const InviteCollaboratorModal: React.FC<Props> = ({ isOpen, onClose, campaignId, onSuccess }) => {
+  const { toast } = useToast();
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('EDITOR');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await campaignAPI.createInvite(campaignId, { email, role });
+      toast.success(`Invitation sent to ${email}`, 'Collaborator Invited');
+      setEmail('');
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to send invite. Ensure the user is registered.'), 'Invite Error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Sheet
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Invite Team Collaborator"
+      description="Grant Editor or View-Only permissions to another registered MIDAS user."
+      width="md"
+    >
+      <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+        <div>
+          <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Collaborator Email</label>
+          <input
+            type="email"
+            required
+            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-mono focus:outline-none focus:border-gold-500"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="colleague@company.com"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Workspace Role</label>
+          <select
+            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-semibold text-royal-950 focus:outline-none"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
           >
-            {savingBroadcast ? 'Saving Draft...' : 'Save Broadcast Draft'}
+            <option value="EDITOR">Editor (Manage leads, drafts &amp; sequences)</option>
+            <option value="VIEWER">Viewer (Read-only analytics &amp; threads)</option>
+          </select>
+        </div>
+        <div className="flex justify-end gap-3 pt-3 border-t border-gold-500/35">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-thistle-500 hover:text-royal-950 font-bold">
+            Cancel
+          </button>
+          <button type="submit" disabled={submitting} className="px-5 py-2 btn-royal rounded-xl font-bold">
+            {submitting ? 'Sending...' : 'Send Invitation'}
           </button>
         </div>
       </form>
@@ -23851,6 +23641,197 @@ export const LeadDrawer: React.FC<LeadDrawerProps> = ({
           </div>
         )}
       </div>
+    </Sheet>
+  );
+};
+</file>
+
+<file path="src/components/townCrier/drawers/TownCrierComposerDrawer.tsx">
+import React, { useState, useEffect } from 'react';
+import { Sheet } from '../../common/Sheet';
+import { townCrierAPI, knowledgeAPI, getErrorMessage } from '../../../services/api';
+import { useToast } from '../../../context/ToastContext';
+import { ArtifactsPanel } from '../../artifacts/ArtifactsPanel';
+
+interface TownCrierComposerDrawerProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+  gongs?: any[];
+}
+
+export const TownCrierComposerDrawer: React.FC<TownCrierComposerDrawerProps> = ({
+  isOpen,
+  onClose,
+  onSuccess,
+  gongs = [],
+}) => {
+  const { toast } = useToast();
+  const [broadcastSubject, setBroadcastSubject] = useState('');
+  const [broadcastBody, setBroadcastBody] = useState('');
+  const [selectedGongId, setSelectedGongId] = useState('');
+  const [selectedKbId, setSelectedKbId] = useState('');
+  const [knowledgeBases, setKnowledgeBases] = useState<any[]>([]);
+  const [templateStyle, setTemplateStyle] = useState<'card' | 'editorial' | 'minimal' | 'plain'>('card');
+  const [broadcastTagFilter, setBroadcastTagFilter] = useState('');
+  const [savingBroadcast, setSavingBroadcast] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      knowledgeAPI
+        .listBases()
+        .then((res) => setKnowledgeBases(res.data || []))
+        .catch(() => {});
+    }
+  }, [isOpen]);
+
+  const handleCreateBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastSubject.trim() || !broadcastBody.trim()) return;
+
+    setSavingBroadcast(true);
+    try {
+      await townCrierAPI.createBroadcast({
+        subject: broadcastSubject.trim(),
+        body: broadcastBody.trim(),
+        gongId: selectedGongId || undefined,
+        knowledgeBaseId: selectedKbId || undefined,
+        tagFilter: broadcastTagFilter.trim() || undefined,
+        templateStyle,
+      });
+      toast.success('Broadcast created as Draft', 'Saved');
+      setBroadcastSubject('');
+      setBroadcastBody('');
+      setSelectedGongId('');
+      setSelectedKbId('');
+      setBroadcastTagFilter('');
+      setTemplateStyle('card');
+      onClose();
+      onSuccess();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not create broadcast'), 'Error');
+    } finally {
+      setSavingBroadcast(false);
+    }
+  };
+
+  return (
+    <Sheet
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Compose Newsletter Broadcast"
+      description="Stage a newsletter edition. Dispatched via paced 5-send batches to protect domain reputation."
+      width="xl"
+    >
+      <form onSubmit={handleCreateBroadcast} className="space-y-4 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Target Newsletter Channel</label>
+            <select
+              value={selectedGongId}
+              onChange={(e) => setSelectedGongId(e.target.value)}
+              className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-bold text-royal-950 focus:outline-none focus:border-gold-500"
+            >
+              <option value="">-- All Active Subscribers --</option>
+              {gongs.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} (/{g.slug} · {g.cadence?.toUpperCase() || 'WEEKLY'})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Knowledge Base Override</label>
+            <select
+              value={selectedKbId}
+              onChange={(e) => setSelectedKbId(e.target.value)}
+              className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-semibold text-royal-950 focus:outline-none focus:border-gold-500"
+            >
+              <option value="">-- Channel / Workspace Default --</option>
+              {knowledgeBases.map((kb) => (
+                <option key={kb.id} value={kb.id}>
+                  {kb.name} ({kb.resources?.length || 0} resources)
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <ArtifactsPanel gongId={selectedGongId || undefined} compact />
+
+        <div>
+          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">
+            Email Layout Design (Card Enabled by Default)
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              ['card', 'Card Envelope', 'Centered 580px rounded box'],
+              ['editorial', 'Editorial', 'Substack/Beehiiv publication'],
+              ['minimal', 'Clean Minimal', 'Accent line & header'],
+              ['plain', 'Conversational', 'Raw HTML format'],
+            ].map(([id, label, desc]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTemplateStyle(id as any)}
+                className={`p-2.5 rounded-xl border text-left transition-all ${
+                  templateStyle === id
+                    ? 'border-gold-500 bg-thistle-100 text-royal-950 shadow-2xs font-bold'
+                    : 'border-gold-500/35 bg-white hover:bg-thistle-50 text-royal-800'
+                }`}
+              >
+                <p className="text-xs">{label}</p>
+                <p className="text-[10px] text-thistle-500 font-normal mt-0.5">{desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Broadcast Subject Line *</label>
+          <input
+            type="text"
+            value={broadcastSubject}
+            onChange={(e) => setBroadcastSubject(e.target.value)}
+            placeholder="e.g. Issue #42: Scaling Outbound Infrastructure"
+            required
+            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-medium focus:outline-none focus:border-gold-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Subscriber Tag Filter (Optional)</label>
+          <input
+            type="text"
+            value={broadcastTagFilter}
+            onChange={(e) => setBroadcastTagFilter(e.target.value)}
+            placeholder="e.g. vip, webflow (leave blank for all channel subscribers)"
+            className="w-full px-3.5 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl font-mono text-[11px] focus:outline-none focus:border-gold-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-thistle-500 uppercase mb-1">Newsletter Body (Mustache, Spintax &amp; {'{{artifact:slug}}'} Enabled)</label>
+          <textarea
+            rows={10}
+            value={broadcastBody}
+            onChange={(e) => setBroadcastBody(e.target.value)}
+            placeholder="Write your newsletter edition here..."
+            required
+            className="w-full p-3.5 bg-thistle-50 border border-gold-500/40 rounded-xl font-sans focus:outline-none focus:border-gold-500 text-xs leading-relaxed"
+          />
+        </div>
+
+        <div className="pt-3 border-t border-gold-500/35 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 font-bold text-thistle-500 hover:text-royal-950">
+            Cancel
+          </button>
+          <button type="submit" disabled={savingBroadcast} className="px-5 py-2 btn-royal font-bold rounded-xl">
+            {savingBroadcast ? 'Saving Draft...' : 'Save Broadcast Draft'}
+          </button>
+        </div>
+      </form>
     </Sheet>
   );
 };
@@ -35973,10 +35954,10 @@ export const CampaignDetail: React.FC = () => {
     setIsReconciling(true);
     try {
       const res = await campaignAPI.reconcileQueue(id);
-      toast.success(res.data?.message || 'Queue reconciled', 'Queue Staged');
+      toast.success(res.data?.message || 'Queue synced', 'Queue Staged');
       await fetchCampaign();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Could not reconcile queue'), 'Queue Error');
+      toast.error(getErrorMessage(err, 'Could not sync queue'), 'Queue Error');
     } finally {
       setIsReconciling(false);
     }
@@ -36001,7 +35982,7 @@ export const CampaignDetail: React.FC = () => {
     try {
       if (campaign.status === 'PAUSED') {
         await campaignAPI.resume(id);
-        toast.success('Campaign outreach resumed and queue reconciled', 'Active');
+        toast.success('Campaign outreach resumed and queue synced', 'Active');
       } else {
         await campaignAPI.pause(id);
         toast.warning('Campaign outreach paused', 'Halted');
@@ -36291,6 +36272,11 @@ export const CampaignDetail: React.FC = () => {
     );
   });
 
+  const openLeadDrawer = (lead: any) => {
+    setPreviewLead(lead);
+    setIsLeadDrawerOpen(true);
+  };
+
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
       <CampaignHeader
@@ -36318,9 +36304,8 @@ export const CampaignDetail: React.FC = () => {
         isRepersonalizing={isRepersonalizing}
       />
 
-      {/* Tabs with Golden Bottom Separator */}
       <div className="border-b border-gold-500/40">
-        <nav className="flex space-x-8 overflow-x-auto">
+        <nav className="flex space-x-8 overflow-x-auto" aria-label="Campaign views">
           {[
             ['dashboard', 'Overview & Analytics'],
             ['flow', 'Sequence Flow'],
@@ -36331,6 +36316,7 @@ export const CampaignDetail: React.FC = () => {
           ].map(([key, label]) => (
             <button
               key={key}
+              type="button"
               onClick={() => setActiveTab(key as TabType)}
               className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors whitespace-nowrap ${
                 activeTab === key
@@ -36380,6 +36366,7 @@ export const CampaignDetail: React.FC = () => {
           {canEdit && (
             <div className="flex justify-end">
               <button
+                type="button"
                 onClick={handleSaveFollowUpSteps}
                 disabled={savingSteps}
                 className="px-5 py-2.5 btn-royal text-xs font-bold rounded-xl"
@@ -36397,6 +36384,7 @@ export const CampaignDetail: React.FC = () => {
             <span className="text-xs font-bold text-thistle-500 uppercase tracking-wider">Prospects in this Sequence</span>
             {canEdit && (
               <button
+                type="button"
                 onClick={() => setIsUploadDrawerOpen(true)}
                 className="px-3.5 py-1.5 btn-royal text-xs font-bold rounded-xl flex items-center gap-1.5"
               >
@@ -36411,7 +36399,7 @@ export const CampaignDetail: React.FC = () => {
               <div className="py-20 text-center text-xs text-thistle-500 space-y-2">
                 <p>No leads attached to this sequence yet.</p>
                 {canEdit && (
-                  <button onClick={() => setIsUploadDrawerOpen(true)} className="text-royal-700 font-bold hover:underline">
+                  <button type="button" onClick={() => setIsUploadDrawerOpen(true)} className="text-royal-700 font-bold hover:underline">
                     Upload and map your first lead list
                   </button>
                 )}
@@ -36430,9 +36418,15 @@ export const CampaignDetail: React.FC = () => {
                   {campaign.leads.map((l: any) => (
                     <tr
                       key={l.id}
-                      onClick={() => {
-                        setPreviewLead(l);
-                        setIsLeadDrawerOpen(true);
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`Inspect conversation and enrichment for ${l.name}`}
+                      onClick={() => openLeadDrawer(l)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openLeadDrawer(l);
+                        }
                       }}
                       className="hover:bg-thistle-50/80 cursor-pointer transition-colors"
                     >
@@ -36509,10 +36503,7 @@ export const CampaignDetail: React.FC = () => {
         leads={filteredDrilldownLeads}
         searchQuery={drilldownSearch}
         onSearchChange={setDrilldownSearch}
-        onLeadClick={(lead) => {
-          setPreviewLead(lead);
-          setIsLeadDrawerOpen(true);
-        }}
+        onLeadClick={(lead) => openLeadDrawer(lead)}
       />
 
       <Sheet
@@ -36543,7 +36534,7 @@ export const CampaignDetail: React.FC = () => {
         isOpen={isDraftDrawerOpen}
         onClose={() => setIsDraftDrawerOpen(false)}
         title={editingDraft ? 'Edit Copywriting Draft' : 'Create Custom Draft'}
-        description="Include Spintax {Option A|Option B} and {{name}} or {{company}} placeholders."
+        description="Include Spintax {Option A|Option B}, {{name}}, {{company}}, or {{artifact:slug}} tokens."
       >
         <div className="space-y-4">
           <div>
@@ -36565,10 +36556,11 @@ export const CampaignDetail: React.FC = () => {
             />
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-gold-500/35">
-            <button onClick={() => setIsDraftDrawerOpen(false)} className="px-3 py-1.5 text-xs text-thistle-500 hover:text-royal-950 font-bold">
+            <button type="button" onClick={() => setIsDraftDrawerOpen(false)} className="px-3 py-1.5 text-xs text-thistle-500 hover:text-royal-950 font-bold">
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleSaveDraft}
               disabled={savingDraft}
               className="px-4 py-2 btn-royal text-xs font-bold rounded-xl"
@@ -37890,8 +37882,14 @@ export const townCrierAPI = {
   deleteGong: (id: string) => api.delete(`/town-crier/gongs/${id}`),
 
   getBroadcasts: () => api.get('/town-crier/broadcasts'),
-  createBroadcast: (data: { subject: string; body: string; tagFilter?: string; gongId?: string; templateStyle?: string }) =>
-    api.post('/town-crier/broadcasts', data),
+  createBroadcast: (data: {
+    subject: string;
+    body: string;
+    tagFilter?: string;
+    gongId?: string;
+    templateStyle?: string;
+    knowledgeBaseId?: string;
+  }) => api.post('/town-crier/broadcasts', data),
   queueBroadcast: (id: string) => api.post(`/town-crier/broadcasts/${id}/queue`),
   deleteBroadcast: (id: string) => api.delete(`/town-crier/broadcasts/${id}`),
   triggerSweep: () => api.post('/town-crier/sweep'),

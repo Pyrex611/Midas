@@ -76,6 +76,79 @@ export class PlanGuardService {
     };
   }
 
+  async assertDomainCapacity(userId: string): Promise<PlanQuotaConfig> {
+    const { config } = await this.getOrInitSubscription(userId);
+    const count = await prisma.domain.count({ where: { userId } });
+    if (count >= config.maxDomains) {
+      throw new Error(
+        `Your ${config.displayName} plan allows up to ${config.maxDomains} sending domain(s). Upgrade to Chief ($35/mo) to connect up to 10 domains.`
+      );
+    }
+    return config;
+  }
+
+  async assertSenderCapacity(userId: string): Promise<PlanQuotaConfig> {
+    const { config } = await this.getOrInitSubscription(userId);
+    const count = await prisma.sender.count({ where: { userId } });
+    if (count >= config.maxSenders) {
+      throw new Error(
+        `Your ${config.displayName} plan allows up to ${config.maxSenders} sending mailbox(es). Upgrade to Chief ($35/mo) to create up to 25 senders.`
+      );
+    }
+    return config;
+  }
+
+  async assertGongCapacity(userId: string): Promise<PlanQuotaConfig> {
+    const { config } = await this.getOrInitSubscription(userId);
+    const count = await prisma.gong.count({ where: { userId } });
+    if (count >= config.maxGongs) {
+      throw new Error(
+        `Your ${config.displayName} plan allows up to ${config.maxGongs} Gong newsletter channel(s). Upgrade to Chief ($35/mo) for up to 25 Gongs.`
+      );
+    }
+    return config;
+  }
+
+  async assertLeadCapacity(userId: string, incomingNewCount: number = 1): Promise<PlanQuotaConfig> {
+    const { config } = await this.getOrInitSubscription(userId);
+    const count = await prisma.lead.count({ where: { userId } });
+    if (count + incomingNewCount > config.maxLeads) {
+      throw new Error(
+        `Lead limit exceeded: your ${config.displayName} plan supports up to ${config.maxLeads.toLocaleString()} leads (currently ${count.toLocaleString()}). Upgrade to Chief ($35/mo) for 10,000 leads.`
+      );
+    }
+    return config;
+  }
+
+  async assertSubscriberCapacity(userId: string, incomingNewCount: number = 1): Promise<PlanQuotaConfig> {
+    const { config } = await this.getOrInitSubscription(userId);
+    const count = await prisma.newsletterRecipient.count({ where: { userId } });
+    if (count + incomingNewCount > config.maxSubscribers) {
+      throw new Error(
+        `Subscriber limit exceeded: your ${config.displayName} plan supports up to ${config.maxSubscribers.toLocaleString()} subscribers (currently ${count.toLocaleString()}). Upgrade to Chief ($35/mo) for 10,000 subscribers.`
+      );
+    }
+    return config;
+  }
+
+  async assertFeatureAccess(
+    userId: string,
+    feature: 'allowAutoReplyAgent' | 'allowTeamInvites' | 'allowCustomTrackingDomain'
+  ): Promise<PlanQuotaConfig> {
+    const { config } = await this.getOrInitSubscription(userId);
+    if (!config[feature]) {
+      const labels: Record<typeof feature, string> = {
+        allowAutoReplyAgent: 'Autonomous AI Auto-Reply Agent',
+        allowTeamInvites: 'Team Collaboration Invites',
+        allowCustomTrackingDomain: 'Custom Branded Tracking CNAMEs',
+      };
+      throw new Error(
+        `${labels[feature]} requires the Chief ($35/mo) or Syndicate ($99/mo) plan. Upgrade in Profile -> Plan & Billing.`
+      );
+    }
+    return config;
+  }
+
   async assertKnowledgeBaseCapacity(userId: string): Promise<PlanQuotaConfig> {
     const { config } = await this.getOrInitSubscription(userId);
     const count = await prisma.knowledgeBase.count({ where: { userId } });

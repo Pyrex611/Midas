@@ -7,7 +7,6 @@ import { notificationService } from './notification.service';
 import { webhookDispatchService } from './webhookDispatch.service';
 
 export class WebhooksService {
-
   verifyMailgunSignature(timestamp: string, token: string, signature: string): boolean {
     const webhookKey = process.env.MAILGUN_WEBHOOK_KEY;
     if (!webhookKey) return false;
@@ -157,11 +156,17 @@ export class WebhooksService {
             where: { id: queueItem.recipientId },
             data: { status: 'BOUNCED' },
           });
+          await prisma.newsletterQueueItem.deleteMany({
+            where: { recipientId: queueItem.recipientId, status: 'PENDING' },
+          });
           if (resolvedDomainId) await this.updateDomainHealth(resolvedDomainId, 'bounce');
         } else if (eventType === 'complained') {
           await prisma.newsletterRecipient.update({
             where: { id: queueItem.recipientId },
             data: { status: 'UNSUBSCRIBED' },
+          });
+          await prisma.newsletterQueueItem.deleteMany({
+            where: { recipientId: queueItem.recipientId, status: 'PENDING' },
           });
           if (resolvedDomainId) await this.updateDomainHealth(resolvedDomainId, 'complaint');
         }
@@ -181,10 +186,13 @@ export class WebhooksService {
       } else if (eventType === 'bounced' || eventType === 'failed') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { bouncedAt: now, status: 'BOUNCED' } });
         await prisma.lead.update({ where: { id: email.leadId }, data: { outreachStatus: 'BOUNCED', status: 'BOUNCED' } });
+        // Drop any remaining queued follow-ups so we never dispatch to a known-bounced address
+        await prisma.pendingEmail.deleteMany({ where: { leadId: email.leadId } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'bounce');
       } else if (eventType === 'complained') {
         await prisma.outboundEmail.update({ where: { id: outboundEmailId }, data: { spamComplaint: true } });
         await prisma.lead.update({ where: { id: email.leadId }, data: { status: 'UNSUBSCRIBED', outreachStatus: 'UNSUBSCRIBED' } });
+        await prisma.pendingEmail.deleteMany({ where: { leadId: email.leadId } });
         if (email.domainId) await this.updateDomainHealth(email.domainId, 'complaint');
       }
     } catch (error) {
@@ -409,6 +417,8 @@ export class WebhooksService {
         ).catch(err => {
           logger.error({ err: err?.message }, '[STATE-GRAPH] Transition execution failure');
         });
+      } else {
+        await prisma.pendingEmail.deleteMany({ where: { leadId: lead.id } });
       }
     } catch (error) {
       logger.error({ error }, 'Failed to process inbound email');

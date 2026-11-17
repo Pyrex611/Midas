@@ -5,6 +5,9 @@ import { emailService } from './email.service';
 import { personalisationService } from './personalisation.service';
 import { senderService } from './sender.service';
 import { notificationService } from './notification.service';
+import { artifactService } from './artifact.service';
+import { planGuardService } from './billing/planGuard.service';
+import { EspAttachment } from './esp/types';
 import { env } from '../config/env';
 
 export class NewsletterQueueService {
@@ -22,6 +25,10 @@ export class NewsletterQueueService {
     const summary = { claimed: 0, sent: 0, deferred: 0, failed: 0 };
     const batchSize = env.SEND_SWEEP_BATCH_SIZE || 5;
     const cooldownSeconds = env.SENDER_COOLDOWN_SECONDS || 20;
+
+    const planLimitCache = new Map<string, boolean>();
+    const artifactMapCache = new Map<string, Record<string, { url: string; type: string; title: string }>>();
+    const attachmentsCache = new Map<string, EspAttachment[]>();
 
     try {
       await prisma.$executeRaw`
@@ -92,14 +99,23 @@ export class NewsletterQueueService {
             continue;
           }
 
+          if (!planLimitCache.has(item.userId)) {
+            planLimitCache.set(item.userId, await planGuardService.isOverMonthlyEmailLimit(item.userId));
+          }
+          if (planLimitCache.get(item.userId)) {
+            await prisma.newsletterQueueItem.update({
+              where: { id: item.id },
+              data: { status: 'PENDING' },
+            });
+            summary.deferred++;
+            continue;
+          }
+
           const userSettings = await prisma.userSettings.findUnique({
             where: { userId: item.userId },
             include: { dedicatedNewsletterSender: { include: { domain: true } } },
           });
 
-          // Priority 1: Per-Gong dedicated sender
-          // Priority 2: Account-wide dedicated newsletter sender
-          // Priority 3: Active pool fallback with 50% fair-share cap
           let eligibleSender: any = null;
 
           const gongSender = item.broadcast.gong?.dedicatedSender;
@@ -152,7 +168,6 @@ export class NewsletterQueueService {
             continue;
           }
 
-          // Respect per-sender cooldown even for dedicated senders
           if (eligibleSender.lastDispatchedAt) {
             const msSinceLast = Date.now() - new Date(eligibleSender.lastDispatchedAt).getTime();
             if (msSinceLast < cooldownSeconds * 1000) {
@@ -182,6 +197,23 @@ export class NewsletterQueueService {
             continue;
           }
 
+          if (!artifactMapCache.has(item.userId)) {
+            artifactMapCache.set(item.userId, await artifactService.getArtifactMapForUser(item.userId));
+          }
+          const scopeKey = `${item.broadcastId}:${item.broadcast.gongId || 'none'}`;
+          if (!attachmentsCache.has(scopeKey)) {
+            attachmentsCache.set(
+              scopeKey,
+              await artifactService.resolveMimeAttachmentsForScope(item.userId, {
+                broadcastId: item.broadcastId,
+                gongId: item.broadcast.gongId,
+              })
+            );
+          }
+
+          const artifacts = artifactMapCache.get(item.userId);
+          const mimeAttachments = attachmentsCache.get(scopeKey);
+
           const token = await this.ensureRecipientUnsubscribeToken(recipient.id, recipient.unsubscribeToken);
           const appBaseUrl = process.env.APP_URL || 'https://midas-aem.vercel.app';
           const unsubUrl = `${appBaseUrl.replace(/\/$/, '')}/api/public/town-crier/recipients/unsubscribe/${token}`;
@@ -197,6 +229,7 @@ export class NewsletterQueueService {
               companyName: userSettings?.companyName,
               physicalAddress: userSettings?.physicalAddress,
               customOptOutText: userSettings?.customOptOutText,
+              artifacts,
             }
           );
 
@@ -220,7 +253,8 @@ export class NewsletterQueueService {
               logoUrl: userSettings?.logoUrl,
               brandingEnabled: userSettings?.brandingEnabled ?? true,
               templateStyle: chosenTemplateStyle,
-            }
+            },
+            mimeAttachments
           );
 
           if (result.success) {
@@ -228,6 +262,7 @@ export class NewsletterQueueService {
               where: { id: item.id },
               data: { status: 'SENT' },
             });
+            await planGuardService.recordEmailSent(item.userId, 1);
             summary.sent++;
 
             const remaining = await prisma.newsletterQueueItem.count({
