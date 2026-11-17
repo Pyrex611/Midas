@@ -14,7 +14,6 @@ export const AdminDashboard: React.FC = () => {
   const [servicesHealth, setServicesHealth] = useState<any>(null);
   const [probingServices, setProbingServices] = useState(false);
 
-  // On-Platform One-Time Neon -> Supabase Data Transfer State
   const [neonSourceUrl, setNeonSourceUrl] = useState('');
   const [migratingNeon, setMigratingNeon] = useState(false);
   const [migrationReport, setMigrationReport] = useState<any | null>(null);
@@ -137,7 +136,7 @@ export const AdminDashboard: React.FC = () => {
       toast.success('Operator clearance authorized for 60 minutes', 'Session Active');
       await fetchAll();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Passphrase rejected.'), 'Access Denied');
+      toast.error(getErrorMessage(err, 'Passphrase rejected or operator unlock is disabled.'), 'Access Denied');
     } finally {
       setVerifyingPassphrase(false);
     }
@@ -207,14 +206,14 @@ export const AdminDashboard: React.FC = () => {
           <div className="text-center space-y-1">
             <h2 className="text-xl font-black text-royal-950 tracking-tight">Operator Clearance Required</h2>
             <p className="text-xs text-thistle-500">
-              Enter your platform master passphrase to unlock cross-tenant deliverability controls.
+              Sign in with an <code className="font-mono font-bold">isAdmin</code> operator account or authenticate via <code className="font-mono">OPERATOR_PASSPHRASE</code>.
             </p>
           </div>
 
           <form onSubmit={handleUnlock} className="space-y-4">
             <div>
               <label className="block text-[10px] font-bold text-thistle-500 uppercase tracking-wider mb-1">
-                Master Passphrase
+                Operator Passphrase
               </label>
               <input
                 type="password"
@@ -225,9 +224,6 @@ export const AdminDashboard: React.FC = () => {
                 className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl text-sm font-mono text-royal-950 focus:outline-none focus:border-gold-500"
                 autoFocus
               />
-              <p className="text-[10px] text-thistle-500 mt-1">
-                Default passphrase: <code className="bg-thistle-100 px-1.5 py-0.5 rounded font-mono font-bold text-royal-800 border border-gold-500/30">midas_operator_2026</code>
-              </p>
             </div>
 
             <button
@@ -265,7 +261,6 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* On-Platform One-Time Neon -> Supabase Data Transfer */}
       <div className="card-midas rounded-2xl p-6 space-y-4">
         <div className="pb-3 border-b border-gold-500/35">
           <div className="flex items-center gap-2">

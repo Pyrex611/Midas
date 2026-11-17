@@ -7,7 +7,7 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "build": "prisma generate && tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/index.js",
-    "vercel-build": "prisma generate && prisma db push --accept-data-loss && tsc -p tsconfig.server.json && vite build",
+    "vercel-build": "prisma generate && node scripts/baseline-migrations.js --auto && prisma migrate deploy && tsc -p tsconfig.server.json && vite build",
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {

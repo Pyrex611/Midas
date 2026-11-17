@@ -19,6 +19,18 @@ import { logger } from '../../config/logger';
 const router = Router();
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
+interface BulkSubscriberRow {
+  email: string;
+  name: string | null;
+  cadence: string;
+  tags: string[];
+  userId: string;
+  gongId: string | null;
+  source: string;
+  status: string;
+  unsubscribeToken: string;
+}
+
 // Public Bearer API-key & drop-in widget endpoints do not use session cookies
 router.use(cors({ origin: '*', credentials: false }));
 
@@ -777,14 +789,14 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
         ? gongLookup.get(defaultIdentifier) || gongLookup.get(defaultIdentifier.toLowerCase()) || null
         : null;
 
-      const validSubscribers = payload.subscribers
-        .map((s: any) => {
-          const itemIdentifier = (s.gongId || s.gong || '').trim();
+      const validSubscribers: BulkSubscriberRow[] = (payload.subscribers as any[])
+        .map((s: any): BulkSubscriberRow => {
+          const itemIdentifier = String(s.gongId || s.gong || '').trim();
           const resolvedGong = itemIdentifier
             ? gongLookup.get(itemIdentifier) || gongLookup.get(itemIdentifier.toLowerCase()) || defaultGong
             : defaultGong;
 
-          const baseTags = Array.isArray(s.tags) ? s.tags.map((t: any) => String(t).trim()) : ['api_bulk'];
+          const baseTags: string[] = Array.isArray(s.tags) ? s.tags.map((t: any) => String(t).trim()) : ['api_bulk'];
           if (resolvedGong && !baseTags.includes(`gong:${resolvedGong.slug}`)) {
             baseTags.push(`gong:${resolvedGong.slug}`);
           }
@@ -792,7 +804,7 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
           return {
             email: String(s.email || '').trim().toLowerCase(),
             name: s.name ? String(s.name).trim() : null,
-            cadence: s.cadence || 'weekly',
+            cadence: String(s.cadence || 'weekly'),
             tags: baseTags,
             userId,
             gongId: resolvedGong?.id || null,
@@ -801,17 +813,17 @@ router.post('/subscribe', requireApiKeyScope('town_crier:write'), async (req: Re
             unsubscribeToken: crypto.randomBytes(16).toString('hex'),
           };
         })
-        .filter((s: any) => s.email && s.email.includes('@') && !isEmailBlocked(s.email, blocklist));
+        .filter((s: BulkSubscriberRow) => Boolean(s.email) && s.email.includes('@') && !isEmailBlocked(s.email, blocklist));
 
-      const uniqueEmails = Array.from(new Set(validSubscribers.map((s: any) => s.email)));
+      const uniqueEmails: string[] = Array.from(new Set<string>(validSubscribers.map((s) => s.email)));
       const existingRows = uniqueEmails.length > 0
         ? await prisma.newsletterRecipient.findMany({
             where: { userId, email: { in: uniqueEmails } },
             select: { email: true },
           })
         : [];
-      const existingSet = new Set(existingRows.map(r => r.email));
-      const netNewCount = uniqueEmails.filter(e => !existingSet.has(e)).length;
+      const existingSet = new Set<string>(existingRows.map(r => r.email));
+      const netNewCount = uniqueEmails.filter((e: string) => !existingSet.has(e)).length;
 
       if (netNewCount > 0) {
         try {
@@ -1074,7 +1086,15 @@ router.post('/recipients/import', requireApiKeyScope('town_crier:write'), upload
     const rows = parsed.data as any[];
 
     const blocklist = await prisma.blocklist.findMany({ where: { userId } });
-    const validRecipients: any[] = [];
+    const validRecipients: Array<{
+      email: string;
+      name: string | null;
+      userId: string;
+      source: string;
+      status: string;
+      tags: string[];
+      unsubscribeToken: string;
+    }> = [];
 
     for (const row of rows) {
       const keys = Object.keys(row);
@@ -1098,15 +1118,15 @@ router.post('/recipients/import', requireApiKeyScope('town_crier:write'), upload
       });
     }
 
-    const uniqueEmails = Array.from(new Set(validRecipients.map((r) => r.email)));
+    const uniqueEmails: string[] = Array.from(new Set<string>(validRecipients.map((r) => r.email)));
     const existingRows = uniqueEmails.length > 0
       ? await prisma.newsletterRecipient.findMany({
           where: { userId, email: { in: uniqueEmails } },
           select: { email: true },
         })
       : [];
-    const existingSet = new Set(existingRows.map((r) => r.email));
-    const netNewCount = uniqueEmails.filter((e) => !existingSet.has(e)).length;
+    const existingSet = new Set<string>(existingRows.map((r) => r.email));
+    const netNewCount = uniqueEmails.filter((e: string) => !existingSet.has(e)).length;
 
     if (netNewCount > 0) {
       try {

@@ -189,7 +189,15 @@ export const importRecipients = [
       const blocklist = await prisma.blocklist.findMany({ where: { userId } });
       const defaultTag = typeof req.body.tag === 'string' && req.body.tag.trim() ? [req.body.tag.trim()] : [];
 
-      const validRecipients: any[] = [];
+      const validRecipients: Array<{
+        email: string;
+        name: string | null;
+        userId: string;
+        source: string;
+        status: string;
+        tags: string[];
+        unsubscribeToken: string;
+      }> = [];
 
       for (const row of rows) {
         const keys = Object.keys(row);
@@ -215,15 +223,15 @@ export const importRecipients = [
         });
       }
 
-      const uniqueEmails = Array.from(new Set(validRecipients.map(r => r.email)));
+      const uniqueEmails: string[] = Array.from(new Set<string>(validRecipients.map((r) => r.email)));
       const existingRows = uniqueEmails.length > 0
         ? await prisma.newsletterRecipient.findMany({
             where: { userId, email: { in: uniqueEmails } },
             select: { email: true },
           })
         : [];
-      const existingSet = new Set(existingRows.map(e => e.email));
-      const netNewCount = uniqueEmails.filter(e => !existingSet.has(e)).length;
+      const existingSet = new Set<string>(existingRows.map(e => e.email));
+      const netNewCount = uniqueEmails.filter((e: string) => !existingSet.has(e)).length;
 
       if (netNewCount > 0) {
         try {

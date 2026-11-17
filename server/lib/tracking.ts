@@ -15,12 +15,23 @@ export const TRANSPARENT_GIF_BUFFER = Buffer.from(
   'base64'
 );
 
+const EPHEMERAL_FALLBACK = crypto.randomBytes(32).toString('hex');
+
 function getSigningSecret(): string {
-  return (
+  const configured =
     process.env.ENCRYPTION_KEY ||
     process.env.CRON_SECRET ||
-    'midas_tracking_dev_secret_key'
-  );
+    process.env.CLERK_SECRET_KEY;
+
+  if (configured && configured.trim().length > 0) {
+    return configured.trim();
+  }
+
+  if (process.env.DATABASE_URL) {
+    return crypto.createHash('sha256').update(`tracking:${process.env.DATABASE_URL}`).digest('hex');
+  }
+
+  return EPHEMERAL_FALLBACK;
 }
 
 function signPayload(dataB64: string): string {
