@@ -132,10 +132,10 @@ export const CampaignDetail: React.FC = () => {
     setIsReconciling(true);
     try {
       const res = await campaignAPI.reconcileQueue(id);
-      toast.success(res.data?.message || 'Queue reconciled', 'Queue Staged');
+      toast.success(res.data?.message || 'Queue synced', 'Queue Staged');
       await fetchCampaign();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Could not reconcile queue'), 'Queue Error');
+      toast.error(getErrorMessage(err, 'Could not sync queue'), 'Queue Error');
     } finally {
       setIsReconciling(false);
     }
@@ -160,7 +160,7 @@ export const CampaignDetail: React.FC = () => {
     try {
       if (campaign.status === 'PAUSED') {
         await campaignAPI.resume(id);
-        toast.success('Campaign outreach resumed and queue reconciled', 'Active');
+        toast.success('Campaign outreach resumed and queue synced', 'Active');
       } else {
         await campaignAPI.pause(id);
         toast.warning('Campaign outreach paused', 'Halted');
@@ -450,6 +450,11 @@ export const CampaignDetail: React.FC = () => {
     );
   });
 
+  const openLeadDrawer = (lead: any) => {
+    setPreviewLead(lead);
+    setIsLeadDrawerOpen(true);
+  };
+
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
       <CampaignHeader
@@ -477,9 +482,8 @@ export const CampaignDetail: React.FC = () => {
         isRepersonalizing={isRepersonalizing}
       />
 
-      {/* Tabs with Golden Bottom Separator */}
       <div className="border-b border-gold-500/40">
-        <nav className="flex space-x-8 overflow-x-auto">
+        <nav className="flex space-x-8 overflow-x-auto" aria-label="Campaign views">
           {[
             ['dashboard', 'Overview & Analytics'],
             ['flow', 'Sequence Flow'],
@@ -490,6 +494,7 @@ export const CampaignDetail: React.FC = () => {
           ].map(([key, label]) => (
             <button
               key={key}
+              type="button"
               onClick={() => setActiveTab(key as TabType)}
               className={`py-3 px-1 border-b-2 text-xs font-bold transition-colors whitespace-nowrap ${
                 activeTab === key
@@ -539,6 +544,7 @@ export const CampaignDetail: React.FC = () => {
           {canEdit && (
             <div className="flex justify-end">
               <button
+                type="button"
                 onClick={handleSaveFollowUpSteps}
                 disabled={savingSteps}
                 className="px-5 py-2.5 btn-royal text-xs font-bold rounded-xl"
@@ -556,6 +562,7 @@ export const CampaignDetail: React.FC = () => {
             <span className="text-xs font-bold text-thistle-500 uppercase tracking-wider">Prospects in this Sequence</span>
             {canEdit && (
               <button
+                type="button"
                 onClick={() => setIsUploadDrawerOpen(true)}
                 className="px-3.5 py-1.5 btn-royal text-xs font-bold rounded-xl flex items-center gap-1.5"
               >
@@ -570,7 +577,7 @@ export const CampaignDetail: React.FC = () => {
               <div className="py-20 text-center text-xs text-thistle-500 space-y-2">
                 <p>No leads attached to this sequence yet.</p>
                 {canEdit && (
-                  <button onClick={() => setIsUploadDrawerOpen(true)} className="text-royal-700 font-bold hover:underline">
+                  <button type="button" onClick={() => setIsUploadDrawerOpen(true)} className="text-royal-700 font-bold hover:underline">
                     Upload and map your first lead list
                   </button>
                 )}
@@ -589,9 +596,15 @@ export const CampaignDetail: React.FC = () => {
                   {campaign.leads.map((l: any) => (
                     <tr
                       key={l.id}
-                      onClick={() => {
-                        setPreviewLead(l);
-                        setIsLeadDrawerOpen(true);
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`Inspect conversation and enrichment for ${l.name}`}
+                      onClick={() => openLeadDrawer(l)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openLeadDrawer(l);
+                        }
                       }}
                       className="hover:bg-thistle-50/80 cursor-pointer transition-colors"
                     >
@@ -668,10 +681,7 @@ export const CampaignDetail: React.FC = () => {
         leads={filteredDrilldownLeads}
         searchQuery={drilldownSearch}
         onSearchChange={setDrilldownSearch}
-        onLeadClick={(lead) => {
-          setPreviewLead(lead);
-          setIsLeadDrawerOpen(true);
-        }}
+        onLeadClick={(lead) => openLeadDrawer(lead)}
       />
 
       <Sheet
@@ -702,7 +712,7 @@ export const CampaignDetail: React.FC = () => {
         isOpen={isDraftDrawerOpen}
         onClose={() => setIsDraftDrawerOpen(false)}
         title={editingDraft ? 'Edit Copywriting Draft' : 'Create Custom Draft'}
-        description="Include Spintax {Option A|Option B} and {{name}} or {{company}} placeholders."
+        description="Include Spintax {Option A|Option B}, {{name}}, {{company}}, or {{artifact:slug}} tokens."
       >
         <div className="space-y-4">
           <div>
@@ -724,10 +734,11 @@ export const CampaignDetail: React.FC = () => {
             />
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-gold-500/35">
-            <button onClick={() => setIsDraftDrawerOpen(false)} className="px-3 py-1.5 text-xs text-thistle-500 hover:text-royal-950 font-bold">
+            <button type="button" onClick={() => setIsDraftDrawerOpen(false)} className="px-3 py-1.5 text-xs text-thistle-500 hover:text-royal-950 font-bold">
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleSaveDraft}
               disabled={savingDraft}
               className="px-4 py-2 btn-royal text-xs font-bold rounded-xl"
