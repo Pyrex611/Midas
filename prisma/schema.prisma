@@ -440,30 +440,33 @@ model PendingEmail {
 }
 
 model UserSettings {
-  userId            String   @id @map("user_id") @db.Uuid
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sendLimit         Int?     @map("send_limit")
-  sendPeriod        String?  @map("send_period")
-  companyName       String?  @map("company_name")
-  physicalAddress   String?  @map("physical_address")
-  customOptOutText  String?  @map("custom_opt_out_text")
-  
-  aiProvider        String?  @map("ai_provider")
-  aiModel           String?  @map("ai_model")
-  aiApiKeyEncrypted String?  @db.Text @map("ai_api_key_encrypted")
-  aiGatewayUrl      String?  @map("ai_gateway_url")
-  aiIntegrations    Json?    @map("ai_integrations")
+  userId            String    @id @map("user_id") @db.Uuid
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sendLimit         Int?      @map("send_limit")
+  sendPeriod        String?   @map("send_period")
+  companyName       String?   @map("company_name")
+  physicalAddress   String?   @map("physical_address")
+  customOptOutText  String?   @map("custom_opt_out_text")
 
-  brandColorHex     String?  @map("brand_color_hex")
-  brandInitials     String?  @map("brand_initials")
-  logoUrl           String?  @map("logo_url")
-  brandingEnabled   Boolean  @default(false) @map("branding_enabled")
+  onboardingPersona     String?   @map("onboarding_persona")
+  onboardingCompletedAt DateTime? @map("onboarding_completed_at")
+  
+  aiProvider        String?   @map("ai_provider")
+  aiModel           String?   @map("ai_model")
+  aiApiKeyEncrypted String?   @db.Text @map("ai_api_key_encrypted")
+  aiGatewayUrl      String?   @map("ai_gateway_url")
+  aiIntegrations    Json?     @map("ai_integrations")
+
+  brandColorHex     String?   @map("brand_color_hex")
+  brandInitials     String?   @map("brand_initials")
+  logoUrl           String?   @map("logo_url")
+  brandingEnabled   Boolean   @default(false) @map("branding_enabled")
 
   dedicatedNewsletterSenderId String? @map("dedicated_newsletter_sender_id")
   dedicatedNewsletterSender   Sender? @relation("DedicatedNewsletterSender", fields: [dedicatedNewsletterSenderId], references: [id], onDelete: SetNull)
 
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 }
 
 // --- MULTI-RESOURCE KNOWLEDGE BASES ---
@@ -493,7 +496,7 @@ model KnowledgeResource {
   userId          String        @map("user_id") @db.Uuid
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   title           String
-  sourceType      String        @default("TEXT") @map("source_type") // 'TEXT' | 'URL' | 'FILE'
+  sourceType      String        @default("TEXT") @map("source_type")
   sourceUrl       String?       @map("source_url")
   fileUrl         String?       @map("file_url")
   mimeType        String?       @map("mime_type")
@@ -522,8 +525,8 @@ model Artifact {
   slug           String
   description    String?              @db.Text
   usagePrompt    String?              @db.Text @map("usage_prompt")
-  type           String               @default("LINK") // 'LINK' | 'DOCUMENT' | 'IMAGE'
-  attachmentMode String               @default("LINK") @map("attachment_mode") // 'LINK' | 'MIME_ATTACHMENT'
+  type           String               @default("LINK")
+  attachmentMode String               @default("LINK") @map("attachment_mode")
   isOneTime      Boolean              @default(false) @map("is_one_time")
   url            String               @db.Text
   mimeType       String?              @map("mime_type")

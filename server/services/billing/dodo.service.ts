@@ -15,6 +15,14 @@ export class DodoService {
     return Boolean(env.DODO_PAYMENTS_API_KEY);
   }
 
+  public isMonthlyConfigured(): boolean {
+    return Boolean(env.DODO_PRODUCT_CHIEF_MONTHLY && env.DODO_PRODUCT_SYNDICATE_MONTHLY);
+  }
+
+  public isAnnualConfigured(): boolean {
+    return Boolean(env.DODO_PRODUCT_CHIEF_ANNUAL && env.DODO_PRODUCT_SYNDICATE_ANNUAL);
+  }
+
   private resolveProductId(plan: 'CHIEF' | 'SYNDICATE', cycle: 'monthly' | 'annual'): string {
     if (plan === 'CHIEF') {
       const id = cycle === 'annual' ? env.DODO_PRODUCT_CHIEF_ANNUAL : env.DODO_PRODUCT_CHIEF_MONTHLY;

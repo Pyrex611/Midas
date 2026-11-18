@@ -20,6 +20,19 @@ type CachedUser = { id: string; email: string; isAdmin: boolean };
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const userCache = new Map<string, { value: CachedUser; expiresAt: number }>();
 
+export function invalidateUserCache(userIdOrEmail?: string): void {
+  if (!userIdOrEmail) {
+    userCache.clear();
+    return;
+  }
+  const needle = userIdOrEmail.toLowerCase().trim();
+  for (const [k, entry] of userCache.entries()) {
+    if (entry.value.id === userIdOrEmail || entry.value.email.toLowerCase() === needle) {
+      userCache.delete(k);
+    }
+  }
+}
+
 const cleanKey = (key?: string) => (key ? key.trim().replace(/^["']|["']$/g, '') : '');
 
 const resolvedPublishableKey = cleanKey(

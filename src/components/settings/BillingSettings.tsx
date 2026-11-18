@@ -31,7 +31,8 @@ export const BillingSettings: React.FC = () => {
   const handleCheckout = async (plan: 'CHIEF' | 'SYNDICATE') => {
     setCheckingOutPlan(plan);
     try {
-      const res = await billingAPI.checkout(plan, billingCycle);
+      const effectiveCycle = billingCycle === 'annual' && status?.annualAvailable ? 'annual' : 'monthly';
+      const res = await billingAPI.checkout(plan, effectiveCycle);
       if (res.data?.checkoutUrl) {
         window.location.href = res.data.checkoutUrl;
       }
@@ -63,6 +64,8 @@ export const BillingSettings: React.FC = () => {
   const limits = status?.limits || {};
   const usage = status?.usage || {};
   const currentPlan = status?.plan || 'SCOUT';
+  const isAdmin = Boolean(status?.isAdmin);
+  const annualAvailable = Boolean(status?.annualAvailable);
   const tiers: any[] = status?.tiers || [];
 
   const meterRows = [
@@ -76,7 +79,6 @@ export const BillingSettings: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Current Plan & Live Quota Telemetry */}
       <div className="card-midas rounded-2xl p-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gold-500/35">
           <div>
@@ -85,11 +87,13 @@ export const BillingSettings: React.FC = () => {
                 Current Tier: {status?.displayName || 'Scout (Free Forever)'}
               </h3>
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                status?.status === 'ACTIVE'
+                isAdmin
+                  ? 'bg-royal-700 text-gold-300 border-gold-400/50'
+                  : status?.status === 'ACTIVE'
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-rose-50 text-rose-700 border-rose-200'
               }`}>
-                {status?.status || 'ACTIVE'}
+                {isAdmin ? 'SUPERADMIN BYPASS' : (status?.status || 'ACTIVE')}
               </span>
             </div>
             <p className="text-xs text-thistle-500 mt-0.5">
@@ -97,7 +101,7 @@ export const BillingSettings: React.FC = () => {
             </p>
           </div>
 
-          {currentPlan !== 'SCOUT' && !status?.cancelAtPeriodEnd && (
+          {!isAdmin && currentPlan !== 'SCOUT' && !status?.cancelAtPeriodEnd && (
             <button
               type="button"
               onClick={() => setConfirmCancelOpen(true)}
@@ -110,13 +114,13 @@ export const BillingSettings: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {meterRows.map(([label, used, max]) => {
-            const pct = Math.min(100, Math.round(((used as number) / Math.max(1, max as number)) * 100));
+            const pct = isAdmin ? 5 : Math.min(100, Math.round(((used as number) / Math.max(1, max as number)) * 100));
             return (
               <div key={label as string} className="p-3.5 bg-thistle-50/70 border border-gold-500/35 rounded-xl space-y-1.5 text-xs">
                 <div className="flex justify-between font-bold text-royal-950">
                   <span>{label as string}</span>
                   <span className="font-mono text-royal-700">
-                    {(used as number).toLocaleString()} / {(max as number).toLocaleString()}
+                    {(used as number).toLocaleString()} / {isAdmin ? '∞' : (max as number).toLocaleString()}
                   </span>
                 </div>
                 <div className="w-full h-1.5 bg-thistle-200 rounded-full overflow-hidden">
@@ -131,30 +135,31 @@ export const BillingSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* Pricing Cards */}
       <div className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <h3 className="text-base font-black text-royal-950">Upgrade Your Workspace Plan</h3>
-          <div className="flex p-1 bg-white border border-gold-500/40 rounded-xl gap-1 text-xs">
-            <button
-              type="button"
-              onClick={() => setBillingCycle('monthly')}
-              className={`px-3 py-1 rounded-lg font-bold transition-colors ${
-                billingCycle === 'monthly' ? 'bg-royal-700 text-white' : 'text-royal-800'
-              }`}
-            >
-              Monthly
-            </button>
-            <button
-              type="button"
-              onClick={() => setBillingCycle('annual')}
-              className={`px-3 py-1 rounded-lg font-bold transition-colors ${
-                billingCycle === 'annual' ? 'bg-royal-700 text-white' : 'text-royal-800'
-              }`}
-            >
-              Annual (Save ~17%)
-            </button>
-          </div>
+          {annualAvailable && (
+            <div className="flex p-1 bg-white border border-gold-500/40 rounded-xl gap-1 text-xs">
+              <button
+                type="button"
+                onClick={() => setBillingCycle('monthly')}
+                className={`px-3 py-1 rounded-lg font-bold transition-colors ${
+                  billingCycle === 'monthly' ? 'bg-royal-700 text-white' : 'text-royal-800'
+                }`}
+              >
+                Monthly
+              </button>
+              <button
+                type="button"
+                onClick={() => setBillingCycle('annual')}
+                className={`px-3 py-1 rounded-lg font-bold transition-colors ${
+                  billingCycle === 'annual' ? 'bg-royal-700 text-white' : 'text-royal-800'
+                }`}
+              >
+                Annual (Save ~17%)
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -163,9 +168,11 @@ export const BillingSettings: React.FC = () => {
             const displayPrice =
               t.tier === 'SCOUT'
                 ? '$0'
-                : billingCycle === 'annual'
+                : billingCycle === 'annual' && annualAvailable
                 ? `$${Math.round(t.priceUsdAnnual / 12)}`
                 : `$${t.priceUsdMonthly}`;
+
+            const strikePrice = t.tier === 'CHIEF' ? '$50' : t.tier === 'SYNDICATE' ? '$129' : null;
 
             return (
               <div
@@ -181,11 +188,14 @@ export const BillingSettings: React.FC = () => {
                     <span className="text-xs font-black uppercase tracking-wider text-royal-700">{t.displayName}</span>
                     {t.tier === 'CHIEF' && (
                       <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-gold-200 text-royal-950 border border-gold-500/50">
-                        MOST POPULAR
+                        FOUNDING RATE · SAVE 30%
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline gap-1">
+                  <div className="flex items-baseline gap-2">
+                    {strikePrice && (
+                      <span className="text-base font-bold text-thistle-500 line-through">{strikePrice}</span>
+                    )}
                     <span className="text-3xl font-black text-royal-950">{displayPrice}</span>
                     <span className="text-xs text-thistle-500">/month</span>
                   </div>
@@ -200,7 +210,15 @@ export const BillingSettings: React.FC = () => {
                   </ul>
                 </div>
 
-                {isCurrent ? (
+                {isAdmin ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full py-2.5 bg-thistle-100 text-royal-800 border border-gold-500/35 rounded-xl text-xs font-bold"
+                  >
+                    Unlocked via Superadmin
+                  </button>
+                ) : isCurrent ? (
                   <button
                     type="button"
                     disabled
@@ -221,7 +239,7 @@ export const BillingSettings: React.FC = () => {
                       ? 'Configure Dodo Keys to Upgrade'
                       : checkingOutPlan === t.tier
                       ? 'Opening Checkout...'
-                      : `Upgrade to ${t.tier}`}
+                      : `Lock In ${t.tier} Rate`}
                   </button>
                 )}
               </div>

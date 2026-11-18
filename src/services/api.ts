@@ -353,11 +353,14 @@ export const townCrierAPI = {
 };
 
 export const adminAPI = {
+  getAccessStatus: () => api.get('/admin/access-status'),
   unlock: (passphrase: string) => api.post('/admin/unlock', { passphrase }),
   getStats: () => api.get('/admin/stats'),
   getServicesHealth: () => api.get('/admin/services-health'),
   clearLock: (lockName: string) => api.post(`/admin/locks/${lockName}/clear`),
   listUsers: () => api.get('/admin/users'),
+  toggleUserAdmin: (userId: string, isAdmin: boolean) =>
+    api.post(`/admin/users/${userId}/admin`, { isAdmin }),
   listDomains: () => api.get('/admin/domains'),
   migrateFromNeon: (sourceDatabaseUrl: string) =>
     api.post('/admin/migration/neon-to-supabase', { sourceDatabaseUrl }),

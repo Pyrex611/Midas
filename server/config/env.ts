@@ -31,12 +31,19 @@ const envSchema = z.object({
   VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
   CLERK_WEBHOOK_SECRET: z.string().optional(),
 
-  // Supabase Infrastructure
+  // Supabase Infrastructure & Send Email Auth Hook
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_STORAGE_BUCKET: z.string().default('midas-uploads'),
+  SUPABASE_SEND_EMAIL_HOOK_SECRET: z.string().optional(),
   STORAGE_PROVIDER: z.enum(['auto', 'supabase', 'vercel_blob']).default('auto'),
+
+  // Platform Transactional Auth Email Credentials (OTP / Magic Link)
+  AUTH_EMAIL_DOMAIN: z.string().optional(),
+  AUTH_EMAIL_MAILGUN_KEY: z.string().optional(),
+  AUTH_EMAIL_REGION: z.enum(['us', 'eu']).default('us'),
+  AUTH_EMAIL_FROM_ADDRESS: z.string().optional(),
 
   // Dodo Payments
   DODO_PAYMENTS_API_KEY: z.string().optional(),

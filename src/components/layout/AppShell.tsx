@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { userAPI, domainAPI, aiAPI, notificationAPI } from '../../services/api';
+import { adminAPI, billingAPI, userSettingsAPI, domainAPI, aiAPI, notificationAPI } from '../../services/api';
 import { CommandPalette } from '../CommandPalette';
+import { PlanSelectorModal } from '../billing/PlanSelectorModal';
+import { PersonaOnboardingModal, OnboardingPersona } from '../onboarding/PersonaOnboardingModal';
 import { useToast } from '../../context/ToastContext';
 import { Icons } from '../../lib/icons';
 
@@ -14,21 +16,27 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [hasOperatorClearance, setHasOperatorClearance] = useState(false);
+  const [canAccessAdmin, setCanAccessAdmin] = useState(false);
+  const [isAdminUser, setIsAdminUser] = useState(false);
+  const [isBootstrapMode, setIsBootstrapMode] = useState(false);
+
+  const [currentPlan, setCurrentPlan] = useState<string>('SCOUT');
+  const [planModalOpen, setPlanModalOpen] = useState(false);
+  const [recommendedPlan, setRecommendedPlan] = useState<'SCOUT' | 'CHIEF' | 'SYNDICATE'>('CHIEF');
+  const [personaLabel, setPersonaLabel] = useState<string | undefined>(undefined);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('midas_sidebar_collapsed') === 'true');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [activeDomainsCount, setActiveDomainsCount] = useState(0);
 
-  // Notifications State
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [notifMenuOpen, setNotifMenuOpen] = useState(false);
   const notifMenuRef = useRef<HTMLDivElement | null>(null);
   const seenNotifIdsRef = useRef<Set<string>>(new Set());
 
-  // Global AI Switcher Popover State
   const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const [activeAiProvider, setActiveAiProvider] = useState<string>('aigateway');
   const [activeAiModel, setActiveAiModel] = useState<string>('openai/gpt-4o-mini');
@@ -45,11 +53,35 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       .catch(() => {});
   };
 
-  const checkClearanceState = () => {
-    const token = sessionStorage.getItem('midas_operator_token');
-    const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
-    setHasOperatorClearance(Boolean(token && expiresAt > Date.now()));
-  };
+  const fetchShellState = useCallback(() => {
+    adminAPI.getAccessStatus()
+      .then((res) => {
+        const d = res.data || {};
+        setCanAccessAdmin(Boolean(d.hasAccess));
+        setIsAdminUser(Boolean(d.isAdmin));
+        setIsBootstrapMode(Boolean(d.isBootstrapMode));
+      })
+      .catch(() => {
+        setCanAccessAdmin(false);
+        setIsAdminUser(false);
+      });
+
+    billingAPI.getStatus()
+      .then((res) => {
+        setCurrentPlan(res.data?.isAdmin ? 'ADMIN' : (res.data?.plan || 'SCOUT'));
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    userSettingsAPI.get()
+      .then((res) => {
+        if (res.data && !res.data.onboardingCompletedAt) {
+          setOnboardingOpen(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -86,12 +118,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   }, [navigate]);
 
   useEffect(() => {
-    userAPI
-      .getProfile()
-      .then((res) => setIsAdmin(!!res.data?.user?.isAdmin))
-      .catch(() => setIsAdmin(false));
-
-    checkClearanceState();
+    fetchShellState();
     fetchAIState();
     fetchNotifications();
 
@@ -105,25 +132,31 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
     const notifInterval = setInterval(fetchNotifications, 25000);
     return () => clearInterval(notifInterval);
-  }, [location.pathname, fetchNotifications]);
+  }, [location.pathname, fetchShellState, fetchNotifications]);
 
   useEffect(() => {
     const handleSyncEvents = () => {
-      checkClearanceState();
+      fetchShellState();
       fetchAIState();
       fetchNotifications();
+    };
+
+    const handleOpenPlanSelector = () => {
+      setPlanModalOpen(true);
     };
 
     window.addEventListener('operator_auth_changed', handleSyncEvents);
     window.addEventListener('ai_config_changed', handleSyncEvents);
     window.addEventListener('storage', handleSyncEvents);
+    window.addEventListener('open_plan_selector', handleOpenPlanSelector);
 
     return () => {
       window.removeEventListener('operator_auth_changed', handleSyncEvents);
       window.removeEventListener('ai_config_changed', handleSyncEvents);
       window.removeEventListener('storage', handleSyncEvents);
+      window.removeEventListener('open_plan_selector', handleOpenPlanSelector);
     };
-  }, [fetchNotifications]);
+  }, [fetchShellState, fetchNotifications]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -137,6 +170,23 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     if (aiMenuOpen || notifMenuOpen) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [aiMenuOpen, notifMenuOpen]);
+
+  const handleOnboardingComplete = (result: {
+    persona: OnboardingPersona;
+    recommendedPlan: 'SCOUT' | 'CHIEF' | 'SYNDICATE';
+    personaLabel: string;
+  }) => {
+    setOnboardingOpen(false);
+    setRecommendedPlan(result.recommendedPlan);
+    setPersonaLabel(result.personaLabel);
+
+    if (result.persona === 'TOWN_CRIER') navigate('/town-crier');
+    else if (result.persona === 'OUTBOUND') navigate('/campaigns');
+    else navigate('/');
+
+    // Automatically chain Plan Selector Modal immediately after onboarding
+    setPlanModalOpen(true);
+  };
 
   const requestDesktopNotificationPermission = async () => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -227,7 +277,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Developer Docs intentionally omitted from sidebar; accessible via Command Palette (Cmd+K) & /docs
   const navItems = [
     { label: 'Overview', path: '/', icon: <Icons.Home /> },
     { label: 'Campaigns', path: '/campaigns', icon: <Icons.Campaigns /> },
@@ -235,8 +284,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     { label: 'Unified Inbox', path: '/inbox', icon: <Icons.Inbox /> },
     { label: 'All Leads', path: '/leads', icon: <Icons.Leads /> },
     { label: 'Sending Domains', path: '/domains', icon: <Icons.Domains /> },
-    ...(isAdmin || hasOperatorClearance
-      ? [{ label: 'Admin Command', path: '/admin', icon: <Icons.Admin /> }]
+    ...(canAccessAdmin
+      ? [{ label: isBootstrapMode && !isAdminUser ? 'Claim Admin' : 'Admin Command', path: '/admin', icon: <Icons.Admin /> }]
       : []),
   ];
 
@@ -253,6 +302,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     if (p === '/admin') return 'Operator Command';
     return 'Workspace';
   };
+
+  const planBadgeLabel = currentPlan === 'ADMIN' ? 'SUPERADMIN' : currentPlan;
 
   return (
     <div className="min-h-screen bg-thistle-canvas flex flex-col md:flex-row">
@@ -312,21 +363,26 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           })}
         </nav>
 
-        {/* Anchored Footer with Golden Top Separator */}
         <div className="flex-shrink-0 p-3 border-t border-gold-500/40 bg-white space-y-2">
           {!collapsed && (
-            <div className="p-3 bg-royal-950 text-white rounded-xl border border-gold-500/40 glow-gold-hover">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-300">
-                  Deliverability Pulse
+            <button
+              type="button"
+              onClick={() => setPlanModalOpen(true)}
+              className="w-full p-3 bg-royal-950 text-white rounded-xl border border-gold-500/40 glow-gold-hover text-left space-y-1"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gold-300">
+                  {planBadgeLabel} PLAN
                 </span>
-                <span className="w-2 h-2 rounded-full bg-gold-400 animate-pulse" />
+                <span className="text-[10px] text-thistle-300 underline">
+                  {isAdminUser ? 'View' : 'Upgrade'}
+                </span>
               </div>
               <p className="text-xs font-bold text-white">
                 {activeDomainsCount} Domains Operating
               </p>
               <p className="text-[10px] text-thistle-300/80">Circuit breakers armed</p>
-            </div>
+            </button>
           )}
 
           <Link
@@ -394,10 +450,17 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
             </div>
 
             <div className="p-4 border-t border-gold-500/40 space-y-3">
-              <div className="p-3 bg-royal-950 text-white rounded-xl border border-gold-500/40">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-thistle-300">Deliverability Pulse</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setPlanModalOpen(true);
+                }}
+                className="w-full p-3 bg-royal-950 text-white rounded-xl border border-gold-500/40 text-left"
+              >
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gold-300">{planBadgeLabel} PLAN</p>
                 <p className="text-xs font-bold text-white mt-0.5">{activeDomainsCount} Domains Active</p>
-              </div>
+              </button>
 
               <Link
                 to="/profile"
@@ -412,7 +475,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
       )}
 
-      {/* Main Viewport Header with Golden Bottom Separator */}
+      {/* Main Viewport Header */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-16 bg-white/85 backdrop-blur-md border-b border-gold-500/40 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20 no-print">
           <div className="flex items-center gap-3">
@@ -441,6 +504,17 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           </div>
 
           <div className="flex items-center gap-2.5">
+            {/* Live Plan Pill */}
+            <button
+              type="button"
+              onClick={() => setPlanModalOpen(true)}
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white hover:bg-thistle-50 border border-gold-500/45 text-[10px] font-black uppercase tracking-wider text-royal-800 glow-gold-hover"
+              title="View Plan & Quota Limits"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-gold-500" />
+              <span>{planBadgeLabel}</span>
+            </button>
+
             {/* Notification Bell */}
             <div className="relative" ref={notifMenuRef}>
               <button
@@ -610,7 +684,19 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       <CommandPalette
         isOpen={cmdOpen}
         onClose={() => setCmdOpen(false)}
-        isAdmin={isAdmin || hasOperatorClearance}
+        isAdmin={canAccessAdmin}
+      />
+
+      <PersonaOnboardingModal
+        isOpen={onboardingOpen}
+        onComplete={handleOnboardingComplete}
+      />
+
+      <PlanSelectorModal
+        isOpen={planModalOpen}
+        onClose={() => setPlanModalOpen(false)}
+        recommendedPlan={recommendedPlan}
+        personaLabel={personaLabel}
       />
     </div>
   );

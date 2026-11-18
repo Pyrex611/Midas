@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import { env } from '../config/env';
 import { webhooksService } from '../services/webhooks.service';
 import { dodoService } from '../services/billing/dodo.service';
+import { authEmailHookService } from '../services/authEmailHook.service';
 import { logger } from '../config/logger';
 
 const router = Router();
@@ -112,7 +113,7 @@ router.post('/resend', async (req: Request, res: Response) => {
   res.status(200).json({ received: true });
 });
 
-// 4. Generic Custom Inbound Webhook (Cloudflare Email Workers / Make / Zapier Gmail)
+// 4. Generic Custom Inbound Webhook
 router.post('/inbound/custom/:domainId', async (req: Request, res: Response) => {
   try {
     const { domainId } = req.params;
@@ -170,7 +171,34 @@ router.post('/dodo', async (req: Request, res: Response) => {
   }
 });
 
-// 6. Clerk User Synchronization Webhook
+// 6. Supabase "Send Email" HTTP Auth Hook (Must respond < 5s)
+router.post('/supabase/auth-email', async (req: Request, res: Response) => {
+  try {
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+    const isValid = authEmailHookService.verifySignature(rawBody, {
+      'webhook-id': req.headers['webhook-id'] as string | undefined,
+      'webhook-timestamp': req.headers['webhook-timestamp'] as string | undefined,
+      'webhook-signature': req.headers['webhook-signature'] as string | undefined,
+    });
+
+    if (!isValid) {
+      logger.warn('[AUTH-HOOK] Invalid Supabase Send Email hook signature');
+      return res.status(401).json({
+        error: { http_code: 401, message: 'Invalid Standard Webhooks signature' },
+      });
+    }
+
+    await authEmailHookService.processSendEmailHook(req.body);
+    res.status(200).json({});
+  } catch (error: any) {
+    logger.error({ error: error?.message }, '[AUTH-HOOK] Failed to dispatch Supabase auth email');
+    res.status(500).json({
+      error: { http_code: 500, message: error?.message || 'Failed to send authentication email' },
+    });
+  }
+});
+
+// 7. Clerk User Synchronization Webhook
 router.post('/clerk', async (req: Request, res: Response) => {
   const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
   if (!webhookSecret) {

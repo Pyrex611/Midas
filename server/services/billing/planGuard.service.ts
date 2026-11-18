@@ -1,13 +1,36 @@
 import prisma from '../../lib/prisma';
-import { getPlanConfig, PlanQuotaConfig, PlanTier } from './plans';
+import { getPlanConfig, PLAN_TIERS, PlanQuotaConfig, PlanTier } from './plans';
+
+const ADMIN_UNLIMITED_CONFIG: PlanQuotaConfig = {
+  ...PLAN_TIERS.SYNDICATE,
+  displayName: 'Platform Superadmin (Unlimited)',
+  monthlyEmails: 9_999_999,
+  maxLeads: 9_999_999,
+  maxSubscribers: 9_999_999,
+  maxDomains: 9_999,
+  maxSenders: 9_999,
+  maxGongs: 9_999,
+  maxKnowledgeBases: 9_999,
+  maxResourcesPerKnowledgeBase: 9_999,
+  maxArtifactsPerEntity: 9_999,
+  maxArtifactSizeMb: 50,
+  monthlyAiCredits: 999_999,
+  allowAutoReplyAgent: true,
+  allowTeamInvites: true,
+  allowCustomTrackingDomain: true,
+};
 
 export class PlanGuardService {
-  /**
-   * Resolves the user's subscription row, lazily provisioning SCOUT (Free)
-   * if none exists and automatically rolling over monthly usage counters
-   * when crossing into a new calendar month.
-   */
+  private async isSuperAdmin(userId: string): Promise<boolean> {
+    const u = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { isAdmin: true },
+    });
+    return Boolean(u?.isAdmin);
+  }
+
   async getOrInitSubscription(userId: string) {
+    const isAdmin = await this.isSuperAdmin(userId);
     let sub = await prisma.subscription.findUnique({ where: { userId } });
 
     if (!sub) {
@@ -38,14 +61,18 @@ export class PlanGuardService {
       });
     }
 
+    if (isAdmin) {
+      return { subscription: sub, config: ADMIN_UNLIMITED_CONFIG, isAdmin: true };
+    }
+
     const effectivePlan: PlanTier = sub.status === 'ACTIVE' ? (sub.plan as PlanTier) : 'SCOUT';
     const config = getPlanConfig(effectivePlan);
 
-    return { subscription: sub, config };
+    return { subscription: sub, config, isAdmin: false };
   }
 
   async getQuotaSummary(userId: string) {
-    const { subscription, config } = await this.getOrInitSubscription(userId);
+    const { subscription, config, isAdmin } = await this.getOrInitSubscription(userId);
     const [leadCount, subscriberCount, domainCount, senderCount, gongCount, kbCount] = await Promise.all([
       prisma.lead.count({ where: { userId } }),
       prisma.newsletterRecipient.count({ where: { userId } }),
@@ -56,7 +83,8 @@ export class PlanGuardService {
     ]);
 
     return {
-      plan: config.tier,
+      isAdmin,
+      plan: isAdmin ? 'ADMIN' : config.tier,
       displayName: config.displayName,
       status: subscription.status,
       billingCycle: subscription.billingCycle,
@@ -77,7 +105,9 @@ export class PlanGuardService {
   }
 
   async assertDomainCapacity(userId: string): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     const count = await prisma.domain.count({ where: { userId } });
     if (count >= config.maxDomains) {
       throw new Error(
@@ -88,7 +118,9 @@ export class PlanGuardService {
   }
 
   async assertSenderCapacity(userId: string): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     const count = await prisma.sender.count({ where: { userId } });
     if (count >= config.maxSenders) {
       throw new Error(
@@ -99,7 +131,9 @@ export class PlanGuardService {
   }
 
   async assertGongCapacity(userId: string): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     const count = await prisma.gong.count({ where: { userId } });
     if (count >= config.maxGongs) {
       throw new Error(
@@ -110,7 +144,9 @@ export class PlanGuardService {
   }
 
   async assertLeadCapacity(userId: string, incomingNewCount: number = 1): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     const count = await prisma.lead.count({ where: { userId } });
     if (count + incomingNewCount > config.maxLeads) {
       throw new Error(
@@ -121,7 +157,9 @@ export class PlanGuardService {
   }
 
   async assertSubscriberCapacity(userId: string, incomingNewCount: number = 1): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     const count = await prisma.newsletterRecipient.count({ where: { userId } });
     if (count + incomingNewCount > config.maxSubscribers) {
       throw new Error(
@@ -135,7 +173,9 @@ export class PlanGuardService {
     userId: string,
     feature: 'allowAutoReplyAgent' | 'allowTeamInvites' | 'allowCustomTrackingDomain'
   ): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     if (!config[feature]) {
       const labels: Record<typeof feature, string> = {
         allowAutoReplyAgent: 'Autonomous AI Auto-Reply Agent',
@@ -143,14 +183,16 @@ export class PlanGuardService {
         allowCustomTrackingDomain: 'Custom Branded Tracking CNAMEs',
       };
       throw new Error(
-        `${labels[feature]} requires the Chief ($35/mo) or Syndicate ($99/mo) plan. Upgrade in Profile -> Plan & Billing.`
+        `${labels[feature]} requires the Chief ($35/mo) or Syndicate ($99/mo) plan. Upgrade in Plan Settings.`
       );
     }
     return config;
   }
 
   async assertKnowledgeBaseCapacity(userId: string): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     const count = await prisma.knowledgeBase.count({ where: { userId } });
     if (count >= config.maxKnowledgeBases) {
       throw new Error(
@@ -161,7 +203,9 @@ export class PlanGuardService {
   }
 
   async assertKnowledgeResourceCapacity(userId: string, knowledgeBaseId: string): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return config;
+
     const count = await prisma.knowledgeResource.count({ where: { knowledgeBaseId, userId } });
     if (count >= config.maxResourcesPerKnowledgeBase) {
       throw new Error(
@@ -176,13 +220,15 @@ export class PlanGuardService {
     scope: { campaignId?: string | null; gongId?: string | null; broadcastId?: string | null },
     fileSizeBytes?: number
   ): Promise<PlanQuotaConfig> {
-    const { config } = await this.getOrInitSubscription(userId);
+    const { config, isAdmin } = await this.getOrInitSubscription(userId);
 
     if (fileSizeBytes && fileSizeBytes > config.maxArtifactSizeMb * 1024 * 1024) {
       throw new Error(
         `Artifact file exceeds your ${config.displayName} maximum size of ${config.maxArtifactSizeMb}MB.`
       );
     }
+
+    if (isAdmin) return config;
 
     const where: any = { userId };
     if (scope.campaignId) where.campaignId = scope.campaignId;
@@ -208,8 +254,8 @@ export class PlanGuardService {
       if (settings?.aiApiKeyEncrypted) return;
     }
 
-    const { subscription, config } = await this.getOrInitSubscription(userId);
-    if (subscription.aiCreditsUsed + cost > config.monthlyAiCredits) {
+    const { subscription, config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (!isAdmin && subscription.aiCreditsUsed + cost > config.monthlyAiCredits) {
       throw new Error(
         `Monthly AI credit allowance (${config.monthlyAiCredits}) reached on ${config.displayName}. Upgrade to Chief ($35/mo) for 500 credits/mo or attach your own AI key in Settings.`
       );
@@ -230,7 +276,8 @@ export class PlanGuardService {
   }
 
   async isOverMonthlyEmailLimit(userId: string): Promise<boolean> {
-    const { subscription, config } = await this.getOrInitSubscription(userId);
+    const { subscription, config, isAdmin } = await this.getOrInitSubscription(userId);
+    if (isAdmin) return false;
     return subscription.emailsSentThisMonth >= config.monthlyEmails;
   }
 }

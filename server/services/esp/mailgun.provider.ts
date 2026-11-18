@@ -5,9 +5,35 @@ export class MailgunProvider implements ESPProvider {
   readonly name = 'mailgun';
 
   async send(payload: EspSendPayload): Promise<EspSendResult> {
-    const { domain, fromEmail, fromHeader, to, subject, html, text, outboundEmailId, inReplyTo, unsubscribeUrl, attachments } = payload;
-    const { authHeader, baseUrl } = domainService.getMailgunContextForDomain(domain);
+    const {
+      domain,
+      fromEmail,
+      fromHeader,
+      to,
+      subject,
+      html,
+      text,
+      outboundEmailId,
+      inReplyTo,
+      unsubscribeUrl,
+      attachments,
+      disableTracking,
+      rawApiKey,
+    } = payload;
 
+    let authHeader: string;
+    let baseUrl: string;
+
+    if (rawApiKey) {
+      authHeader = `Basic ${Buffer.from(`api:${rawApiKey.trim()}`).toString('base64')}`;
+      baseUrl = domain.mailgunRegion === 'eu' ? 'https://api.eu.mailgun.net/v3' : 'https://api.mailgun.net/v3';
+    } else {
+      const ctx = domainService.getMailgunContextForDomain(domain);
+      authHeader = ctx.authHeader;
+      baseUrl = ctx.baseUrl;
+    }
+
+    const trackingFlag = disableTracking ? 'no' : 'yes';
     const hasAttachments = Boolean(attachments && attachments.length > 0);
     let bodyPayload: string | FormData;
     const headers: Record<string, string> = { Authorization: authHeader };
@@ -21,9 +47,9 @@ export class MailgunProvider implements ESPProvider {
       form.append('html', html);
       form.append('v:outbound_email_id', outboundEmailId);
       if (domain.id) form.append('v:domain_id', domain.id);
-      form.append('o:tracking', 'yes');
-      form.append('o:tracking-clicks', 'yes');
-      form.append('o:tracking-opens', 'yes');
+      form.append('o:tracking', trackingFlag);
+      form.append('o:tracking-clicks', trackingFlag);
+      form.append('o:tracking-opens', trackingFlag);
       form.append('h:Reply-To', fromEmail);
 
       if (unsubscribeUrl) {
@@ -58,9 +84,9 @@ export class MailgunProvider implements ESPProvider {
       formData.append('html', html);
       formData.append('v:outbound_email_id', outboundEmailId);
       if (domain.id) formData.append('v:domain_id', domain.id);
-      formData.append('o:tracking', 'yes');
-      formData.append('o:tracking-clicks', 'yes');
-      formData.append('o:tracking-opens', 'yes');
+      formData.append('o:tracking', trackingFlag);
+      formData.append('o:tracking-clicks', trackingFlag);
+      formData.append('o:tracking-opens', trackingFlag);
       formData.append('h:Reply-To', fromEmail);
 
       if (unsubscribeUrl) {
@@ -81,7 +107,7 @@ export class MailgunProvider implements ESPProvider {
       method: 'POST',
       headers,
       body: bodyPayload,
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(disableTracking ? 4_000 : 12_000),
     });
 
     const rawText = await res.text();

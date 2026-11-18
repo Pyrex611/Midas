@@ -17,6 +17,10 @@ export interface EspSendPayload {
   unsubscribeUrl?: string | null;
   isColdOutreach: boolean;
   attachments?: EspAttachment[];
+  /** Disable ESP link/open tracking (essential for OTP & auth verification links). */
+  disableTracking?: boolean;
+  /** Optional direct Mailgun key override for platform transactional dispatches. */
+  rawApiKey?: string;
 }
 
 export interface EspSendResult {

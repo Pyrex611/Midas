@@ -11,7 +11,13 @@ export const getSettings = async (req: AuthRequest, res: Response, next: NextFun
     });
 
     if (!settings) {
-      return res.json({ hasAiApiKey: false, aiKeyDecryptionFailed: false, brandingEnabled: false });
+      return res.json({
+        hasAiApiKey: false,
+        aiKeyDecryptionFailed: false,
+        brandingEnabled: false,
+        onboardingPersona: null,
+        onboardingCompletedAt: null,
+      });
     }
 
     const { aiApiKeyEncrypted, ...safeSettings } = settings;
@@ -29,6 +35,7 @@ export const getSettings = async (req: AuthRequest, res: Response, next: NextFun
 
 const VALID_PERIODS = ['hour', 'day'] as const;
 const VALID_PROVIDERS = ['gemini', 'openrouter', 'aigateway', 'openai', 'deepseek', 'ollama', 'mock'] as const;
+const VALID_PERSONAS = ['TOWN_CRIER', 'OUTBOUND', 'HYBRID'] as const;
 
 export const updateSettings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -39,6 +46,8 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       companyName,
       physicalAddress,
       customOptOutText,
+      onboardingPersona,
+      completeOnboarding,
       aiProvider,
       aiModel,
       aiApiKey,
@@ -66,6 +75,17 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
         return res.status(400).json({ error: `sendPeriod must be one of: ${VALID_PERIODS.join(', ')}` });
       }
       data.sendPeriod = sendPeriod;
+    }
+
+    if (onboardingPersona !== undefined) {
+      if (onboardingPersona !== null && !VALID_PERSONAS.includes(onboardingPersona)) {
+        return res.status(400).json({ error: `onboardingPersona must be one of: ${VALID_PERSONAS.join(', ')}` });
+      }
+      data.onboardingPersona = onboardingPersona;
+    }
+
+    if (completeOnboarding === true) {
+      data.onboardingCompletedAt = new Date();
     }
 
     if (companyName !== undefined) {

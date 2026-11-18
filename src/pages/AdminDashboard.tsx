@@ -1,12 +1,21 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { adminAPI, userAPI, getErrorMessage } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+import { adminAPI, getErrorMessage } from '../services/api';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../context/ToastContext';
 import { Icons } from '../lib/icons';
 
 export const AdminDashboard: React.FC = () => {
+  const navigate = useNavigate();
   const { toast } = useToast();
 
+  const [checkingAccess, setCheckingAccess] = useState(true);
   const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isDbAdmin, setIsDbAdmin] = useState(false);
+  const [isBootstrapMode, setIsBootstrapMode] = useState(false);
+  const [passphraseConfigured, setPassphraseConfigured] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string>('');
+
   const [passphraseInput, setPassphraseInput] = useState('');
   const [verifyingPassphrase, setVerifyingPassphrase] = useState(false);
   const [sessionRemainingMinutes, setSessionRemainingMinutes] = useState(60);
@@ -22,6 +31,7 @@ export const AdminDashboard: React.FC = () => {
   const [actionConfirmPassphrase, setActionConfirmPassphrase] = useState('');
   const [submittingAction, setSubmittingAction] = useState(false);
 
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [domains, setDomains] = useState<any[]>([]);
@@ -34,10 +44,12 @@ export const AdminDashboard: React.FC = () => {
   const lockSession = useCallback(() => {
     sessionStorage.removeItem('midas_operator_token');
     sessionStorage.removeItem('midas_operator_expires_at');
-    setIsUnlocked(false);
+    if (!isDbAdmin && !isBootstrapMode) {
+      setIsUnlocked(false);
+      navigate('/', { replace: true });
+    }
     window.dispatchEvent(new Event('operator_auth_changed'));
-    toast.warning('Operator session locked due to 60 minutes of inactivity', 'Session Expired');
-  }, [toast]);
+  }, [isDbAdmin, isBootstrapMode, navigate]);
 
   const recordActivity = useCallback(() => {
     lastActivityRef.current = Date.now();
@@ -70,31 +82,48 @@ export const AdminDashboard: React.FC = () => {
       const msg = getErrorMessage(err, 'Failed to load operator metrics');
       setError(msg);
       if (err.response?.status === 403) {
-        lockSession();
+        navigate('/', { replace: true });
       }
     } finally {
       setLoading(false);
     }
   };
 
+  const verifyAccessAndLoad = useCallback(async () => {
+    try {
+      const res = await adminAPI.getAccessStatus();
+      const d = res.data || {};
+      setIsDbAdmin(Boolean(d.isAdmin));
+      setIsBootstrapMode(Boolean(d.isBootstrapMode));
+      setPassphraseConfigured(Boolean(d.passphraseConfigured));
+      setCurrentUserId(d.currentUserId || '');
+
+      const token = sessionStorage.getItem('midas_operator_token');
+      const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
+      const hasValidToken = Boolean(token && expiresAt > Date.now());
+
+      if (d.hasAccess || hasValidToken) {
+        setIsUnlocked(true);
+        setCheckingAccess(false);
+        await fetchAll();
+        return;
+      }
+
+      if (!d.passphraseConfigured) {
+        // Strict admin lockdown: non-admins are redirected immediately when admins exist
+        navigate('/', { replace: true });
+        return;
+      }
+
+      setIsUnlocked(false);
+      setCheckingAccess(false);
+    } catch {
+      navigate('/', { replace: true });
+    }
+  }, [navigate]);
+
   useEffect(() => {
-    userAPI.getProfile()
-      .then(res => {
-        if (res.data?.user?.isAdmin) {
-          setIsUnlocked(true);
-          fetchAll();
-          return;
-        }
-
-        const token = sessionStorage.getItem('midas_operator_token');
-        const expiresAt = Number(sessionStorage.getItem('midas_operator_expires_at') || 0);
-
-        if (token && expiresAt > Date.now()) {
-          setIsUnlocked(true);
-          fetchAll();
-        }
-      })
-      .catch(() => {});
+    verifyAccessAndLoad();
 
     window.addEventListener('mousemove', recordActivity);
     window.addEventListener('keydown', recordActivity);
@@ -106,7 +135,7 @@ export const AdminDashboard: React.FC = () => {
       const remaining = Math.max(0, 60 - Math.floor(elapsed / (60 * 1000)));
       setSessionRemainingMinutes(remaining);
 
-      if (elapsed > 60 * 60 * 1000) {
+      if (elapsed > 60 * 60 * 1000 && !isDbAdmin && !isBootstrapMode) {
         lockSession();
       }
     }, 30000);
@@ -118,7 +147,24 @@ export const AdminDashboard: React.FC = () => {
       window.removeEventListener('click', recordActivity);
       if (inactivityTimerRef.current) clearInterval(inactivityTimerRef.current);
     };
-  }, [lockSession, recordActivity]);
+  }, [verifyAccessAndLoad, lockSession, recordActivity, isDbAdmin, isBootstrapMode]);
+
+  const handleToggleAdmin = async (userId: string, makeAdmin: boolean) => {
+    setTogglingUserId(userId);
+    try {
+      await adminAPI.toggleUserAdmin(userId, makeAdmin);
+      toast.success(
+        makeAdmin ? 'Platform Superadmin privileges granted' : 'Superadmin privileges revoked',
+        'Admin Role Updated'
+      );
+      window.dispatchEvent(new Event('operator_auth_changed'));
+      await verifyAccessAndLoad();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Could not update admin privileges'), 'Admin Guard');
+    } finally {
+      setTogglingUserId(null);
+    }
+  };
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -136,7 +182,7 @@ export const AdminDashboard: React.FC = () => {
       toast.success('Operator clearance authorized for 60 minutes', 'Session Active');
       await fetchAll();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Passphrase rejected or operator unlock is disabled.'), 'Access Denied');
+      toast.error(getErrorMessage(err, 'Passphrase rejected.'), 'Access Denied');
     } finally {
       setVerifyingPassphrase(false);
     }
@@ -174,28 +220,35 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const handleExecuteProtectedAction = async () => {
-    if (!actionTargetDomain || !actionConfirmPassphrase.trim()) return;
+    if (!actionTargetDomain) return;
+    const needsPassphrase = !isDbAdmin && !isBootstrapMode;
+    if (needsPassphrase && !actionConfirmPassphrase.trim()) return;
 
     setSubmittingAction(true);
     try {
+      const pass = needsPassphrase ? actionConfirmPassphrase.trim() : undefined;
       if (actionTargetDomain.type === 'pause') {
-        await adminAPI.pauseDomain(actionTargetDomain.id, actionConfirmPassphrase.trim());
+        await adminAPI.pauseDomain(actionTargetDomain.id, pass);
         toast.warning(`Circuit breaker armed: ${actionTargetDomain.name} paused`, 'Action Executed');
       } else {
-        await adminAPI.unpauseDomain(actionTargetDomain.id, actionConfirmPassphrase.trim());
+        await adminAPI.unpauseDomain(actionTargetDomain.id, pass);
         toast.success(`Domain ${actionTargetDomain.name} reactivated`, 'Circuit Cleared');
       }
       setActionTargetDomain(null);
       setActionConfirmPassphrase('');
       await fetchAll();
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Action protection passphrase rejected'), 'Unauthorized');
+      toast.error(getErrorMessage(err, 'Action authorization failed'), 'Unauthorized');
     } finally {
       setSubmittingAction(false);
     }
   };
 
-  if (!isUnlocked) {
+  if (checkingAccess) {
+    return <div className="py-24 text-center text-xs text-thistle-500">Verifying platform clearance...</div>;
+  }
+
+  if (!isUnlocked && passphraseConfigured) {
     return (
       <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-thistle-canvas">
         <div className="w-full max-w-md card-midas rounded-3xl p-8 shadow-xl space-y-6 animate-in zoom-in-95 duration-150">
@@ -206,7 +259,7 @@ export const AdminDashboard: React.FC = () => {
           <div className="text-center space-y-1">
             <h2 className="text-xl font-black text-royal-950 tracking-tight">Operator Clearance Required</h2>
             <p className="text-xs text-thistle-500">
-              Sign in with an <code className="font-mono font-bold">isAdmin</code> operator account or authenticate via <code className="font-mono">OPERATOR_PASSPHRASE</code>.
+              Sign in with an <code className="font-mono font-bold">isAdmin</code> account or provide your configured operator passphrase.
             </p>
           </div>
 
@@ -241,23 +294,51 @@ export const AdminDashboard: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
+      {/* Zero-Lockout Bootstrap Banner */}
+      {isBootstrapMode && !isDbAdmin && (
+        <div className="p-5 rounded-2xl bg-amber-50 border-2 border-gold-500 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-royal-700 text-gold-300 flex items-center justify-center shrink-0">
+              <Icons.Admin />
+            </div>
+            <div>
+              <p className="text-sm font-black text-royal-950">Bootstrap Mode Active — No Platform Admin Assigned Yet</p>
+              <p className="text-xs text-royal-950/75 mt-0.5">
+                Any user can currently view this page so you don&apos;t get locked out. Promote your test account below to immediately lock down <code className="font-mono">/admin</code>.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={togglingUserId === currentUserId}
+            onClick={() => handleToggleAdmin(currentUserId, true)}
+            className="px-5 py-2.5 btn-royal rounded-xl text-xs font-bold whitespace-nowrap"
+          >
+            {togglingUserId === currentUserId ? 'Promoting...' : 'Claim First Platform Admin'}
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 border-b border-gold-500/40">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-royal-950 tracking-tight">Platform Deliverability Command</h1>
-          <p className="text-xs text-thistle-500 mt-1">Cross-tenant operator visibility, database transfer, live infrastructure telemetry, and circuit breakers.</p>
+          <p className="text-xs text-thistle-500 mt-1">Cross-tenant operator visibility, role management, infrastructure telemetry, and circuit breakers.</p>
         </div>
 
         <div className="flex items-center gap-3">
           <div className="text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Active Session ({sessionRemainingMinutes}m idle lock)</span>
+            <span>{isDbAdmin ? 'Superadmin Session' : isBootstrapMode ? 'Bootstrap Access' : `Operator (${sessionRemainingMinutes}m)`}</span>
           </div>
-          <button
-            onClick={lockSession}
-            className="px-3 py-1.5 border border-gold-500/40 bg-white text-royal-800 hover:bg-thistle-100 text-xs font-bold rounded-xl transition-colors"
-          >
-            Lock Dashboard
-          </button>
+          {!isDbAdmin && !isBootstrapMode && (
+            <button
+              onClick={lockSession}
+              className="px-3 py-1.5 border border-gold-500/40 bg-white text-royal-800 hover:bg-thistle-100 text-xs font-bold rounded-xl transition-colors"
+            >
+              Lock Dashboard
+            </button>
+          )}
         </div>
       </div>
 
@@ -268,7 +349,7 @@ export const AdminDashboard: React.FC = () => {
             <h2 className="text-base font-black text-royal-950 tracking-tight">One-Time Neon &rarr; Supabase Data Migration</h2>
           </div>
           <p className="text-xs text-thistle-500 mt-0.5">
-            Run this after updating Vercel&apos;s <code className="font-mono">DATABASE_URL</code> and <code className="font-mono">POSTGRES_URL_NON_POOLING</code> to Supabase and redeploying. Paste your previous Neon Postgres URL below to copy all records safely with <code className="font-mono">ON CONFLICT DO NOTHING</code>.
+            Copy legacy records safely with <code className="font-mono">ON CONFLICT DO NOTHING</code>.
           </p>
         </div>
 
@@ -433,7 +514,7 @@ export const AdminDashboard: React.FC = () => {
                 <th className="py-3 px-4">Bounce</th>
                 <th className="py-3 px-4">Complaint</th>
                 <th className="py-3 px-4">Mailboxes</th>
-                <th className="py-3 px-4 text-right">Protected Action</th>
+                <th className="py-3 px-4 text-right">Circuit Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gold-500/20 font-medium text-royal-950">
@@ -479,10 +560,11 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Workspaces & Admin Privileges Management */}
       <div className="card-midas rounded-2xl p-6 space-y-4">
         <div className="pb-3 border-b border-gold-500/35">
-          <h2 className="text-base font-black text-royal-950 tracking-tight">Active Workspaces</h2>
-          <p className="text-xs text-thistle-500 mt-0.5">Tenant resource allocations and permissions.</p>
+          <h2 className="text-base font-black text-royal-950 tracking-tight">Active Workspaces &amp; Admin Privileges</h2>
+          <p className="text-xs text-thistle-500 mt-0.5">Grant or revoke Superadmin status. The last remaining platform administrator cannot be removed.</p>
         </div>
 
         <div className="overflow-x-auto">
@@ -491,27 +573,60 @@ export const AdminDashboard: React.FC = () => {
               <tr>
                 <th className="py-3 px-4">User</th>
                 <th className="py-3 px-4">Role</th>
+                <th className="py-3 px-4">Plan</th>
                 <th className="py-3 px-4">Sequences</th>
                 <th className="py-3 px-4">Leads</th>
                 <th className="py-3 px-4">Domains</th>
-                <th className="py-3 px-4">Joined</th>
+                <th className="py-3 px-4 text-right">Admin Control</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gold-500/20 font-medium text-royal-950">
               {users.map((u) => (
                 <tr key={u.id} className="hover:bg-thistle-50/80">
-                  <td className="py-3 px-4 font-bold text-royal-950">{u.email}</td>
+                  <td className="py-3 px-4 font-bold text-royal-950">
+                    {u.email}
+                    {u.id === currentUserId && (
+                      <span className="ml-2 text-[10px] text-royal-600 font-mono">(You)</span>
+                    )}
+                  </td>
                   <td className="py-3 px-4">
                     {u.isAdmin ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-royal-700 text-white">OPERATOR ADMIN</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-royal-700 text-gold-300 border border-gold-400/50">
+                        SUPERADMIN
+                      </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-thistle-100 text-royal-800">MEMBER</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-thistle-100 text-royal-800">
+                        MEMBER
+                      </span>
                     )}
+                  </td>
+                  <td className="py-3 px-4 font-mono text-[11px]">
+                    {u.isAdmin ? 'UNLIMITED' : (u.subscription?.plan || 'SCOUT')}
                   </td>
                   <td className="py-3 px-4">{u._count?.campaigns || 0}</td>
                   <td className="py-3 px-4">{u._count?.leads || 0}</td>
                   <td className="py-3 px-4">{u._count?.domains || 0}</td>
-                  <td className="py-3 px-4 text-thistle-500">{new Date(u.createdAt).toLocaleDateString()}</td>
+                  <td className="py-3 px-4 text-right">
+                    {u.isAdmin ? (
+                      <button
+                        type="button"
+                        disabled={togglingUserId === u.id}
+                        onClick={() => handleToggleAdmin(u.id, false)}
+                        className="px-3 py-1 bg-white border border-rose-300 text-rose-600 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-50"
+                      >
+                        {togglingUserId === u.id ? 'Updating...' : 'Revoke Admin'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={togglingUserId === u.id}
+                        onClick={() => handleToggleAdmin(u.id, true)}
+                        className="px-3 py-1 btn-royal rounded-lg text-[11px] font-bold disabled:opacity-50"
+                      >
+                        {togglingUserId === u.id ? 'Updating...' : 'Set as Admin'}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -519,57 +634,71 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {actionTargetDomain && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-royal-950/65 backdrop-blur-sm" onClick={() => setActionTargetDomain(null)} />
-          <div className="relative w-full max-w-md bg-white border border-gold-500/45 rounded-3xl p-6 shadow-2xl space-y-4 z-10 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-800 border border-gold-400/50 flex items-center justify-center flex-shrink-0">
-                <Icons.Warning />
+      {/* Confirmation for DB Admins / Bootstrap vs Passphrase for Token Sessions */}
+      {isDbAdmin || isBootstrapMode ? (
+        <ConfirmDialog
+          isOpen={Boolean(actionTargetDomain)}
+          onClose={() => setActionTargetDomain(null)}
+          onConfirm={handleExecuteProtectedAction}
+          title={`Confirm Domain ${actionTargetDomain?.type === 'pause' ? 'Pause' : 'Reactivation'}`}
+          description={`Are you sure you want to ${actionTargetDomain?.type} all sending from domain ${actionTargetDomain?.name}?`}
+          confirmLabel={actionTargetDomain?.type === 'pause' ? 'Trip Breaker (Pause)' : 'Reset & Unpause'}
+          danger={actionTargetDomain?.type === 'pause'}
+          loading={submittingAction}
+        />
+      ) : (
+        actionTargetDomain && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-royal-950/65 backdrop-blur-sm" onClick={() => setActionTargetDomain(null)} />
+            <div className="relative w-full max-w-md bg-white border border-gold-500/45 rounded-3xl p-6 shadow-2xl space-y-4 z-10 animate-in zoom-in-95 duration-150">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-800 border border-gold-400/50 flex items-center justify-center flex-shrink-0">
+                  <Icons.Warning />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-royal-950">Confirm High-Impact Action</h3>
+                  <p className="text-xs text-thistle-500">Action Protection is armed for cross-tenant modifications.</p>
+                </div>
               </div>
+
+              <p className="text-xs text-royal-950/80 bg-thistle-50 p-3 rounded-xl border border-gold-500/35">
+                You are about to <strong className="text-royal-950 uppercase font-black">{actionTargetDomain.type}</strong> all sending from domain <span className="font-mono font-bold text-royal-700">{actionTargetDomain.name}</span>.
+              </p>
+
               <div>
-                <h3 className="text-base font-bold text-royal-950">Confirm High-Impact Action</h3>
-                <p className="text-xs text-thistle-500">Action Protection is armed for cross-tenant modifications.</p>
+                <label className="block text-[10px] font-bold text-thistle-500 uppercase tracking-wider mb-1">
+                  Re-enter Operator Passphrase
+                </label>
+                <input
+                  type="password"
+                  value={actionConfirmPassphrase}
+                  onChange={(e) => setActionConfirmPassphrase(e.target.value)}
+                  placeholder="••••••••••••••••"
+                  className="w-full px-3 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-mono focus:outline-none focus:border-gold-500"
+                  autoFocus
+                />
               </div>
-            </div>
 
-            <p className="text-xs text-royal-950/80 bg-thistle-50 p-3 rounded-xl border border-gold-500/35">
-              You are about to <strong className="text-royal-950 uppercase font-black">{actionTargetDomain.type}</strong> all sending from domain <span className="font-mono font-bold text-royal-700">{actionTargetDomain.name}</span>.
-            </p>
-
-            <div>
-              <label className="block text-[10px] font-bold text-thistle-500 uppercase tracking-wider mb-1">
-                Re-enter Operator Passphrase
-              </label>
-              <input
-                type="password"
-                value={actionConfirmPassphrase}
-                onChange={(e) => setActionConfirmPassphrase(e.target.value)}
-                placeholder="••••••••••••••••"
-                className="w-full px-3 py-2 bg-thistle-50 border border-gold-500/40 rounded-xl text-xs font-mono focus:outline-none focus:border-gold-500"
-                autoFocus
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-3 border-t border-gold-500/35">
-              <button
-                type="button"
-                onClick={() => setActionTargetDomain(null)}
-                className="px-3.5 py-1.5 text-xs text-thistle-500 font-bold hover:text-royal-950"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleExecuteProtectedAction}
-                disabled={submittingAction || !actionConfirmPassphrase.trim()}
-                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors disabled:opacity-50 shadow-xs"
-              >
-                {submittingAction ? 'Verifying...' : 'Authorize Action'}
-              </button>
+              <div className="flex justify-end gap-2 pt-3 border-t border-gold-500/35">
+                <button
+                  type="button"
+                  onClick={() => setActionTargetDomain(null)}
+                  className="px-3.5 py-1.5 text-xs text-thistle-500 font-bold hover:text-royal-950"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteProtectedAction}
+                  disabled={submittingAction || !actionConfirmPassphrase.trim()}
+                  className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors disabled:opacity-50 shadow-xs"
+                >
+                  {submittingAction ? 'Verifying...' : 'Authorize Action'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        )
       )}
     </div>
   );

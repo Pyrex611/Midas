@@ -1,16 +1,48 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
-import { AuthRequest } from '../middleware/auth.middleware';
-import {
-  verifyMasterPassphrase,
-  generateOperatorToken,
-} from '../lib/operatorAuth';
+import { AuthRequest, invalidateUserCache } from '../middleware/auth.middleware';
+import { AdminAuthRequest } from '../middleware/requireAdmin.middleware';
+import { verifyMasterPassphrase, generateOperatorToken } from '../lib/operatorAuth';
 import { aiService } from '../services/ai.service';
 import { logger } from '../config/logger';
 
 /**
+ * GET /api/admin/access-status
+ * Lightweight probe behind requireAuth (never requireAdmin) allowing the UI to
+ * determine whether /admin is open via DB isAdmin, Bootstrap Mode (0 admins),
+ * or Operator Token—or strictly forbidden (redirect to dashboard).
+ */
+export const getAdminAccessStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const [freshUser, adminCount] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: req.user!.id },
+        select: { id: true, email: true, isAdmin: true },
+      }),
+      prisma.user.count({ where: { isAdmin: true } }),
+    ]);
+
+    const isAdmin = Boolean(freshUser?.isAdmin);
+    const isBootstrapMode = adminCount === 0;
+    const passphraseConfigured = Boolean(
+      (process.env.OPERATOR_PASSPHRASE || process.env.ADMIN_PASSPHRASE || '').trim().length >= 12
+    );
+
+    res.json({
+      hasAccess: isAdmin || isBootstrapMode,
+      isAdmin,
+      isBootstrapMode,
+      adminCount,
+      passphraseConfigured,
+      currentUserId: req.user!.id,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * POST /api/admin/unlock
- * Verifies master passphrase and issues a 60-minute sliding operator session.
  */
 export const unlockAdminAccess = async (req: Request, res: Response) => {
   const { passphrase } = req.body;
@@ -22,7 +54,7 @@ export const unlockAdminAccess = async (req: Request, res: Response) => {
   const isValid = verifyMasterPassphrase(passphrase);
   if (!isValid) {
     logger.warn({ ip: req.ip }, 'Failed operator admin unlock attempt');
-    return res.status(401).json({ error: 'Invalid operator passphrase' });
+    return res.status(401).json({ error: 'Invalid operator passphrase or passphrase unlock is disabled.' });
   }
 
   const { token, expiresAt } = generateOperatorToken();
@@ -37,13 +69,58 @@ export const unlockAdminAccess = async (req: Request, res: Response) => {
 };
 
 /**
- * GET /api/admin/services-health
- * Real-time diagnostic inspection across Database, AI Engine, Mailgun, and CronLocks.
+ * POST /api/admin/users/:id/admin
+ * Grants or revokes platform Superadmin status with Zero-Lockout Last-Admin protection.
  */
+export const toggleUserAdmin = async (req: AdminAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const targetUserId = req.params.id;
+    const { isAdmin } = req.body;
+
+    if (typeof isAdmin !== 'boolean') {
+      return res.status(400).json({ error: 'isAdmin boolean is required' });
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, email: true, isAdmin: true },
+    });
+    if (!target) {
+      return res.status(404).json({ error: 'Target user not found' });
+    }
+
+    if (!isAdmin && target.isAdmin) {
+      const adminCount = await prisma.user.count({ where: { isAdmin: true } });
+      if (adminCount <= 1) {
+        return res.status(400).json({
+          error: 'Zero-Lockout Guard: Cannot revoke the last remaining platform administrator. Promote another user first.',
+        });
+      }
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: targetUserId },
+      data: { isAdmin },
+      select: { id: true, email: true, name: true, isAdmin: true },
+    });
+
+    invalidateUserCache(updated.id);
+    invalidateUserCache(updated.email);
+
+    logger.info(
+      { actorId: req.user!.id, targetId: updated.id, targetEmail: updated.email, isAdmin },
+      '[ADMIN] Platform admin privileges updated'
+    );
+
+    res.json({ success: true, user: updated });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getSystemServicesHealth = async (_req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const [dbResult, aiResult, cronLocks, domainsSummary] = await Promise.all([
-      // 1. Neon Database Health & Latency Probe
       (async () => {
         const start = Date.now();
         try {
@@ -53,14 +130,8 @@ export const getSystemServicesHealth = async (_req: AuthRequest, res: Response, 
           return { status: 'ERROR', error: err?.message || String(err) };
         }
       })(),
-
-      // 2. AI Engine Probe
       aiService.testActiveProvider(),
-
-      // 3. CronLock Inspection
       prisma.cronLock.findMany(),
-
-      // 4. Domains Overview
       prisma.domain.groupBy({
         by: ['status'],
         _count: { id: true },
@@ -77,10 +148,6 @@ export const getSystemServicesHealth = async (_req: AuthRequest, res: Response, 
   } catch (error) { next(error); }
 };
 
-/**
- * POST /api/admin/locks/:name/clear
- * Clears a stuck cron lock manually.
- */
 export const clearCronLock = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { name } = req.params;
@@ -102,6 +169,7 @@ export const listUsers = async (_req: AuthRequest, res: Response, next: NextFunc
         name: true,
         isAdmin: true,
         createdAt: true,
+        subscription: { select: { plan: true, status: true, emailsSentThisMonth: true } },
         _count: { select: { campaigns: true, leads: true, domains: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -133,16 +201,18 @@ export const listAllDomains = async (_req: AuthRequest, res: Response, next: Nex
   } catch (error) { next(error); }
 };
 
-export const pauseDomain = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const pauseDomain = async (req: AdminAuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    const actionPassphrase = (req.headers['x-action-passphrase'] as string) || req.body?.actionPassphrase;
 
-    if (!actionPassphrase || !verifyMasterPassphrase(actionPassphrase)) {
-      return res.status(403).json({
-        error: 'Action Protected: Re-enter operator passphrase to confirm domain pause.',
-        requiresActionConfirmation: true,
-      });
+    if (!req.user?.isAdmin && !req.isBootstrapAdminAccess) {
+      const actionPassphrase = (req.headers['x-action-passphrase'] as string) || req.body?.actionPassphrase;
+      if (!actionPassphrase || !verifyMasterPassphrase(actionPassphrase)) {
+        return res.status(403).json({
+          error: 'Action Protected: Re-enter operator passphrase to confirm domain pause.',
+          requiresActionConfirmation: true,
+        });
+      }
     }
 
     const domain = await prisma.domain.update({
@@ -155,16 +225,18 @@ export const pauseDomain = async (req: AuthRequest, res: Response, next: NextFun
   } catch (error) { next(error); }
 };
 
-export const unpauseDomain = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const unpauseDomain = async (req: AdminAuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    const actionPassphrase = (req.headers['x-action-passphrase'] as string) || req.body?.actionPassphrase;
 
-    if (!actionPassphrase || !verifyMasterPassphrase(actionPassphrase)) {
-      return res.status(403).json({
-        error: 'Action Protected: Re-enter operator passphrase to reactivate domain.',
-        requiresActionConfirmation: true,
-      });
+    if (!req.user?.isAdmin && !req.isBootstrapAdminAccess) {
+      const actionPassphrase = (req.headers['x-action-passphrase'] as string) || req.body?.actionPassphrase;
+      if (!actionPassphrase || !verifyMasterPassphrase(actionPassphrase)) {
+        return res.status(403).json({
+          error: 'Action Protected: Re-enter operator passphrase to reactivate domain.',
+          requiresActionConfirmation: true,
+        });
+      }
     }
 
     const domain = await prisma.domain.update({

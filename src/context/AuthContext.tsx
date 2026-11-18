@@ -15,6 +15,9 @@ interface AuthContextType {
   providerMode: 'clerk' | 'supabase';
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name?: string) => Promise<{ needsConfirmation: boolean }>;
+  sendEmailOtp: (email: string, name?: string) => Promise<void>;
+  verifyEmailOtp: (email: string, token: string, preferredType?: 'email' | 'signup') => Promise<void>;
+  resetPasswordWithOtp: (email: string, otpToken: string, newPassword: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -22,9 +25,9 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const ACTIVE_FRONTEND_AUTH: 'clerk' | 'supabase' =
-  import.meta.env.VITE_AUTH_PROVIDER === 'supabase' || !import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
-    ? 'supabase'
-    : 'clerk';
+  import.meta.env.VITE_AUTH_PROVIDER === 'clerk' && Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
+    ? 'clerk'
+    : 'supabase';
 
 const ClerkAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isLoaded, isSignedIn, signOut: clerkSignOut, getToken } = useClerkAuth();
@@ -71,6 +74,9 @@ const ClerkAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ child
         providerMode: 'clerk',
         signIn: async () => { throw new Error('Use Clerk UI component'); },
         signUp: async () => { throw new Error('Use Clerk UI component'); },
+        sendEmailOtp: async () => { throw new Error('Use Clerk UI component'); },
+        verifyEmailOtp: async () => { throw new Error('Use Clerk UI component'); },
+        resetPasswordWithOtp: async () => { throw new Error('Use Clerk UI component'); },
         signInWithGoogle: async () => { throw new Error('Use Clerk UI component'); },
         signOut: async () => { await clerkSignOut(); },
       }}
@@ -132,6 +138,20 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
     return { needsConfirmation: result.needsConfirmation };
   };
 
+  const sendEmailOtp = async (email: string, name?: string) => {
+    await supabaseAuth.sendEmailOtp(email, name);
+  };
+
+  const verifyEmailOtp = async (email: string, token: string, preferredType: 'email' | 'signup' = 'email') => {
+    const u = await supabaseAuth.verifyEmailOtp(email, token, preferredType);
+    setUser(u);
+  };
+
+  const resetPasswordWithOtp = async (email: string, otpToken: string, newPassword: string) => {
+    const u = await supabaseAuth.resetPasswordWithOtp(email, otpToken, newPassword);
+    setUser(u);
+  };
+
   const signInWithGoogle = async () => {
     await supabaseAuth.signInWithGoogle();
   };
@@ -149,6 +169,9 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
         providerMode: 'supabase',
         signIn,
         signUp,
+        sendEmailOtp,
+        verifyEmailOtp,
+        resetPasswordWithOtp,
         signInWithGoogle,
         signOut,
       }}
@@ -159,10 +182,10 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  if (ACTIVE_FRONTEND_AUTH === 'supabase') {
-    return <SupabaseAuthProviderInner>{children}</SupabaseAuthProviderInner>;
+  if (ACTIVE_FRONTEND_AUTH === 'clerk') {
+    return <ClerkAuthProviderInner>{children}</ClerkAuthProviderInner>;
   }
-  return <ClerkAuthProviderInner>{children}</ClerkAuthProviderInner>;
+  return <SupabaseAuthProviderInner>{children}</SupabaseAuthProviderInner>;
 };
 
 export const useAuth = () => {

@@ -13,6 +13,8 @@ router.get('/status', async (req: AuthRequest, res: Response) => {
       ...summary,
       tiers: Object.values(PLAN_TIERS),
       dodoConfigured: dodoService.isConfigured(),
+      monthlyAvailable: dodoService.isMonthlyConfigured(),
+      annualAvailable: dodoService.isAnnualConfigured(),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to load billing summary' });
