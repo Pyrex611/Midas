@@ -1,5 +1,4 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { useDropzone } from 'react-dropzone';
+import React, { useState, useEffect, useRef } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { leadAPI, configAPI, campaignAPI } from '../services/api';
@@ -34,6 +33,9 @@ interface UploadAreaProps {
   allowCampaignSelection?: boolean;
 }
 
+const ACCEPTED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
 export const UploadArea: React.FC<UploadAreaProps> = ({
   onJobComplete,
   campaignId,
@@ -42,10 +44,14 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
   const { toast } = useToast();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
   const [verifyEmails, setVerifyEmails] = useState(false);
   const [verificationAvailable, setVerificationAvailable] = useState(false);
   const [verificationProvider, setVerificationProvider] = useState<string>('mock');
+
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepthRef = useRef(0);
 
   const [availableCampaigns, setAvailableCampaigns] = useState<any[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>(campaignId || '');
@@ -101,7 +107,8 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
   }, [campaignId, allowCampaignSelection]);
 
   const analyzeFileHeaders = async (file: File) => {
-    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+    const lowerName = file.name.toLowerCase();
+    const isExcel = lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls');
 
     if (isExcel) {
       const arrayBuffer = await file.arrayBuffer();
@@ -166,21 +173,65 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
     });
   };
 
-  const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    if (acceptedFiles.length === 0) return;
-    const file = acceptedFiles[0];
+  const validateAndStageFile = async (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    const isValidExt = ACCEPTED_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+    if (!isValidExt) {
+      toast.error('Unsupported file format. Please upload a .csv, .xlsx, or .xls file.', 'Invalid File');
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      toast.error('File exceeds the 10MB upload limit.', 'File Too Large');
+      return;
+    }
     await analyzeFileHeaders(file);
-  }, []);
+  };
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    maxFiles: 1,
-    accept: {
-      'text/csv': ['.csv'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-      'application/vnd.ms-excel': ['.xls'],
-    },
-  });
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (uploading) return;
+    dragDepthRef.current += 1;
+    setIsDragActive(true);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!uploading && !isDragActive) {
+      setIsDragActive(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragActive(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = 0;
+    setIsDragActive(false);
+    if (uploading) return;
+
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      await validateAndStageFile(file);
+    }
+  };
+
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file && !uploading) {
+      await validateAndStageFile(file);
+    }
+  };
 
   const handleConfirmAndUpload = async () => {
     if (!stagedFile) return;
@@ -240,14 +291,34 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
 
       {!stagedFile && (
         <div
-          {...getRootProps()}
+          role="button"
+          tabIndex={0}
+          aria-label="Upload prospect CSV or Excel file"
+          onClick={() => !uploading && fileInputRef.current?.click()}
+          onKeyDown={(e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && !uploading) {
+              e.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
             isDragActive
               ? 'border-gold-500 bg-thistle-100/80 scale-[0.99]'
               : 'border-gold-500/40 hover:border-gold-500 bg-thistle-50/60 hover:bg-thistle-100/40'
           }`}
         >
-          <input {...getInputProps()} disabled={uploading} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            onChange={handleFileInputChange}
+            disabled={uploading}
+            className="hidden"
+          />
           <div className="w-10 h-10 rounded-2xl bg-white border border-gold-500/40 shadow-xs text-royal-700 mx-auto flex items-center justify-center mb-3">
             <Icons.Upload className="text-gold-600" />
           </div>
