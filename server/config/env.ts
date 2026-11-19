@@ -42,7 +42,7 @@ const envSchema = z.object({
   // Platform Transactional Auth Email Credentials (OTP / Magic Link)
   AUTH_EMAIL_DOMAIN: z.string().optional(),
   AUTH_EMAIL_MAILGUN_KEY: z.string().optional(),
-  AUTH_EMAIL_REGION: z.enum(['us', 'eu']).default('us'),
+  AUTH_EMAIL_REGION: z.enum(['us', 'eu']).optional(),
   AUTH_EMAIL_FROM_ADDRESS: z.string().optional(),
 
   // Dodo Payments

@@ -1,11 +1,10 @@
 import { Router } from 'express';
-import prisma from '../lib/prisma';
+import prisma, { activeDbProvider, activeDbHost } from '../lib/prisma';
 import { logger } from '../config/logger';
 
 const router = Router();
 
-router.get('/health/db', async (req, res) => {
-  console.log('[DEBUG DIAGNOSTICS] /health/db triggered. Testing database query latency...');
+router.get('/health/db', async (_req, res) => {
   try {
     const start = Date.now();
     const [leadCount, campaignCount, draftCount, domainCount] = await Promise.all([
@@ -15,11 +14,19 @@ router.get('/health/db', async (req, res) => {
       prisma.domain.count(),
     ]);
     const duration = Date.now() - start;
-    console.log(`[DEBUG DIAGNOSTICS] Prisma queries completed in ${duration}ms`);
+
+    const databaseLabel =
+      activeDbProvider === 'supabase'
+        ? 'Supabase Postgres'
+        : activeDbProvider === 'neon'
+        ? 'Neon Postgres'
+        : 'PostgreSQL';
 
     res.json({
       status: 'healthy',
-      database: 'Vercel Postgres (Neon)',
+      database: databaseLabel,
+      provider: activeDbProvider,
+      host: activeDbHost,
       responseTimeMs: duration,
       counts: {
         leads: leadCount,
@@ -30,16 +37,17 @@ router.get('/health/db', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
-    console.error('[DEBUG DIAGNOSTICS ERROR]', error);
     logger.error({ error: error.message }, 'Database health check failed');
     res.status(500).json({
       status: 'unhealthy',
+      provider: activeDbProvider,
+      host: activeDbHost,
       error: error.message,
     });
   }
 });
 
-router.post('/test/lead', async (req, res) => {
+router.post('/test/lead', async (_req, res) => {
   try {
     const user = await prisma.user.findFirst();
     if (!user) return res.status(400).json({ error: 'No user exists for diagnostic test' });

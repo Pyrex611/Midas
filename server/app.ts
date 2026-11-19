@@ -32,6 +32,8 @@ import knowledgeRoutes from './routes/knowledge.routes';
 import artifactRoutes from './routes/artifact.routes';
 import billingRoutes from './routes/billing.routes';
 import authChallengeRoutes from './routes/authChallenge.routes';
+import seoRoutes from './routes/seo.routes';
+import mcpRoutes from './routes/mcp.routes';
 
 const app = express();
 
@@ -74,7 +76,13 @@ app.use((req, res, next) => {
   if (
     req.path.startsWith('/api/public/town-crier') ||
     req.path.startsWith('/api/track') ||
-    req.path.startsWith('/api/unsubscribe')
+    req.path.startsWith('/api/unsubscribe') ||
+    req.path === '/llms.txt' ||
+    req.path === '/llms-full.txt' ||
+    req.path === '/docs.md' ||
+    req.path === '/openapi.json' ||
+    req.path === '/robots.txt' ||
+    req.path === '/sitemap.xml'
   ) {
     return publicWildcardCors(req, res, next);
   }
@@ -117,6 +125,9 @@ const publicTelemetryLimiter = createRateLimiter({
   keyPrefix: 'pub_tel',
 });
 
+// Stage 3B: Crawlable Public Discovery & SSR SEO/AEO Routes
+app.use('/', seoRoutes);
+
 app.use('/api/auth', authChallengeRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/cron', cronRoutes);
@@ -127,6 +138,10 @@ app.use('/api/track', publicTelemetryLimiter, trackRoutes);
 app.post('/api/public/town-crier/subscribe', publicSubscribeLimiter, limitMetadataSize(16384));
 app.post('/api/public/town-crier/recipients/import', publicSubscribeLimiter);
 app.use('/api/public/town-crier', townCrierPublicRoutes);
+
+// Stage 3B: Stateless Remote MCP Server (Streamable HTTP JSON-RPC 2.0)
+app.use('/api/mcp', requireAuthOrApiKey, mcpRoutes);
+app.use('/mcp', requireAuthOrApiKey, mcpRoutes);
 
 app.use('/api/campaigns', requireAuthOrApiKey, campaignRoutes);
 app.use('/api/leads', requireAuthOrApiKey, leadRoutes);

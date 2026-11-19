@@ -66,23 +66,33 @@ export class AuthEmailHookService {
     fromEmail: string;
     rawApiKey?: string;
   }> {
-    if (env.AUTH_EMAIL_DOMAIN && env.AUTH_EMAIL_MAILGUN_KEY) {
+    const resolvedAuthMailgunKey =
+      env.AUTH_EMAIL_MAILGUN_KEY?.trim() ||
+      env.MAILGUN_API_KEY?.trim() ||
+      env.SANDBOX_MAILGUN_KEY?.trim();
+
+    if (env.AUTH_EMAIL_DOMAIN && resolvedAuthMailgunKey) {
       const cleanDomain = env.AUTH_EMAIL_DOMAIN.trim();
       const fromEmail = env.AUTH_EMAIL_FROM_ADDRESS?.trim() || `auth@${cleanDomain}`;
       return {
-        domain: { domainName: cleanDomain, espProvider: 'mailgun', mailgunRegion: env.AUTH_EMAIL_REGION },
+        domain: {
+          domainName: cleanDomain,
+          espProvider: 'mailgun',
+          mailgunRegion: env.AUTH_EMAIL_REGION || env.MAILGUN_REGION || 'us',
+        },
         fromEmail,
-        rawApiKey: env.AUTH_EMAIL_MAILGUN_KEY.trim(),
+        rawApiKey: resolvedAuthMailgunKey,
       };
     }
 
-    if (env.SANDBOX_DOMAIN && env.SANDBOX_MAILGUN_KEY) {
+    const resolvedSandboxKey = env.SANDBOX_MAILGUN_KEY?.trim() || env.MAILGUN_API_KEY?.trim();
+    if (env.SANDBOX_DOMAIN && resolvedSandboxKey) {
       const cleanDomain = env.SANDBOX_DOMAIN.trim();
       const fromEmail = env.AUTH_EMAIL_FROM_ADDRESS?.trim() || `auth@${cleanDomain}`;
       return {
         domain: { domainName: cleanDomain, espProvider: 'mailgun', mailgunRegion: env.SANDBOX_REGION },
         fromEmail,
-        rawApiKey: env.SANDBOX_MAILGUN_KEY.trim(),
+        rawApiKey: resolvedSandboxKey,
       };
     }
 

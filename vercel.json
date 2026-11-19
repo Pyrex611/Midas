@@ -1,6 +1,39 @@
 {
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.ts" },
+    { "source": "/mcp", "destination": "/api/index.ts" },
+    { "source": "/robots.txt", "destination": "/api/index.ts" },
+    { "source": "/sitemap.xml", "destination": "/api/index.ts" },
+    { "source": "/llms.txt", "destination": "/api/index.ts" },
+    { "source": "/llms-full.txt", "destination": "/api/index.ts" },
+    { "source": "/docs.md", "destination": "/api/index.ts" },
+    { "source": "/openapi.json", "destination": "/api/index.ts" },
+    { "source": "/overview", "destination": "/api/index.ts" },
+    { "source": "/pricing", "destination": "/api/index.ts" },
+    { "source": "/deliverability-benchmarks", "destination": "/api/index.ts" },
+    { "source": "/vs/(.*)", "destination": "/api/index.ts" },
+    {
+      "source": "/docs",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-Web|anthropic-ai|PerplexityBot|Google-Extended|Googlebot|bingbot|Applebot|Twitterbot|facebookexternalhit|LinkedInBot|Slackbot|curl|Wget).*"
+        }
+      ],
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/developers",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-Web|anthropic-ai|PerplexityBot|Google-Extended|Googlebot|bingbot|Applebot|Twitterbot|facebookexternalhit|LinkedInBot|Slackbot|curl|Wget).*"
+        }
+      ],
+      "destination": "/api/index.ts"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "crons": [

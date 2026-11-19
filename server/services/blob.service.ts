@@ -16,6 +16,8 @@ function inferMimeType(filename: string): string {
 }
 
 export class BlobService {
+  private bucketEnsured = false;
+
   private shouldUseSupabase(): boolean {
     if (env.STORAGE_PROVIDER === 'vercel_blob') return false;
     if (env.STORAGE_PROVIDER === 'supabase') {
@@ -25,6 +27,21 @@ export class BlobService {
     return Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !process.env.BLOB_READ_WRITE_TOKEN);
   }
 
+  private async ensureSupabaseBucket(baseUrl: string, serviceKey: string, bucket: string): Promise<void> {
+    if (this.bucketEnsured) return;
+    await fetch(`${baseUrl}/storage/v1/bucket`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ id: bucket, name: bucket, public: true }),
+      signal: AbortSignal.timeout(8_000),
+    }).catch(() => {});
+    this.bucketEnsured = true;
+  }
+
   private async uploadToSupabaseStorage(filename: string, fileBuffer: Buffer): Promise<string> {
     const baseUrl = env.SUPABASE_URL!.replace(/\/$/, '');
     const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -32,17 +49,29 @@ export class BlobService {
     const cleanPath = filename.replace(/^\/+/, '');
     const contentType = inferMimeType(cleanPath);
 
-    const res = await fetch(`${baseUrl}/storage/v1/object/${bucket}/${cleanPath}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${serviceKey}`,
-        apikey: serviceKey,
-        'Content-Type': contentType,
-        'x-upsert': 'true',
-      },
-      body: new Uint8Array(fileBuffer),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const doUpload = () =>
+      fetch(`${baseUrl}/storage/v1/object/${bucket}/${cleanPath}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${serviceKey}`,
+          apikey: serviceKey,
+          'Content-Type': contentType,
+          'x-upsert': 'true',
+        },
+        body: new Uint8Array(fileBuffer),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+    let res = await doUpload();
+    if (!res.ok && (res.status === 400 || res.status === 404)) {
+      const errBody = await res.text();
+      if (errBody.toLowerCase().includes('bucket') || errBody.toLowerCase().includes('not found')) {
+        await this.ensureSupabaseBucket(baseUrl, serviceKey, bucket);
+        res = await doUpload();
+      } else {
+        throw new Error(`Supabase Storage upload failed (${res.status}): ${errBody}`);
+      }
+    }
 
     if (!res.ok) {
       const errText = await res.text();

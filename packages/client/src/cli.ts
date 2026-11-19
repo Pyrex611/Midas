@@ -77,6 +77,81 @@ async function appendEnvKeys(cwd: string, apiKey: string, baseUrl: string) {
   }
 }
 
+async function runMcpStdioBridge() {
+  const args = process.argv.slice(3);
+  let flagKey: string | undefined;
+  let flagUrl: string | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--key' && args[i + 1]) {
+      flagKey = args[i + 1];
+      i++;
+    } else if (args[i] === '--url' && args[i + 1]) {
+      flagUrl = args[i + 1];
+      i++;
+    }
+  }
+
+  const apiKey = (flagKey || process.env.MIDAS_API_KEY || process.env.TOWN_CRIER_API_KEY || '').trim();
+  const baseUrl = (flagUrl || process.env.MIDAS_BASE_URL || 'https://midas-aem.vercel.app').replace(/\/$/, '');
+
+  if (!apiKey) {
+    process.stderr.write('MIDAS MCP bridge error: Set MIDAS_API_KEY or pass --key midas_live_...\n');
+    process.exit(1);
+  }
+
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
+
+  rl.on('line', async (rawLine) => {
+    const line = rawLine.trim();
+    if (!line) return;
+
+    let parsedId: any = null;
+    try {
+      const msg = JSON.parse(line);
+      parsedId = msg.id ?? null;
+
+      const res = await fetch(`${baseUrl}/api/mcp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: line,
+      });
+
+      if (res.status === 202) return;
+
+      const text = await res.text();
+      if (!res.ok) {
+        output.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: parsedId,
+            error: { code: -32000, message: text || `HTTP ${res.status}` },
+          })}\n`
+        );
+        return;
+      }
+
+      if (text.trim()) {
+        output.write(`${text.trim()}\n`);
+      }
+    } catch (err: any) {
+      if (parsedId !== null) {
+        output.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: parsedId,
+            error: { code: -32603, message: err?.message || 'MCP bridge request failed' },
+          })}\n`
+        );
+      }
+    }
+  });
+}
+
 async function scaffoldInit() {
   const cwd = process.cwd();
   const rl = readline.createInterface({ input, output });
@@ -233,12 +308,17 @@ async function main() {
     await scaffoldInit();
     return;
   }
+  if (cmd === 'mcp') {
+    await runMcpStdioBridge();
+    return;
+  }
 
   console.log(`
 ${PURPLE}${BOLD}@midas-aem/client CLI${RESET}
 
 Usage:
   npx @midas-aem/client init     Scaffold Midas SDK, env variables & modal component
+  npx @midas-aem/client mcp      Start stdio-to-HTTP MCP bridge for Claude Code / Cursor
 `);
 }
 

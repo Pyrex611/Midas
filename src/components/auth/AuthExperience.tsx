@@ -41,7 +41,7 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [otpCode, setOtpCode] = useState('');
   const [loginHint, setLoginHint] = useState<string | null>(null);
   const [signupConflict, setSignupConflict] = useState(false);
 
@@ -49,7 +49,7 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
   const [sendingAction, setSendingAction] = useState<'signin_mail' | 'reset' | 'password' | 'signup' | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const otpInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const otpInputRef = useRef<HTMLInputElement | null>(null);
   const passwordInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -87,7 +87,7 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
     setPassword('');
     setNewPassword('');
     setConfirmPassword('');
-    setOtpDigits(['', '', '', '', '', '']);
+    setOtpCode('');
     setLoginHint(null);
     setSignupConflict(false);
   };
@@ -127,13 +127,13 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
       } else {
         const res = await signUp(cleanEmail, password, name);
         if (res.needsConfirmation) {
-          setOtpDigits(['', '', '', '', '', '']);
+          setOtpCode('');
           setStage('verify');
           toast.success(
-            `Sign-Up mail sent to ${cleanEmail} with your 6-digit OTP and Magic Sign-In button.`,
+            `Sign-Up mail sent to ${cleanEmail} with your verification code and Magic Sign-In button.`,
             'Check Your Inbox'
           );
-          setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
+          setTimeout(() => otpInputRef.current?.focus(), 80);
         } else {
           toast.success('Account provisioned on Scout Free Tier', 'Welcome to MIDAS');
           navigate('/', { replace: true });
@@ -165,13 +165,13 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
 
     try {
       await sendAuthChallenge(cleanEmail, 'both', undefined, 'signin');
-      setOtpDigits(['', '', '', '', '', '']);
+      setOtpCode('');
       setStage('verify');
       toast.success(
-        `Sign-In mail sent to ${cleanEmail} with a 6-digit OTP and direct Magic Sign-In button.`,
+        `Sign-In mail sent to ${cleanEmail} with a verification code and direct Magic Sign-In button.`,
         'Check Your Inbox'
       );
-      setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
+      setTimeout(() => otpInputRef.current?.focus(), 80);
     } catch (err: any) {
       toast.error(err?.message || 'Could not send sign-in mail', 'Auth Error');
     } finally {
@@ -190,15 +190,15 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
 
     try {
       await sendAuthChallenge(cleanEmail, 'both', undefined, 'reset');
-      setOtpDigits(['', '', '', '', '', '']);
+      setOtpCode('');
       setNewPassword('');
       setConfirmPassword('');
       setStage('reset_verify');
       toast.success(
-        `Password reset mail sent to ${cleanEmail} with a 6-digit OTP and direct reset button.`,
+        `Password reset mail sent to ${cleanEmail} with a verification code and direct reset button.`,
         'Check Your Inbox'
       );
-      setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
+      setTimeout(() => otpInputRef.current?.focus(), 80);
     } catch (err: any) {
       toast.error(err?.message || 'Could not send password reset mail', 'Auth Error');
     } finally {
@@ -209,9 +209,9 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
 
   const handleVerifyOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const code = otpDigits.join('').trim();
-    if (code.length < 6) {
-      return toast.warning('Enter the complete 6-digit verification code', 'Code Required');
+    const code = otpCode.replace(/\D/g, '').trim();
+    if (code.length < 6 || code.length > 10) {
+      return toast.warning('Enter the complete 6–8 digit verification code from your email', 'Code Required');
     }
 
     if (stage === 'reset_verify') {
@@ -234,7 +234,7 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
       }
       navigate('/', { replace: true });
     } catch (err: any) {
-      toast.error(err?.message || 'Invalid or expired 6-digit code', 'Verification Failed');
+      toast.error(err?.message || 'Invalid or expired verification code', 'Verification Failed');
     } finally {
       setSubmitting(false);
     }
@@ -261,36 +261,6 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
     }
   };
 
-  const handleOtpDigitChange = (idx: number, rawVal: string) => {
-    const clean = rawVal.replace(/\D/g, '').slice(-1);
-    const next = [...otpDigits];
-    next[idx] = clean;
-    setOtpDigits(next);
-
-    if (clean && idx < 5) {
-      otpInputRefs.current[idx + 1]?.focus();
-    }
-  };
-
-  const handleOtpKeyDown = (idx: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otpDigits[idx] && idx > 0) {
-      otpInputRefs.current[idx - 1]?.focus();
-    }
-  };
-
-  const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (!pasted) return;
-    e.preventDefault();
-    const next = ['', '', '', '', '', ''];
-    for (let i = 0; i < pasted.length; i++) {
-      next[i] = pasted[i];
-    }
-    setOtpDigits(next);
-    const focusIdx = Math.min(5, pasted.length - 1);
-    otpInputRefs.current[focusIdx]?.focus();
-  };
-
   const handleResendChallenge = async () => {
     const cleanEmail = email.trim().toLowerCase();
     const intent = stage === 'reset_verify' ? 'reset' : authMode === 'signup' ? 'signup' : 'signin';
@@ -304,6 +274,8 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
       setSubmitting(false);
     }
   };
+
+  const cleanOtpDigits = otpCode.replace(/\D/g, '');
 
   return (
     <div className="min-h-screen bg-thistle-canvas text-royal-950 flex flex-col">
@@ -758,27 +730,27 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
                             : 'Check your inbox'}
                         </p>
                         <p className="text-[11px] text-thistle-500 leading-relaxed">
-                          We sent a 6-digit OTP and a direct Magic Sign-In button to{' '}
-                          <strong className="text-royal-800">{email}</strong>. Enter the code below or click the button in the email.
+                          We sent a verification code and a direct Magic Sign-In button to{' '}
+                          <strong className="text-royal-800">{email}</strong>. Enter the 6–8 digit code below or click the button in the email.
                         </p>
                       </div>
 
-                      <div className="grid grid-cols-6 gap-2">
-                        {otpDigits.map((digit, idx) => (
-                          <input
-                            key={idx}
-                            ref={(el) => { otpInputRefs.current[idx] = el; }}
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={1}
-                            value={digit}
-                            onPaste={handleOtpPaste}
-                            onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
-                            onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                            aria-label={`OTP digit ${idx + 1}`}
-                            className="h-12 text-center text-lg font-mono font-black bg-thistle-50 border border-gold-500/50 rounded-xl focus:outline-none focus:border-royal-700"
-                          />
-                        ))}
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+                          Verification Code (6 or 8 digits)
+                        </label>
+                        <input
+                          ref={otpInputRef}
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          maxLength={10}
+                          value={otpCode}
+                          onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                          placeholder="••••••••"
+                          aria-label="Verification code"
+                          className="w-full h-12 px-4 text-center text-xl font-mono font-black tracking-[0.35em] bg-thistle-50 border border-gold-500/50 rounded-xl focus:outline-none focus:border-royal-700"
+                        />
                       </div>
 
                       {stage === 'reset_verify' && (
@@ -816,7 +788,7 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
 
                       <button
                         type="submit"
-                        disabled={submitting || otpDigits.join('').length < 6}
+                        disabled={submitting || cleanOtpDigits.length < 6}
                         className="w-full py-3 btn-royal rounded-xl font-bold text-xs"
                       >
                         {submitting
