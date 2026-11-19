@@ -39,7 +39,7 @@ export const AdminDashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const lastActivityRef = useRef<number>(Date.now());
-  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const inactivityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const lockSession = useCallback(() => {
     sessionStorage.removeItem('midas_operator_token');
@@ -110,7 +110,6 @@ export const AdminDashboard: React.FC = () => {
       }
 
       if (!d.passphraseConfigured) {
-        // Strict admin lockdown: non-admins are redirected immediately when admins exist
         navigate('/', { replace: true });
         return;
       }
@@ -294,7 +293,6 @@ export const AdminDashboard: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* Zero-Lockout Bootstrap Banner */}
       {isBootstrapMode && !isDbAdmin && (
         <div className="p-5 rounded-2xl bg-amber-50 border-2 border-gold-500 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
           <div className="flex items-center gap-3">
@@ -560,7 +558,6 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Workspaces & Admin Privileges Management */}
       <div className="card-midas rounded-2xl p-6 space-y-4">
         <div className="pb-3 border-b border-gold-500/35">
           <h2 className="text-base font-black text-royal-950 tracking-tight">Active Workspaces &amp; Admin Privileges</h2>
@@ -634,7 +631,6 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Confirmation for DB Admins / Bootstrap vs Passphrase for Token Sessions */}
       {isDbAdmin || isBootstrapMode ? (
         <ConfirmDialog
           isOpen={Boolean(actionTargetDomain)}

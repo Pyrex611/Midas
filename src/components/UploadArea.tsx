@@ -49,7 +49,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({
   const [verificationAvailable, setVerificationAvailable] = useState(false);
   const [verificationProvider, setVerificationProvider] = useState<string>('mock');
 
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
 

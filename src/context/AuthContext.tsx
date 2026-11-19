@@ -13,10 +13,11 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   providerMode: 'clerk' | 'supabase';
+  magicLinkError: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name?: string) => Promise<{ needsConfirmation: boolean }>;
-  sendEmailOtp: (email: string, name?: string) => Promise<void>;
-  verifyEmailOtp: (email: string, token: string, preferredType?: 'email' | 'signup') => Promise<void>;
+  sendAuthChallenge: (email: string, deliveryType: 'code' | 'link', name?: string) => Promise<void>;
+  verifyEmailOtp: (email: string, token: string) => Promise<void>;
   resetPasswordWithOtp: (email: string, otpToken: string, newPassword: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -72,9 +73,10 @@ const ClerkAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ child
         user,
         loading,
         providerMode: 'clerk',
+        magicLinkError: null,
         signIn: async () => { throw new Error('Use Clerk UI component'); },
         signUp: async () => { throw new Error('Use Clerk UI component'); },
-        sendEmailOtp: async () => { throw new Error('Use Clerk UI component'); },
+        sendAuthChallenge: async () => { throw new Error('Use Clerk UI component'); },
         verifyEmailOtp: async () => { throw new Error('Use Clerk UI component'); },
         resetPasswordWithOtp: async () => { throw new Error('Use Clerk UI component'); },
         signInWithGoogle: async () => { throw new Error('Use Clerk UI component'); },
@@ -89,6 +91,7 @@ const ClerkAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ child
 const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [magicLinkError, setMagicLinkError] = useState<string | null>(null);
 
   useEffect(() => {
     const interceptor = api.interceptors.request.use(async (config) => {
@@ -103,11 +106,25 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
 
     (async () => {
       try {
+        // 1. Redeem direct ?token_hash=... magic links cleanly
+        try {
+          const linkUser = await supabaseAuth.consumeMagicLinkFromUrl();
+          if (linkUser) {
+            setUser(linkUser);
+            return;
+          }
+        } catch (linkErr: any) {
+          setMagicLinkError(linkErr?.message || 'Sign-in link is invalid or expired');
+        }
+
+        // 2. Redeem OAuth #access_token=... hash callbacks
         const oauthUser = await supabaseAuth.consumeOAuthHashCallback();
         if (oauthUser) {
           setUser(oauthUser);
           return;
         }
+
+        // 3. Hydrate existing valid session
         const token = await supabaseAuth.getValidAccessToken();
         const stored = supabaseAuth.getStoredSession();
         if (token && stored?.user) {
@@ -138,12 +155,12 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
     return { needsConfirmation: result.needsConfirmation };
   };
 
-  const sendEmailOtp = async (email: string, name?: string) => {
-    await supabaseAuth.sendEmailOtp(email, name);
+  const sendAuthChallenge = async (email: string, deliveryType: 'code' | 'link', name?: string) => {
+    await supabaseAuth.sendAuthChallenge(email, deliveryType, name);
   };
 
-  const verifyEmailOtp = async (email: string, token: string, preferredType: 'email' | 'signup' = 'email') => {
-    const u = await supabaseAuth.verifyEmailOtp(email, token, preferredType);
+  const verifyEmailOtp = async (email: string, token: string) => {
+    const u = await supabaseAuth.verifyEmailOtp(email, token);
     setUser(u);
   };
 
@@ -167,9 +184,10 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
         user,
         loading,
         providerMode: 'supabase',
+        magicLinkError,
         signIn,
         signUp,
-        sendEmailOtp,
+        sendAuthChallenge,
         verifyEmailOtp,
         resetPasswordWithOtp,
         signInWithGoogle,

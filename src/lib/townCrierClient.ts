@@ -25,18 +25,23 @@ export interface MidasClientConfig {
   baseUrl?: string;
 }
 
+function getRuntimeEnv(): Record<string, string | undefined> | undefined {
+  return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+}
+
 export class MidasClient {
   private apiKey: string;
   private baseUrl: string;
 
   constructor(config?: MidasClientConfig) {
     let key = config?.apiKey?.trim();
+    const runtimeEnv = getRuntimeEnv();
 
-    if (!key && typeof process !== 'undefined' && process.env) {
+    if (!key && runtimeEnv) {
       key = (
-        process.env.MIDAS_API_KEY ||
-        process.env.TOWN_CRIER_API_KEY ||
-        process.env.NEXT_PUBLIC_MIDAS_API_KEY
+        runtimeEnv.MIDAS_API_KEY ||
+        runtimeEnv.TOWN_CRIER_API_KEY ||
+        runtimeEnv.NEXT_PUBLIC_MIDAS_API_KEY
       )?.trim();
     }
 
@@ -54,7 +59,7 @@ export class MidasClient {
     this.apiKey = key;
     this.baseUrl = (
       config?.baseUrl ||
-      (typeof process !== 'undefined' && process.env?.MIDAS_BASE_URL) ||
+      runtimeEnv?.MIDAS_BASE_URL ||
       (typeof window !== 'undefined' ? window.location.origin : 'https://midas-aem.vercel.app')
     ).replace(/\/$/, '');
   }
@@ -101,7 +106,7 @@ export class MidasClient {
   }
 
   async publishBroadcast(gongId: string, issue: { subject: string; body: string; templateStyle?: string }) {
-    const endpoint = `${this.baseUrl}/api/public/town-crier/gongs/${gongId}/broadcast`;
+    const endpoint = `${this.baseUrl}/api/public/town-crier/gongs/${encodeURIComponent(gongId)}/broadcast`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {

@@ -31,6 +31,7 @@ import sandboxRoutes from './routes/sandbox.routes';
 import knowledgeRoutes from './routes/knowledge.routes';
 import artifactRoutes from './routes/artifact.routes';
 import billingRoutes from './routes/billing.routes';
+import authChallengeRoutes from './routes/authChallenge.routes';
 
 const app = express();
 
@@ -69,9 +70,6 @@ const publicWildcardCors = cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
 });
 
-// Isolate public embed, tracking, and unsubscribe endpoints from restrictive
-// dashboard CORS so third-party widget.js OPTIONS preflights and rate-limit
-// error responses always retain Access-Control-Allow-Origin: *.
 app.use((req, res, next) => {
   if (
     req.path.startsWith('/api/public/town-crier') ||
@@ -119,6 +117,7 @@ const publicTelemetryLimiter = createRateLimiter({
   keyPrefix: 'pub_tel',
 });
 
+app.use('/api/auth', authChallengeRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/config', configRoutes);

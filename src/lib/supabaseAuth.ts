@@ -115,7 +115,37 @@ export const supabaseAuth = {
     }
   },
 
-  async sendEmailOtp(email: string, name?: string): Promise<void> {
+  /**
+   * Dispatches a 6-digit OTP code or direct Magic Sign-In Link via MIDAS backend
+   * (bypassing Supabase's 2/hr built-in email cap). Falls back gracefully to /auth/v1/otp
+   * if SUPABASE_SERVICE_ROLE_KEY is unset on the backend.
+   */
+  async sendAuthChallenge(
+    email: string,
+    deliveryType: 'code' | 'link' = 'code',
+    name?: string
+  ): Promise<void> {
+    const cleanEmail = email.trim().toLowerCase();
+
+    const backendRes = await fetch('/api/auth/send-challenge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: cleanEmail,
+        deliveryType,
+        name: name?.trim() || undefined,
+      }),
+    });
+
+    const backendData = await backendRes.json().catch(() => ({}));
+    if (backendRes.ok) {
+      return;
+    }
+
+    if (backendRes.status !== 501 && !backendData.fallbackToClientOtp) {
+      throw new Error(backendData.error || 'Could not dispatch authentication email');
+    }
+
     const cfg = await getSupabaseConfig();
     const res = await fetch(`${cfg.url}/auth/v1/otp`, {
       method: 'POST',
@@ -124,7 +154,7 @@ export const supabaseAuth = {
         apikey: cfg.anonKey,
       },
       body: JSON.stringify({
-        email: email.trim().toLowerCase(),
+        email: cleanEmail,
         create_user: true,
         data: name?.trim() ? { full_name: name.trim(), name: name.trim() } : undefined,
       }),
@@ -136,16 +166,21 @@ export const supabaseAuth = {
     }
   },
 
-  async verifyEmailOtp(
-    email: string,
-    token: string,
-    preferredType: 'email' | 'signup' | 'recovery' = 'email'
-  ): Promise<SupabaseUser> {
+  async verifyEmailOtp(email: string, token: string): Promise<SupabaseUser> {
     const cfg = await getSupabaseConfig();
     const cleanEmail = email.trim().toLowerCase();
     const cleanToken = token.trim();
 
-    const tryVerify = async (type: 'email' | 'signup' | 'recovery') => {
+    const candidateTypes: Array<'email' | 'magiclink' | 'signup' | 'recovery'> = [
+      'email',
+      'magiclink',
+      'signup',
+      'recovery',
+    ];
+
+    let lastError = 'Invalid or expired verification code';
+
+    for (const type of candidateTypes) {
       const res = await fetch(`${cfg.url}/auth/v1/verify`, {
         method: 'POST',
         headers: {
@@ -159,32 +194,59 @@ export const supabaseAuth = {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, status: res.status, data };
-    };
-
-    let attempt = await tryVerify(preferredType);
-    if (!attempt.ok && (attempt.status === 400 || attempt.status === 401 || attempt.status === 403)) {
-      const fallbackType = preferredType === 'email' ? 'signup' : 'email';
-      attempt = await tryVerify(fallbackType);
+      if (res.ok && data?.access_token) {
+        return saveSession(data).user;
+      }
+      lastError = data?.error_description || data?.msg || data?.message || lastError;
     }
 
-    if (!attempt.ok || !attempt.data?.access_token) {
-      throw new Error(
-        attempt.data?.error_description ||
-        attempt.data?.msg ||
-        attempt.data?.message ||
-        'Invalid or expired verification code'
-      );
+    throw new Error(lastError);
+  },
+
+  async verifyTokenHash(tokenHash: string, preferredType: string = 'email'): Promise<SupabaseUser> {
+    const cfg = await getSupabaseConfig();
+    const typesToTry = Array.from(new Set([preferredType || 'email', 'email', 'magiclink', 'recovery', 'signup']));
+
+    let lastError = 'Sign-in link has expired or already been used';
+
+    for (const type of typesToTry) {
+      const res = await fetch(`${cfg.url}/auth/v1/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: cfg.anonKey,
+        },
+        body: JSON.stringify({
+          token_hash: tokenHash.trim(),
+          type,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.access_token) {
+        return saveSession(data).user;
+      }
+      lastError = data?.error_description || data?.msg || data?.message || lastError;
     }
 
-    return saveSession(attempt.data).user;
+    throw new Error(lastError);
+  },
+
+  async consumeMagicLinkFromUrl(): Promise<SupabaseUser | null> {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const tokenHash = params.get('token_hash');
+    if (!tokenHash) return null;
+
+    const type = params.get('type') || 'email';
+    window.history.replaceState(null, '', window.location.pathname);
+    return this.verifyTokenHash(tokenHash, type);
   },
 
   async updatePassword(newPassword: string, explicitAccessToken?: string): Promise<SupabaseUser> {
     const cfg = await getSupabaseConfig();
     const token = explicitAccessToken || (await this.getValidAccessToken());
     if (!token) {
-      throw new Error('Active verification session missing. Please request a fresh 6-digit code.');
+      throw new Error('Active verification session missing. Please request a fresh verification code.');
     }
 
     const res = await fetch(`${cfg.url}/auth/v1/user`, {
@@ -210,13 +272,8 @@ export const supabaseAuth = {
     return mapped;
   },
 
-  /**
-   * Verifies a 6-digit OTP (creating the auth.users entry via /otp if this
-   * email previously signed in via Clerk), sets the new password via PUT /user,
-   * and returns the authenticated user session.
-   */
   async resetPasswordWithOtp(email: string, otpToken: string, newPassword: string): Promise<SupabaseUser> {
-    await this.verifyEmailOtp(email, otpToken, 'email');
+    await this.verifyEmailOtp(email, otpToken);
     return this.updatePassword(newPassword);
   },
 
@@ -228,7 +285,7 @@ export const supabaseAuth = {
         'Content-Type': 'application/json',
         apikey: cfg.anonKey,
       },
-      body: JSON.stringify({ email: email.trim(), password }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -238,6 +295,27 @@ export const supabaseAuth = {
   },
 
   async signUp(email: string, password: string, name?: string): Promise<{ user: SupabaseUser | null; needsConfirmation: boolean }> {
+    const cleanEmail = email.trim().toLowerCase();
+
+    const backendRes = await fetch('/api/auth/register-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: cleanEmail,
+        password,
+        name: name?.trim() || undefined,
+      }),
+    });
+    const backendData = await backendRes.json().catch(() => ({}));
+
+    if (backendRes.ok) {
+      return { user: null, needsConfirmation: true };
+    }
+
+    if (backendRes.status !== 501 && !backendData.fallbackToClientOtp) {
+      throw new Error(backendData.error || 'Sign up failed');
+    }
+
     const cfg = await getSupabaseConfig();
     const res = await fetch(`${cfg.url}/auth/v1/signup`, {
       method: 'POST',
@@ -246,7 +324,7 @@ export const supabaseAuth = {
         apikey: cfg.anonKey,
       },
       body: JSON.stringify({
-        email: email.trim(),
+        email: cleanEmail,
         password,
         data: name?.trim() ? { full_name: name.trim(), name: name.trim() } : undefined,
       }),
