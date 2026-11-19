@@ -384,39 +384,42 @@ export class WebhooksService {
         },
       }).catch(() => {});
 
-      notificationService.create({
-        userId: originalEmail.userId,
-        title: `New Reply from ${lead.name}`,
-        message: `${subject}: "${body.slice(0, 90).replace(/\s+/g, ' ')}..."`,
-        type: 'INBOUND_REPLY',
-        link: `/inbox`,
-        metadata: { leadId: lead.id, emailId: inboundEmail.id },
-      }).catch(() => {});
-
-      webhookDispatchService.dispatch({
-        userId: originalEmail.userId,
-        event: 'lead.replied',
-        payload: {
-          leadId: lead.id,
-          leadEmail: lead.email,
-          leadName: lead.name,
-          campaignId: originalEmail.campaignId || null,
-          emailId: inboundEmail.id,
-          subject,
-          snippet: body.slice(0, 240),
-          repliedAt: inboundEmail.sentAt.toISOString(),
-        },
-      }).catch(() => {});
+      await Promise.allSettled([
+        notificationService.create({
+          userId: originalEmail.userId,
+          title: `New Reply from ${lead.name}`,
+          message: `${subject}: "${body.slice(0, 90).replace(/\s+/g, ' ')}..."`,
+          type: 'INBOUND_REPLY',
+          link: `/inbox`,
+          metadata: { leadId: lead.id, emailId: inboundEmail.id },
+        }),
+        webhookDispatchService.dispatch({
+          userId: originalEmail.userId,
+          event: 'lead.replied',
+          payload: {
+            leadId: lead.id,
+            leadEmail: lead.email,
+            leadName: lead.name,
+            campaignId: originalEmail.campaignId || null,
+            emailId: inboundEmail.id,
+            subject,
+            snippet: body.slice(0, 240),
+            repliedAt: inboundEmail.sentAt.toISOString(),
+          },
+        }),
+      ]);
 
       if (originalEmail.campaignId) {
-        sequenceAgentService.processInboundTransition(
-          originalEmail.leadId,
-          originalEmail.campaignId,
-          inboundEmail.id,
-          body
-        ).catch(err => {
-          logger.error({ err: err?.message }, '[STATE-GRAPH] Transition execution failure');
-        });
+        await sequenceAgentService
+          .processInboundTransition(
+            originalEmail.leadId,
+            originalEmail.campaignId,
+            inboundEmail.id,
+            body
+          )
+          .catch((err) => {
+            logger.error({ err: err?.message }, '[STATE-GRAPH] Transition execution failure');
+          });
       } else {
         await prisma.pendingEmail.deleteMany({ where: { leadId: lead.id } });
       }

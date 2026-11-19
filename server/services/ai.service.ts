@@ -125,22 +125,25 @@ export class AIService {
 
       let providerName = settings.aiProvider;
       let model = settings.aiModel || undefined;
-      let decryptedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
+      let decryptedKey: string | undefined;
       let gatewayUrl = settings.aiGatewayUrl || undefined;
 
-      if (settings.aiIntegrations && Array.isArray(settings.aiIntegrations)) {
-        const integrations = settings.aiIntegrations as unknown as ConfirmedProviderIntegration[];
-        const matched = integrations.find(i => i.provider === providerName || i.id === providerName);
-        if (matched) {
-          providerName = matched.provider;
-          model = settings.aiModel || matched.activeModel;
-          if (matched.apiKeyEncrypted) {
-            decryptedKey = tryDecrypt(matched.apiKeyEncrypted) || decryptedKey;
-          }
-          if (matched.gatewayUrl) {
-            gatewayUrl = matched.gatewayUrl;
-          }
-        }
+      const integrations =
+        settings.aiIntegrations && Array.isArray(settings.aiIntegrations)
+          ? (settings.aiIntegrations as unknown as ConfirmedProviderIntegration[])
+          : [];
+
+      const matched = providerName
+        ? integrations.find((i) => i.provider === providerName || i.id === providerName)
+        : undefined;
+
+      if (matched) {
+        providerName = matched.provider;
+        model = settings.aiModel || matched.activeModel;
+        decryptedKey = matched.apiKeyEncrypted ? tryDecrypt(matched.apiKeyEncrypted) || undefined : undefined;
+        gatewayUrl = matched.gatewayUrl || undefined;
+      } else {
+        decryptedKey = settings.aiApiKeyEncrypted ? tryDecrypt(settings.aiApiKeyEncrypted) || undefined : undefined;
       }
 
       if (!providerName) return this.defaultPrimaryProvider;
@@ -447,6 +450,7 @@ ${this.wrapUntrustedReply(replyText)}`;
     apiKey?: string;
     gatewayUrl?: string;
     userId?: string;
+    allowStoredFallback?: boolean;
   }): Promise<{
     status: 'HEALTHY' | 'ERROR';
     latencyMs?: number;
@@ -454,25 +458,38 @@ ${this.wrapUntrustedReply(replyText)}`;
     errorDetail?: string;
   }> {
     let resolvedKey = config.apiKey?.trim();
+    let resolvedGatewayUrl = config.gatewayUrl?.trim();
 
-    if (!resolvedKey && config.userId) {
+    if (!resolvedKey && config.userId && config.allowStoredFallback !== false) {
       try {
         const settings = await prisma.userSettings.findUnique({ where: { userId: config.userId } });
-        if (settings?.aiApiKeyEncrypted) {
+        const integrations =
+          settings?.aiIntegrations && Array.isArray(settings.aiIntegrations)
+            ? (settings.aiIntegrations as unknown as ConfirmedProviderIntegration[])
+            : [];
+        const matched = integrations.find(
+          (i) => i.provider === config.provider || i.id === config.provider
+        );
+
+        if (matched?.apiKeyEncrypted) {
+          resolvedKey = tryDecrypt(matched.apiKeyEncrypted) || undefined;
+          if (!resolvedGatewayUrl && matched.gatewayUrl) {
+            resolvedGatewayUrl = matched.gatewayUrl;
+          }
+        } else if (settings?.aiProvider === config.provider && settings.aiApiKeyEncrypted) {
           resolvedKey = tryDecrypt(settings.aiApiKeyEncrypted) || undefined;
         }
       } catch {}
     }
 
-    let gatewayUrl = config.gatewayUrl?.trim();
-    if (gatewayUrl && gatewayUrl.includes('api.vercel.ai')) {
-      gatewayUrl = gatewayUrl.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
+    if (resolvedGatewayUrl && resolvedGatewayUrl.includes('api.vercel.ai')) {
+      resolvedGatewayUrl = resolvedGatewayUrl.replace('api.vercel.ai', 'ai-gateway.vercel.sh');
     }
 
     const testProvider = this.createProviderInstance(config.provider, {
       model: config.model?.trim(),
       apiKey: resolvedKey,
-      gatewayUrl,
+      gatewayUrl: resolvedGatewayUrl,
     });
 
     const start = Date.now();

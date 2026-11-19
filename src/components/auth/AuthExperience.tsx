@@ -9,15 +9,21 @@ interface AuthExperienceProps {
   initialMode?: 'signin' | 'signup';
 }
 
+type AuthStage = 'email' | 'credentials' | 'verify' | 'reset_verify';
+
 export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 'signin' }) => {
   const {
     user,
     loading,
+    magicLinkError,
+    needsPasswordSetup,
     signIn,
     signUp,
-    sendEmailOtp,
+    sendAuthChallenge,
     verifyEmailOtp,
     resetPasswordWithOtp,
+    completePasswordSetup,
+    dismissPasswordSetup,
     signInWithGoogle,
   } = useAuth();
   const { toast } = useToast();
@@ -28,9 +34,7 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
 
   // Auth Flow State
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>(initialMode);
-  const [authMethod, setAuthMethod] = useState<'otp' | 'password' | 'reset'>('otp');
-  const [otpStage, setOtpStage] = useState<'form' | 'verify'>('form');
-  const [otpVerifyType, setOtpVerifyType] = useState<'email' | 'signup'>('email');
+  const [stage, setStage] = useState<AuthStage>('email');
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -38,10 +42,15 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [loginHint, setLoginHint] = useState<string | null>(null);
+  const [signupConflict, setSignupConflict] = useState(false);
+
   const [submitting, setSubmitting] = useState(false);
+  const [sendingAction, setSendingAction] = useState<'signin_mail' | 'reset' | 'password' | 'signup' | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const otpInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const urlError = supabaseAuth.consumeUrlAuthError();
@@ -51,10 +60,16 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
   }, [toast]);
 
   useEffect(() => {
-    if (!loading && user) {
+    if (magicLinkError) {
+      toast.error(magicLinkError, 'Sign-In Link Error');
+    }
+  }, [magicLinkError, toast]);
+
+  useEffect(() => {
+    if (!loading && user && !needsPasswordSetup) {
       navigate('/', { replace: true });
     }
-  }, [user, loading, navigate]);
+  }, [user, loading, needsPasswordSetup, navigate]);
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
@@ -66,52 +81,129 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
     }
   };
 
-  const handlePrimarySubmit = async (e: React.FormEvent) => {
+  const switchMode = (nextMode: 'signin' | 'signup') => {
+    setAuthMode(nextMode);
+    setStage('email');
+    setPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setOtpDigits(['', '', '', '', '', '']);
+    setLoginHint(null);
+    setSignupConflict(false);
+  };
+
+  const handleEmailContinue = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
       return toast.warning('Enter a valid work email address', 'Validation');
+    }
+    setEmail(cleanEmail);
+    setLoginHint(null);
+    setSignupConflict(false);
+    setStage('credentials');
+    setTimeout(() => passwordInputRef.current?.focus(), 60);
+  };
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return setStage('email');
+
+    if (authMode === 'signup' && password.length < 8) {
+      return toast.warning('Password must be at least 8 characters long', 'Validation');
     }
 
     setSubmitting(true);
+    setSendingAction(authMode === 'signup' ? 'signup' : 'password');
+    setLoginHint(null);
+    setSignupConflict(false);
+
     try {
-      if (authMethod === 'otp' || authMethod === 'reset') {
-        await sendEmailOtp(cleanEmail, authMode === 'signup' ? name : undefined);
-        setOtpVerifyType('email');
-        setOtpDigits(['', '', '', '', '', '']);
-        setNewPassword('');
-        setConfirmPassword('');
-        setOtpStage('verify');
-        toast.success(
-          authMethod === 'reset'
-            ? `6-digit password setup code sent to ${cleanEmail}`
-            : `6-digit verification code sent to ${cleanEmail}`,
-          'Check Your Inbox'
-        );
-        setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
+      if (authMode === 'signin') {
+        await signIn(cleanEmail, password);
+        toast.success('Welcome back to MIDAS', 'Signed In');
+        navigate('/', { replace: true });
       } else {
-        if (authMode === 'signin') {
-          await signIn(cleanEmail, password);
-          toast.success('Welcome back to MIDAS', 'Signed In');
-          navigate('/', { replace: true });
+        const res = await signUp(cleanEmail, password, name);
+        if (res.needsConfirmation) {
+          setOtpDigits(['', '', '', '', '', '']);
+          setStage('verify');
+          toast.success(
+            `Sign-Up mail sent to ${cleanEmail} with your 6-digit OTP and Magic Sign-In button.`,
+            'Check Your Inbox'
+          );
+          setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
         } else {
-          const res = await signUp(cleanEmail, password, name);
-          if (res.needsConfirmation) {
-            setOtpVerifyType('signup');
-            setOtpDigits(['', '', '', '', '', '']);
-            setOtpStage('verify');
-            toast.info(`Enter the 6-digit confirmation code sent to ${cleanEmail}`, 'Verify Email');
-            setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
-          } else {
-            toast.success('Account provisioned on Scout Free Tier', 'Welcome to MIDAS');
-            navigate('/', { replace: true });
-          }
+          toast.success('Account provisioned on Scout Free Tier', 'Welcome to MIDAS');
+          navigate('/', { replace: true });
         }
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Authentication failed', 'Auth Error');
+      const msg = err?.message || 'Authentication failed';
+      if (authMode === 'signin') {
+        setLoginHint(
+          'Password did not match or your account was created prior to our auth upgrade. Use "Request Sign-In Mail" or "Reset Password" below.'
+        );
+      } else if (msg.toLowerCase().includes('already exists')) {
+        setSignupConflict(true);
+      }
+      toast.error(msg, 'Auth Error');
     } finally {
       setSubmitting(false);
+      setSendingAction(null);
+    }
+  };
+
+  const handleRequestSignInMail = async () => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return setStage('email');
+
+    setSubmitting(true);
+    setSendingAction('signin_mail');
+    setLoginHint(null);
+
+    try {
+      await sendAuthChallenge(cleanEmail, 'both', undefined, 'signin');
+      setOtpDigits(['', '', '', '', '', '']);
+      setStage('verify');
+      toast.success(
+        `Sign-In mail sent to ${cleanEmail} with a 6-digit OTP and direct Magic Sign-In button.`,
+        'Check Your Inbox'
+      );
+      setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not send sign-in mail', 'Auth Error');
+    } finally {
+      setSubmitting(false);
+      setSendingAction(null);
+    }
+  };
+
+  const handleRequestResetPassword = async () => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return setStage('email');
+
+    setSubmitting(true);
+    setSendingAction('reset');
+    setLoginHint(null);
+
+    try {
+      await sendAuthChallenge(cleanEmail, 'both', undefined, 'reset');
+      setOtpDigits(['', '', '', '', '', '']);
+      setNewPassword('');
+      setConfirmPassword('');
+      setStage('reset_verify');
+      toast.success(
+        `Password reset mail sent to ${cleanEmail} with a 6-digit OTP and direct reset button.`,
+        'Check Your Inbox'
+      );
+      setTimeout(() => otpInputRefs.current[0]?.focus(), 80);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not send password reset mail', 'Auth Error');
+    } finally {
+      setSubmitting(false);
+      setSendingAction(null);
     }
   };
 
@@ -122,7 +214,7 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
       return toast.warning('Enter the complete 6-digit verification code', 'Code Required');
     }
 
-    if (authMethod === 'reset') {
+    if (stage === 'reset_verify') {
       if (newPassword.length < 8) {
         return toast.warning('New password must be at least 8 characters long', 'Password Required');
       }
@@ -133,16 +225,37 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
 
     setSubmitting(true);
     try {
-      if (authMethod === 'reset') {
+      if (stage === 'reset_verify') {
         await resetPasswordWithOtp(email, code, newPassword);
         toast.success('Password saved and workspace unlocked', 'Password Set');
       } else {
-        await verifyEmailOtp(email, code, otpVerifyType);
+        await verifyEmailOtp(email, code);
         toast.success('Workspace verified and unlocked', 'Welcome to MIDAS');
       }
       navigate('/', { replace: true });
     } catch (err: any) {
       toast.error(err?.message || 'Invalid or expired 6-digit code', 'Verification Failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCompleteLinkPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword.length < 8) {
+      return toast.warning('New password must be at least 8 characters long', 'Password Required');
+    }
+    if (newPassword !== confirmPassword) {
+      return toast.warning('Passwords do not match', 'Validation');
+    }
+
+    setSubmitting(true);
+    try {
+      await completePasswordSetup(newPassword);
+      toast.success('Password updated and workspace unlocked', 'Password Saved');
+      navigate('/', { replace: true });
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not save new password', 'Update Failed');
     } finally {
       setSubmitting(false);
     }
@@ -178,13 +291,15 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
     otpInputRefs.current[focusIdx]?.focus();
   };
 
-  const handleResendOtp = async () => {
+  const handleResendChallenge = async () => {
+    const cleanEmail = email.trim().toLowerCase();
+    const intent = stage === 'reset_verify' ? 'reset' : authMode === 'signup' ? 'signup' : 'signin';
     setSubmitting(true);
     try {
-      await sendEmailOtp(email.trim().toLowerCase(), authMode === 'signup' ? name : undefined);
-      toast.success(`Fresh 6-digit code dispatched to ${email}`, 'Code Resent');
+      await sendAuthChallenge(cleanEmail, 'both', authMode === 'signup' ? name : undefined, intent);
+      toast.success(`Fresh verification mail dispatched to ${cleanEmail}`, 'Mail Resent');
     } catch (err: any) {
-      toast.error(err?.message || 'Could not resend code', 'Error');
+      toast.error(err?.message || 'Could not resend mail', 'Error');
     } finally {
       setSubmitting(false);
     }
@@ -354,61 +469,106 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
           <section className="lg:col-span-5 flex items-center justify-center">
             <div className="w-full max-w-md bg-white rounded-[28px] border border-gold-500/45 p-8 sm:p-10 shadow-xl space-y-6">
 
-              {/* Mode Switcher */}
-              <div className="space-y-3">
-                <div className="flex p-1 bg-thistle-100 rounded-xl border border-gold-500/30 text-xs">
+              {needsPasswordSetup && user ? (
+                <form onSubmit={handleCompleteLinkPasswordReset} className="space-y-4 text-xs animate-in fade-in duration-150">
+                  <div>
+                    <h2 className="text-2xl font-black text-royal-950 tracking-tight">Set Your New Password</h2>
+                    <p className="text-xs text-thistle-500 mt-1">
+                      Email verified for <strong className="text-royal-800">{user.email}</strong>. Choose a new password to finish unlocking your workspace.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+                      New Password (min 8 chars)
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+                      Confirm New Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="w-full py-3 btn-royal rounded-xl font-bold text-xs"
+                  >
+                    {submitting ? 'Saving Password...' : 'Save Password & Enter Workspace'}
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
-                      setAuthMode('signin');
-                      if (authMethod === 'reset') setAuthMethod('otp');
-                      setOtpStage('form');
+                      dismissPasswordSetup();
+                      navigate('/', { replace: true });
                     }}
-                    className={`flex-1 py-2 font-bold rounded-lg transition-all ${
-                      authMode === 'signin' && authMethod !== 'reset'
-                        ? 'bg-royal-700 text-white shadow-xs'
-                        : 'text-royal-800 hover:bg-white/60'
-                    }`}
+                    className="w-full text-center text-[11px] font-bold text-thistle-500 hover:text-royal-800"
                   >
-                    Sign In
+                    Skip for now &rarr;
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('signup');
-                      if (authMethod === 'reset') setAuthMethod('otp');
-                      setOtpStage('form');
-                    }}
-                    className={`flex-1 py-2 font-bold rounded-lg transition-all ${
-                      authMode === 'signup' && authMethod !== 'reset'
-                        ? 'bg-royal-700 text-white shadow-xs'
-                        : 'text-royal-800 hover:bg-white/60'
-                    }`}
-                  >
-                    Create Account
-                  </button>
-                </div>
-
-                <div>
-                  <h2 className="text-2xl font-black text-royal-950 tracking-tight">
-                    {authMethod === 'reset'
-                      ? 'Set or Reset Password'
-                      : authMode === 'signup'
-                      ? 'Create your workspace'
-                      : 'Welcome back'}
-                  </h2>
-                  <p className="text-xs text-thistle-500 mt-0.5">
-                    {authMethod === 'reset'
-                      ? 'Enter your email (including Clerk-era accounts) to verify via 6-digit OTP and set a password.'
-                      : authMode === 'signup'
-                      ? 'Start free with 2,000 emails/mo, Zero-Setup Sandbox & Town Crier.'
-                      : 'Sign in to access Town Crier, sequences & deliverability telemetry.'}
-                  </p>
-                </div>
-              </div>
-
-              {authMethod !== 'reset' && (
+                </form>
+              ) : (
                 <>
+                  {/* Mode Switcher */}
+                  <div className="space-y-3">
+                    <div className="flex p-1 bg-thistle-100 rounded-xl border border-gold-500/30 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => switchMode('signin')}
+                        className={`flex-1 py-2 font-bold rounded-lg transition-all ${
+                          authMode === 'signin'
+                            ? 'bg-royal-700 text-white shadow-xs'
+                            : 'text-royal-800 hover:bg-white/60'
+                        }`}
+                      >
+                        Sign In
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => switchMode('signup')}
+                        className={`flex-1 py-2 font-bold rounded-lg transition-all ${
+                          authMode === 'signup'
+                            ? 'bg-royal-700 text-white shadow-xs'
+                            : 'text-royal-800 hover:bg-white/60'
+                        }`}
+                      >
+                        Create Account
+                      </button>
+                    </div>
+
+                    <div>
+                      <h2 className="text-2xl font-black text-royal-950 tracking-tight">
+                        {authMode === 'signup' ? 'Create your workspace' : 'Welcome back'}
+                      </h2>
+                      <p className="text-xs text-thistle-500 mt-0.5">
+                        {authMode === 'signup'
+                          ? 'Start free with 2,000 emails/mo, Zero-Setup Sandbox & Town Crier.'
+                          : 'Sign in to access Town Crier, sequences & deliverability telemetry.'}
+                      </p>
+                    </div>
+                  </div>
+
                   {/* OAuth Row: Google Active, Apple Frosted Inactive ("Soon") */}
                   <div className="grid grid-cols-2 gap-3">
                     <button
@@ -445,217 +605,252 @@ export const AuthExperience: React.FC<AuthExperienceProps> = ({ initialMode = 's
                     <span className="text-[10px] font-bold uppercase tracking-wider text-thistle-500">or continue with email</span>
                     <div className="flex-1 h-px bg-gold-500/35" />
                   </div>
-                </>
-              )}
 
-              {otpStage === 'form' ? (
-                <>
-                  <div className="flex items-center justify-center gap-5 text-[11px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setAuthMethod('otp')}
-                      className={`pb-1 transition-colors ${
-                        authMethod === 'otp' ? 'text-royal-700 border-b-2 border-royal-700' : 'text-thistle-500 hover:text-royal-800'
-                      }`}
-                    >
-                      6-Digit Email OTP
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAuthMethod('password')}
-                      className={`pb-1 transition-colors ${
-                        authMethod === 'password' ? 'text-royal-700 border-b-2 border-royal-700' : 'text-thistle-500 hover:text-royal-800'
-                      }`}
-                    >
-                      Password
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAuthMethod('reset')}
-                      className={`pb-1 transition-colors ${
-                        authMethod === 'reset' ? 'text-royal-700 border-b-2 border-royal-700' : 'text-thistle-500 hover:text-royal-800'
-                      }`}
-                    >
-                      Set / Reset Password
-                    </button>
-                  </div>
-
-                  <form onSubmit={handlePrimarySubmit} className="space-y-4 text-xs">
-                    {authMode === 'signup' && authMethod !== 'reset' && (
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Full Name</label>
-                        <input
-                          type="text"
-                          required
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          placeholder="Alex Mercer"
-                          className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl font-medium focus:outline-none focus:border-gold-500"
-                        />
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Work Email</label>
-                      <input
-                        type="email"
-                        required
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="founder@company.com"
-                        className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl font-medium focus:outline-none focus:border-gold-500"
-                      />
-                    </div>
-
-                    {authMethod === 'password' && (
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="block text-[10px] font-bold uppercase text-thistle-500">Password</label>
-                          <button
-                            type="button"
-                            onClick={() => setAuthMethod('reset')}
-                            className="text-[10px] font-bold text-royal-700 hover:underline"
-                          >
-                            Forgot or never set a password?
-                          </button>
-                        </div>
-                        <input
-                          type="password"
-                          required
-                          minLength={8}
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          placeholder="••••••••••••"
-                          className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
-                        />
-                      </div>
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={submitting}
-                      className="w-full py-3 btn-royal rounded-xl font-bold text-xs tracking-wide"
-                    >
-                      {submitting
-                        ? 'Processing...'
-                        : authMethod === 'reset'
-                        ? 'Send 6-Digit Password Setup Code'
-                        : authMethod === 'otp'
-                        ? 'Continue with Email Code'
-                        : authMode === 'signup'
-                        ? 'Create Free Account'
-                        : 'Sign In with Password'}
-                    </button>
-
-                    {authMethod === 'reset' && (
-                      <button
-                        type="button"
-                        onClick={() => setAuthMethod('password')}
-                        className="w-full text-center text-[11px] font-bold text-thistle-500 hover:text-royal-800"
-                      >
-                        &larr; Back to Sign In
-                      </button>
-                    )}
-                  </form>
-                </>
-              ) : (
-                /* 6-DIGIT OTP VERIFICATION (+ NEW PASSWORD FIELDS IF IN RESET MODE) */
-                <form onSubmit={handleVerifyOtp} className="space-y-4 text-xs animate-in fade-in duration-150">
-                  <div className="p-3.5 bg-thistle-50 border border-gold-500/40 rounded-2xl text-center space-y-1">
-                    <p className="font-bold text-royal-950">
-                      {authMethod === 'reset' ? 'Verify code & set your new password' : 'Enter 6-digit verification code'}
-                    </p>
-                    <p className="text-[11px] text-thistle-500">
-                      Sent via MIDAS Auth to <strong className="text-royal-800">{email}</strong>
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-6 gap-2">
-                    {otpDigits.map((digit, idx) => (
-                      <input
-                        key={idx}
-                        ref={(el) => { otpInputRefs.current[idx] = el; }}
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={1}
-                        value={digit}
-                        onPaste={handleOtpPaste}
-                        onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
-                        onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                        aria-label={`OTP digit ${idx + 1}`}
-                        className="h-12 text-center text-lg font-mono font-black bg-thistle-50 border border-gold-500/50 rounded-xl focus:outline-none focus:border-royal-700"
-                      />
-                    ))}
-                  </div>
-
-                  {authMethod === 'reset' && (
-                    <div className="space-y-3 pt-1">
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
-                          New Password (min 8 chars)
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          minLength={8}
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          placeholder="••••••••••••"
-                          className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
-                          Confirm New Password
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          minLength={8}
-                          value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
-                          placeholder="••••••••••••"
-                          className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
-                        />
-                      </div>
+                  {magicLinkError && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-[11px] font-semibold text-rose-800">
+                      {magicLinkError}
                     </div>
                   )}
 
-                  <button
-                    type="submit"
-                    disabled={submitting || otpDigits.join('').length < 6}
-                    className="w-full py-3 btn-royal rounded-xl font-bold text-xs"
-                  >
-                    {submitting
-                      ? 'Verifying...'
-                      : authMethod === 'reset'
-                      ? 'Verify Code, Save Password & Enter Workspace'
-                      : 'Verify & Enter Workspace'}
-                  </button>
+                  {stage === 'email' && (
+                    <form onSubmit={handleEmailContinue} className="space-y-4 text-xs animate-in fade-in duration-150">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">Work Email</label>
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="founder@company.com"
+                          className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl font-medium focus:outline-none focus:border-gold-500"
+                          autoFocus
+                        />
+                      </div>
 
-                  <div className="flex justify-between text-[11px] font-bold text-thistle-500 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setOtpStage('form')}
-                      className="hover:text-royal-800"
-                    >
-                      &larr; Change email
-                    </button>
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={handleResendOtp}
-                      className="text-royal-700 hover:underline disabled:opacity-50"
-                    >
-                      Resend code
-                    </button>
-                  </div>
-                </form>
+                      <button
+                        type="submit"
+                        className="w-full py-3 btn-royal rounded-xl font-bold text-xs tracking-wide"
+                      >
+                        Continue &rarr;
+                      </button>
+                    </form>
+                  )}
+
+                  {stage === 'credentials' && (
+                    <div className="space-y-4 text-xs animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between px-3.5 py-2 bg-thistle-50 border border-gold-500/35 rounded-xl">
+                        <span className="font-mono font-bold text-royal-950 truncate">{email}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStage('email');
+                            setPassword('');
+                            setLoginHint(null);
+                            setSignupConflict(false);
+                          }}
+                          className="text-[11px] font-bold text-royal-700 hover:underline ml-2 shrink-0"
+                        >
+                          Change
+                        </button>
+                      </div>
+
+                      <form onSubmit={handlePasswordSubmit} className="space-y-3.5">
+                        {authMode === 'signup' && (
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+                              Full Name (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              value={name}
+                              onChange={(e) => setName(e.target.value)}
+                              placeholder="Alex Mercer"
+                              className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl font-medium focus:outline-none focus:border-gold-500"
+                            />
+                          </div>
+                        )}
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+                            {authMode === 'signup' ? 'Set Password (min 8 chars)' : 'Password'}
+                          </label>
+                          <input
+                            ref={passwordInputRef}
+                            type="password"
+                            required
+                            minLength={authMode === 'signup' ? 8 : 1}
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                            className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={submitting}
+                          className="w-full py-3 btn-royal rounded-xl font-bold text-xs tracking-wide"
+                        >
+                          {sendingAction === 'password'
+                            ? 'Signing In...'
+                            : sendingAction === 'signup'
+                            ? 'Creating Account & Sending Mail...'
+                            : authMode === 'signup'
+                            ? 'Create Account & Send Sign-Up Mail'
+                            : 'Sign In'}
+                        </button>
+                      </form>
+
+                      {loginHint && authMode === 'signin' && (
+                        <div className="p-3 bg-amber-50 border border-gold-500/45 rounded-xl text-[11px] text-amber-950 font-medium leading-relaxed">
+                          {loginHint}
+                        </div>
+                      )}
+
+                      {signupConflict && authMode === 'signup' && (
+                        <div className="p-3 bg-thistle-50 border border-gold-500/45 rounded-xl flex items-center justify-between gap-2 text-[11px]">
+                          <span className="text-royal-950 font-medium">Account already exists for this email.</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuthMode('signin');
+                              setSignupConflict(false);
+                              setStage('credentials');
+                            }}
+                            className="font-bold text-royal-700 hover:underline whitespace-nowrap"
+                          >
+                            Switch to Sign In &rarr;
+                          </button>
+                        </div>
+                      )}
+
+                      {authMode === 'signin' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-gold-500/25">
+                          <button
+                            type="button"
+                            disabled={submitting}
+                            onClick={handleRequestSignInMail}
+                            className="py-2.5 px-3 bg-thistle-50 hover:bg-thistle-100 border border-gold-500/40 rounded-xl text-[11px] font-bold text-royal-950 transition-colors disabled:opacity-50"
+                          >
+                            {sendingAction === 'signin_mail' ? 'Sending...' : 'Request Sign-In Mail'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={submitting}
+                            onClick={handleRequestResetPassword}
+                            className="py-2.5 px-3 bg-white hover:bg-thistle-50 border border-gold-500/35 rounded-xl text-[11px] font-bold text-royal-800 transition-colors disabled:opacity-50"
+                          >
+                            {sendingAction === 'reset' ? 'Sending...' : 'Reset Password'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(stage === 'verify' || stage === 'reset_verify') && (
+                    <form onSubmit={handleVerifyOtp} className="space-y-4 text-xs animate-in fade-in duration-150">
+                      <div className="p-3.5 bg-thistle-50 border border-gold-500/40 rounded-2xl text-center space-y-1">
+                        <p className="font-bold text-royal-950">
+                          {stage === 'reset_verify'
+                            ? 'Verify code & set your new password'
+                            : authMode === 'signup'
+                            ? 'Confirm your new workspace'
+                            : 'Check your inbox'}
+                        </p>
+                        <p className="text-[11px] text-thistle-500 leading-relaxed">
+                          We sent a 6-digit OTP and a direct Magic Sign-In button to{' '}
+                          <strong className="text-royal-800">{email}</strong>. Enter the code below or click the button in the email.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-6 gap-2">
+                        {otpDigits.map((digit, idx) => (
+                          <input
+                            key={idx}
+                            ref={(el) => { otpInputRefs.current[idx] = el; }}
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={1}
+                            value={digit}
+                            onPaste={handleOtpPaste}
+                            onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
+                            onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                            aria-label={`OTP digit ${idx + 1}`}
+                            className="h-12 text-center text-lg font-mono font-black bg-thistle-50 border border-gold-500/50 rounded-xl focus:outline-none focus:border-royal-700"
+                          />
+                        ))}
+                      </div>
+
+                      {stage === 'reset_verify' && (
+                        <div className="space-y-3 pt-1">
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+                              New Password (min 8 chars)
+                            </label>
+                            <input
+                              type="password"
+                              required
+                              minLength={8}
+                              value={newPassword}
+                              onChange={(e) => setNewPassword(e.target.value)}
+                              placeholder="••••••••••••"
+                              className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase text-thistle-500 mb-1">
+                              Confirm New Password
+                            </label>
+                            <input
+                              type="password"
+                              required
+                              minLength={8}
+                              value={confirmPassword}
+                              onChange={(e) => setConfirmPassword(e.target.value)}
+                              placeholder="••••••••••••"
+                              className="w-full px-4 py-2.5 bg-thistle-50 border border-gold-500/40 rounded-xl focus:outline-none focus:border-gold-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={submitting || otpDigits.join('').length < 6}
+                        className="w-full py-3 btn-royal rounded-xl font-bold text-xs"
+                      >
+                        {submitting
+                          ? 'Verifying...'
+                          : stage === 'reset_verify'
+                          ? 'Verify Code, Save Password & Enter Workspace'
+                          : 'Verify & Enter Workspace'}
+                      </button>
+
+                      <div className="flex justify-between text-[11px] font-bold text-thistle-500 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setStage('credentials')}
+                          className="hover:text-royal-800"
+                        >
+                          &larr; Back
+                        </button>
+                        <button
+                          type="button"
+                          disabled={submitting}
+                          onClick={handleResendChallenge}
+                          className="text-royal-700 hover:underline disabled:opacity-50"
+                        >
+                          Resend mail
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  <p className="text-[10px] text-center text-thistle-500 leading-relaxed pt-2 border-t border-gold-500/25">
+                    By continuing, you agree to MIDAS&apos;s Anti-Spam &amp; Deliverability Standards.
+                  </p>
+                </>
               )}
-
-              <p className="text-[10px] text-center text-thistle-500 leading-relaxed pt-2 border-t border-gold-500/25">
-                By continuing, you agree to MIDAS&apos;s Anti-Spam &amp; Deliverability Standards.
-              </p>
             </div>
           </section>
         </div>

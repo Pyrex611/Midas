@@ -49,6 +49,8 @@ export class EmailQueueService {
     const planLimitCache = new Map<string, boolean>();
     const userSettingsCache = new Map<string, any>();
     const artifactMapCache = new Map<string, Record<string, { url: string; type: string; title: string }>>();
+    const campaignIndexMap = new Map<string, number>();
+    const senderResetCache = new Map<string, any>();
 
     const batchSize = env.SEND_SWEEP_BATCH_SIZE || 5;
     const cooldownSeconds = env.SENDER_COOLDOWN_SECONDS || 20;
@@ -106,6 +108,14 @@ export class EmailQueueService {
           preferredSender: { include: { domain: true } },
         },
       });
+
+      const getFreshSender = async (senderId: string) => {
+        if (!senderResetCache.has(senderId)) {
+          const resetSender = await senderService.ensureSenderDailyReset(senderId);
+          senderResetCache.set(senderId, resetSender);
+        }
+        return senderResetCache.get(senderId);
+      };
 
       for (const pending of emailsToProcess) {
         try {
@@ -166,14 +176,60 @@ export class EmailQueueService {
 
           if (activeSenders.length === 0) throw new Error('No active senders linked to this campaign');
 
-          let selectedSender =
+          if (!campaignIndexMap.has(campaign.id)) {
+            campaignIndexMap.set(campaign.id, campaign.lastDomainIndex);
+          }
+
+          let selectedSender: any = null;
+          let selectedOffset = 0;
+          let hadCapacityAvailable = false;
+
+          if (
             pending.preferredSender &&
             pending.preferredSender.status === 'active' &&
             pending.preferredSender.domain.status === 'active'
-              ? pending.preferredSender
-              : activeSenders[campaign.lastDomainIndex % activeSenders.length];
+          ) {
+            selectedSender = await getFreshSender(pending.preferredSender.id);
+          } else {
+            const baseIdx = campaignIndexMap.get(campaign.id) || 0;
+            for (let offset = 0; offset < activeSenders.length; offset++) {
+              const candidateRaw = activeSenders[(baseIdx + offset) % activeSenders.length];
+              const candidate = await getFreshSender(candidateRaw.id);
+              if (!candidate) continue;
 
-          selectedSender = await senderService.ensureSenderDailyReset(selectedSender.id);
+              if (candidate.sentCountToday < candidate.dailyLimit) {
+                hadCapacityAvailable = true;
+                const msSinceLast = candidate.lastDispatchedAt
+                  ? Date.now() - new Date(candidate.lastDispatchedAt).getTime()
+                  : Infinity;
+                if (msSinceLast >= cooldownSeconds * 1000) {
+                  selectedSender = candidate;
+                  selectedOffset = offset;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!selectedSender) {
+            if (hadCapacityAvailable) {
+              await prisma.pendingEmail.update({
+                where: { id: pending.id },
+                data: { status: 'PENDING', scheduledAt: new Date(Date.now() + 25_000) },
+              });
+            } else {
+              const tomorrow = new Date();
+              tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+              tomorrow.setUTCHours(campaign.sendHourUTC || 9, 0, 0, 0);
+
+              await prisma.pendingEmail.update({
+                where: { id: pending.id },
+                data: { status: 'PENDING', scheduledAt: tomorrow },
+              });
+            }
+            summary.deferred++;
+            continue;
+          }
 
           if (selectedSender.lastDispatchedAt) {
             const msSinceLast = Date.now() - new Date(selectedSender.lastDispatchedAt).getTime();
@@ -196,6 +252,7 @@ export class EmailQueueService {
           `;
 
           if (claimResult.length === 0) {
+            selectedSender.sentCountToday = selectedSender.dailyLimit;
             const tomorrow = new Date();
             tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
             tomorrow.setUTCHours(campaign.sendHourUTC || 9, 0, 0, 0);
@@ -207,6 +264,11 @@ export class EmailQueueService {
             summary.deferred++;
             continue;
           }
+
+          // Update cached sender state immediately so subsequent loop iterations respect cooldown & count
+          selectedSender.sentCountToday += 1;
+          selectedSender.lastDispatchedAt = new Date();
+          campaignIndexMap.set(campaign.id, (campaignIndexMap.get(campaign.id) || 0) + selectedOffset + 1);
 
           if (!userSettingsCache.has(pending.userId)) {
             userSettingsCache.set(
@@ -290,7 +352,7 @@ export class EmailQueueService {
 
             await prisma.campaign.update({
               where: { id: campaign.id },
-              data: { lastDomainIndex: { increment: 1 } },
+              data: { lastDomainIndex: campaignIndexMap.get(campaign.id) },
             });
 
             await prisma.lead.update({
@@ -319,6 +381,7 @@ export class EmailQueueService {
             summary.sent++;
             logger.info({ leadId: pending.leadId, sender: fromEmail }, 'Email Sent Successfully');
           } else {
+            selectedSender.sentCountToday = Math.max(0, selectedSender.sentCountToday - 1);
             await prisma.sender.update({
               where: { id: selectedSender.id },
               data: { sentCountToday: { decrement: 1 } },

@@ -116,14 +116,15 @@ export const supabaseAuth = {
   },
 
   /**
-   * Dispatches a 6-digit OTP code or direct Magic Sign-In Link via MIDAS backend
+   * Dispatches a 6-digit OTP code and/or direct Magic Sign-In Button via MIDAS backend
    * (bypassing Supabase's 2/hr built-in email cap). Falls back gracefully to /auth/v1/otp
    * if SUPABASE_SERVICE_ROLE_KEY is unset on the backend.
    */
   async sendAuthChallenge(
     email: string,
-    deliveryType: 'code' | 'link' = 'code',
-    name?: string
+    deliveryType: 'code' | 'link' | 'both' = 'both',
+    name?: string,
+    intent: 'signin' | 'signup' | 'reset' = 'signin'
   ): Promise<void> {
     const cleanEmail = email.trim().toLowerCase();
 
@@ -134,6 +135,7 @@ export const supabaseAuth = {
         email: cleanEmail,
         deliveryType,
         name: name?.trim() || undefined,
+        intent,
       }),
     });
 
@@ -205,7 +207,7 @@ export const supabaseAuth = {
 
   async verifyTokenHash(tokenHash: string, preferredType: string = 'email'): Promise<SupabaseUser> {
     const cfg = await getSupabaseConfig();
-    const typesToTry = Array.from(new Set([preferredType || 'email', 'email', 'magiclink', 'recovery', 'signup']));
+    const typesToTry = Array.from(new Set<string>([preferredType || 'email', 'email', 'magiclink', 'recovery', 'signup']));
 
     let lastError = 'Sign-in link has expired or already been used';
 
@@ -231,15 +233,17 @@ export const supabaseAuth = {
     throw new Error(lastError);
   },
 
-  async consumeMagicLinkFromUrl(): Promise<SupabaseUser | null> {
+  async consumeMagicLinkFromUrl(): Promise<{ user: SupabaseUser; intent: string | null } | null> {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
     const tokenHash = params.get('token_hash');
     if (!tokenHash) return null;
 
     const type = params.get('type') || 'email';
+    const intent = params.get('intent');
     window.history.replaceState(null, '', window.location.pathname);
-    return this.verifyTokenHash(tokenHash, type);
+    const user = await this.verifyTokenHash(tokenHash, type);
+    return { user, intent };
   },
 
   async updatePassword(newPassword: string, explicitAccessToken?: string): Promise<SupabaseUser> {

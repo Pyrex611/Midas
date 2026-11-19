@@ -124,9 +124,16 @@ export class AuthEmailHookService {
     return `${base}/auth/v1/verify?${qs.toString()}`;
   }
 
-  private buildDirectAppMagicLink(tokenHash: string, type: string = 'email'): string {
+  private buildDirectAppMagicLink(
+    tokenHash: string,
+    type: string = 'email',
+    intent?: 'signin' | 'signup' | 'reset'
+  ): string {
     const baseAppUrl = (env.APP_URL || 'https://midas-aem.vercel.app').replace(/\/$/, '');
     const qs = new URLSearchParams({ token_hash: tokenHash, type });
+    if (intent === 'reset') {
+      qs.set('intent', 'reset');
+    }
     return `${baseAppUrl}/login?${qs.toString()}`;
   }
 
@@ -173,7 +180,7 @@ export class AuthEmailHookService {
       '',
       options.subtitle,
       options.token ? `\nVerification Code: ${options.token}` : '',
-      options.actionUrl ? `\nSign-In Link: ${options.actionUrl}` : '',
+      options.actionUrl ? `\n${options.actionLabel || 'Sign In Link'}: ${options.actionUrl}` : '',
       '\nIf you did not request this email, you can safely ignore it.',
     ]
       .filter(Boolean)
@@ -215,12 +222,14 @@ export class AuthEmailHookService {
   /**
    * Calls Supabase Admin `POST /auth/v1/admin/generate_link` (magiclink) to mint
    * an authentic Supabase OTP + hashed_token without hitting Supabase's 2/hr
-   * email limit, then dispatches strictly the requested format (code or direct link).
+   * email limit (and auto-creating auth.users for Clerk-migrated accounts),
+   * then dispatches the 6-digit OTP and/or direct Magic Sign-In button via MIDAS ESP.
    */
   async generateAndDispatchChallenge(options: {
     email: string;
-    deliveryType: 'code' | 'link';
+    deliveryType?: 'code' | 'link' | 'both';
     name?: string;
+    intent?: 'signin' | 'signup' | 'reset';
   }): Promise<void> {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
       throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
@@ -229,6 +238,8 @@ export class AuthEmailHookService {
     const baseUrl = env.SUPABASE_URL.replace(/\/$/, '');
     const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY.trim();
     const cleanEmail = options.email.trim().toLowerCase();
+    const deliveryType = options.deliveryType || 'both';
+    const intent = options.intent || 'signin';
 
     const genRes = await fetch(`${baseUrl}/auth/v1/admin/generate_link`, {
       method: 'POST',
@@ -252,41 +263,54 @@ export class AuthEmailHookService {
 
     const emailOtp: string | undefined = data.email_otp || data.properties?.email_otp;
     const hashedToken: string | undefined = data.hashed_token || data.properties?.hashed_token;
+    const verificationType: string = data.verification_type || data.properties?.verification_type || 'magiclink';
 
-    if (options.deliveryType === 'code') {
-      if (!emailOtp) {
-        throw new Error('Supabase did not return an email_otp for this request');
-      }
-      const rendered = this.renderOtpEmail({
-        heading: 'Your MIDAS Verification Code',
-        subtitle: 'Enter this one-time verification code on MIDAS to sign in or finish setting up your password.',
-        token: emailOtp,
-      });
-      await this.dispatchAuthMessages(
-        [{ to: cleanEmail, subject: `MIDAS Verification Code: ${emailOtp}`, ...rendered }],
-        'admin_otp_code'
-      );
-    } else {
-      if (!hashedToken) {
-        throw new Error('Supabase did not return a hashed_token for sign-in link');
-      }
-      const directLink = this.buildDirectAppMagicLink(hashedToken, 'email');
-      const rendered = this.renderOtpEmail({
-        heading: 'Your MIDAS Sign-In Link',
-        subtitle: 'Click the button below to verify your email and sign straight into your MIDAS workspace.',
-        actionUrl: directLink,
-        actionLabel: 'Sign In to MIDAS →',
-      });
-      await this.dispatchAuthMessages(
-        [{ to: cleanEmail, subject: 'Sign In to MIDAS', ...rendered }],
-        'admin_magic_link'
-      );
+    if ((deliveryType === 'code' || deliveryType === 'both') && !emailOtp) {
+      throw new Error('Supabase did not return an email_otp for this request');
     }
+    if ((deliveryType === 'link' || deliveryType === 'both') && !hashedToken) {
+      throw new Error('Supabase did not return a hashed_token for sign-in link');
+    }
+
+    const directLink = hashedToken
+      ? this.buildDirectAppMagicLink(hashedToken, verificationType, intent === 'reset' ? 'reset' : undefined)
+      : undefined;
+
+    let heading = 'Sign in to MIDAS';
+    let subtitle = 'Enter this 6-digit verification code on MIDAS, or click the Magic Sign-In button below to enter your workspace directly.';
+    let subject = emailOtp ? `Your MIDAS Sign-In Code: ${emailOtp}` : 'Sign In to MIDAS';
+    let actionLabel = 'Magic Sign-In →';
+
+    if (intent === 'reset') {
+      heading = 'Reset your MIDAS password';
+      subtitle = 'Enter this 6-digit verification code on MIDAS to set a new password, or click the button below to verify your email and choose a new password.';
+      subject = emailOtp ? `Reset your MIDAS password (Code: ${emailOtp})` : 'Reset Your MIDAS Password';
+      actionLabel = 'Reset Password & Sign In →';
+    } else if (intent === 'signup') {
+      heading = 'Verify your MIDAS workspace';
+      subtitle = 'Enter this 6-digit confirmation code on MIDAS, or click the Magic Sign-In button below to activate your account immediately.';
+      subject = emailOtp ? `Verify your MIDAS account (Code: ${emailOtp})` : 'Verify your MIDAS account';
+      actionLabel = 'Magic Sign-In →';
+    }
+
+    const rendered = this.renderOtpEmail({
+      heading,
+      subtitle,
+      token: deliveryType === 'link' ? undefined : emailOtp,
+      actionUrl: deliveryType === 'code' ? undefined : directLink,
+      actionLabel,
+    });
+
+    await this.dispatchAuthMessages(
+      [{ to: cleanEmail, subject, ...rendered }],
+      `admin_${intent}_${deliveryType}`
+    );
   }
 
   /**
-   * Registers a brand-new password user via Supabase Admin API without triggering
-   * Supabase's 2/hr built-in email limit, then sends the 6-digit verification code via MIDAS.
+   * Registers a brand-new password user via Supabase Admin `generate_link` (type: 'signup')
+   * without hitting Supabase's 2/hr built-in SMTP limit, then sends the Sign-Up Mail
+   * containing BOTH the 6-digit OTP and a direct Magic Sign-In button via MIDAS ESP.
    */
   async registerPasswordAndSendCode(options: {
     email: string;
@@ -301,7 +325,7 @@ export class AuthEmailHookService {
     const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY.trim();
     const cleanEmail = options.email.trim().toLowerCase();
 
-    const createRes = await fetch(`${baseUrl}/auth/v1/admin/users`, {
+    const genRes = await fetch(`${baseUrl}/auth/v1/admin/generate_link`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${serviceKey}`,
@@ -309,32 +333,48 @@ export class AuthEmailHookService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        type: 'signup',
         email: cleanEmail,
         password: options.password,
-        email_confirm: false,
-        user_metadata: options.name ? { full_name: options.name, name: options.name } : undefined,
+        data: options.name ? { full_name: options.name, name: options.name } : undefined,
       }),
       signal: AbortSignal.timeout(8_000),
     });
 
-    const createData: any = await createRes.json().catch(() => ({}));
-    if (!createRes.ok) {
-      const msg = String(createData.msg || createData.message || '');
-      if (createRes.status === 422 || msg.toLowerCase().includes('already')) {
+    const data: any = await genRes.json().catch(() => ({}));
+    if (!genRes.ok) {
+      const msg = String(data.msg || data.message || data.error_description || '');
+      if (genRes.status === 422 || msg.toLowerCase().includes('already')) {
         const conflictErr: any = new Error(
-          'An account with this email already exists in Supabase Auth. Use "Generate Code" or sign in with your password.'
+          'An account with this email already exists. Switch to Sign In and use your password, Request Sign-In Mail, or Reset Password.'
         );
         conflictErr.statusCode = 409;
         throw conflictErr;
       }
-      throw new Error(msg || `Could not create user (${createRes.status})`);
+      throw new Error(msg || `Could not register user (${genRes.status})`);
     }
 
-    await this.generateAndDispatchChallenge({
-      email: cleanEmail,
-      deliveryType: 'code',
-      name: options.name,
+    const emailOtp: string | undefined = data.email_otp || data.properties?.email_otp;
+    const hashedToken: string | undefined = data.hashed_token || data.properties?.hashed_token;
+    const verificationType: string = data.verification_type || data.properties?.verification_type || 'signup';
+
+    if (!emailOtp || !hashedToken) {
+      throw new Error('Supabase did not return both email_otp and hashed_token for signup confirmation');
+    }
+
+    const directLink = this.buildDirectAppMagicLink(hashedToken, verificationType);
+    const rendered = this.renderOtpEmail({
+      heading: 'Confirm your MIDAS workspace',
+      subtitle: 'Your password has been set. Enter this 6-digit confirmation code on MIDAS, or click the Magic Sign-In button below to verify your email and enter your workspace.',
+      token: emailOtp,
+      actionUrl: directLink,
+      actionLabel: 'Magic Sign-In →',
     });
+
+    await this.dispatchAuthMessages(
+      [{ to: cleanEmail, subject: `Verify your MIDAS account (Code: ${emailOtp})`, ...rendered }],
+      'admin_signup_both'
+    );
   }
 
   async processSendEmailHook(payload: any): Promise<void> {
@@ -398,8 +438,8 @@ export class AuthEmailHookService {
       };
 
       const subtitleMap: Record<string, string> = {
-        signup: 'Enter this verification code on MIDAS to activate your workspace.',
-        magiclink: 'Enter this one-time code on MIDAS or click the sign-in button below.',
+        signup: 'Enter this verification code on MIDAS or click the Magic Sign-In button below to activate your workspace.',
+        magiclink: 'Enter this one-time code on MIDAS or click the Magic Sign-In button below.',
         recovery: 'Enter this code on MIDAS to verify your identity and set a new password.',
         invite: 'You have been invited to join MIDAS Golden Email Infrastructure.',
         reauthentication: 'Use this one-time verification code to authorize your security change.',
@@ -408,7 +448,11 @@ export class AuthEmailHookService {
 
       const actionUrl =
         emailData.token_hash
-          ? this.buildDirectAppMagicLink(emailData.token_hash, 'email')
+          ? this.buildDirectAppMagicLink(
+              emailData.token_hash,
+              actionType === 'recovery' ? 'recovery' : 'email',
+              actionType === 'recovery' ? 'reset' : undefined
+            )
           : undefined;
 
       const rendered = this.renderOtpEmail({
@@ -416,7 +460,7 @@ export class AuthEmailHookService {
         subtitle: subtitleMap[actionType] || `Security event: ${actionType}`,
         token: emailData.token,
         actionUrl,
-        actionLabel: actionType === 'recovery' ? 'Reset Password' : 'Sign In to MIDAS →',
+        actionLabel: actionType === 'recovery' ? 'Reset Password & Sign In →' : 'Magic Sign-In →',
       });
 
       dispatches.push({

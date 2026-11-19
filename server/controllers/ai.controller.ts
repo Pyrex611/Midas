@@ -3,7 +3,7 @@ import { aiService } from '../services/ai.service';
 import { logger } from '../config/logger';
 import { AuthRequest } from '../middleware/auth.middleware';
 import prisma from '../lib/prisma';
-import { encrypt } from '../lib/encryption';
+import { encrypt, tryDecrypt } from '../lib/encryption';
 import { ConfirmedProviderIntegration } from '../services/ai/types';
 
 const PROVIDER_NAMES: Record<string, string> = {
@@ -119,6 +119,7 @@ export const getConfirmedIntegrations = async (req: AuthRequest, res: Response, 
 /**
  * POST /api/ai/confirm
  * Pings provider + model; on success, saves as a confirmed integration & sets as active default.
+ * Strictly isolates per-provider API keys so a new provider never inherits a previous provider's key.
  */
 export const confirmProvider = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -129,13 +130,28 @@ export const confirmProvider = async (req: AuthRequest, res: Response, next: Nex
       return res.status(400).json({ error: 'Provider and model are required' });
     }
 
-    // 1. Run live test ping
+    const settings = await prisma.userSettings.findUnique({ where: { userId } });
+    let integrations: ConfirmedProviderIntegration[] = [];
+    if (settings?.aiIntegrations && Array.isArray(settings.aiIntegrations)) {
+      integrations = [...(settings.aiIntegrations as unknown as ConfirmedProviderIntegration[])];
+    }
+
+    const existingIdx = integrations.findIndex((i) => i.id === provider || i.provider === provider);
+    const existingEncryptedKey = existingIdx >= 0 ? integrations[existingIdx].apiKeyEncrypted : null;
+    const resolvedPlainApiKey = apiKey?.trim()
+      ? apiKey.trim()
+      : existingEncryptedKey
+      ? tryDecrypt(existingEncryptedKey) || undefined
+      : undefined;
+
+    // 1. Run live test ping using strictly this provider's key (or platform env key if omitted)
     const testResult = await aiService.testCustomConfiguration({
       provider,
       model,
-      apiKey: apiKey?.trim() || undefined,
+      apiKey: resolvedPlainApiKey,
       gatewayUrl: gatewayUrl?.trim() || undefined,
       userId,
+      allowStoredFallback: false,
     });
 
     if (testResult.status !== 'HEALTHY') {
@@ -145,26 +161,27 @@ export const confirmProvider = async (req: AuthRequest, res: Response, next: Nex
       });
     }
 
-    // 2. Fetch or initialize existing integrations list
-    const settings = await prisma.userSettings.findUnique({ where: { userId } });
-    let integrations: ConfirmedProviderIntegration[] = [];
-    if (settings?.aiIntegrations && Array.isArray(settings.aiIntegrations)) {
-      integrations = [...(settings.aiIntegrations as unknown as ConfirmedProviderIntegration[])];
-    }
+    // 2. Persist strictly scoped integration credentials
+    const encryptedKey = apiKey?.trim() ? encrypt(apiKey.trim()) : existingEncryptedKey || null;
 
-    const existingIdx = integrations.findIndex(i => i.id === provider);
-    const encryptedKey = apiKey?.trim() ? encrypt(apiKey.trim()) : (existingIdx >= 0 ? integrations[existingIdx].apiKeyEncrypted : settings?.aiApiKeyEncrypted);
+    const resolvedGatewayUrl =
+      provider === 'aigateway' || provider === 'ollama'
+        ? gatewayUrl?.trim() ||
+          (existingIdx >= 0 ? integrations[existingIdx].gatewayUrl : null) ||
+          (provider === 'aigateway' ? 'https://ai-gateway.vercel.sh/v1' : 'http://localhost:11434')
+        : null;
 
     const updatedEntry: ConfirmedProviderIntegration = {
       id: provider,
       provider,
       displayName: PROVIDER_NAMES[provider] || provider.toUpperCase(),
-      gatewayUrl: provider === 'aigateway' ? (gatewayUrl?.trim() || 'https://ai-gateway.vercel.sh/v1') : null,
-      hasApiKey: Boolean(apiKey?.trim() || encryptedKey),
-      apiKeyEncrypted: encryptedKey || null,
-      models: existingIdx >= 0
-        ? Array.from(new Set([...integrations[existingIdx].models, model.trim()]))
-        : [model.trim()],
+      gatewayUrl: resolvedGatewayUrl,
+      hasApiKey: Boolean(encryptedKey),
+      apiKeyEncrypted: encryptedKey,
+      models:
+        existingIdx >= 0
+          ? Array.from(new Set<string>([...integrations[existingIdx].models, model.trim()]))
+          : [model.trim()],
       activeModel: model.trim(),
       lastTestedAt: new Date().toISOString(),
       status: 'HEALTHY',
@@ -184,8 +201,8 @@ export const confirmProvider = async (req: AuthRequest, res: Response, next: Nex
     if (setAsActive) {
       updatePayload.aiProvider = provider;
       updatePayload.aiModel = model.trim();
-      if (encryptedKey) updatePayload.aiApiKeyEncrypted = encryptedKey;
-      if (provider === 'aigateway' && gatewayUrl) updatePayload.aiGatewayUrl = gatewayUrl.trim();
+      updatePayload.aiApiKeyEncrypted = encryptedKey;
+      updatePayload.aiGatewayUrl = resolvedGatewayUrl;
     }
 
     await prisma.userSettings.upsert({
@@ -212,7 +229,7 @@ export const confirmProvider = async (req: AuthRequest, res: Response, next: Nex
 
 /**
  * POST /api/ai/add-model
- * Pings new model for an existing confirmed provider and adds it to confirmed models list.
+ * Pings new model for an existing confirmed provider using THAT provider's own stored key.
  */
 export const addModelToProvider = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -228,18 +245,22 @@ export const addModelToProvider = async (req: AuthRequest, res: Response, next: 
     // 1. Fetch user integration
     const settings = await prisma.userSettings.findUnique({ where: { userId } });
     const integrations: ConfirmedProviderIntegration[] = (settings?.aiIntegrations as any) || [];
-    const target = integrations.find(i => i.id === providerId);
+    const target = integrations.find((i) => i.id === providerId || i.provider === providerId);
 
     if (!target) {
       return res.status(404).json({ error: 'Provider integration not found. Set up the provider first.' });
     }
 
-    // 2. Test model with provider's credentials
+    const targetPlainKey = target.apiKeyEncrypted ? tryDecrypt(target.apiKeyEncrypted) || undefined : undefined;
+
+    // 2. Test model strictly with this target provider's credentials
     const testResult = await aiService.testCustomConfiguration({
       provider: target.provider,
       model: cleanModel,
+      apiKey: targetPlainKey,
       gatewayUrl: target.gatewayUrl || undefined,
       userId,
+      allowStoredFallback: false,
     });
 
     if (testResult.status !== 'HEALTHY') {
@@ -248,23 +269,25 @@ export const addModelToProvider = async (req: AuthRequest, res: Response, next: 
       });
     }
 
-    // 3. Append model to integration
-    target.models = Array.from(new Set([...target.models, cleanModel]));
+    // 3. Append model to integration; update activeModel globally only if target is currently active
+    target.models = Array.from(new Set<string>([...target.models, cleanModel]));
     target.activeModel = cleanModel;
     target.lastTestedAt = new Date().toISOString();
     target.latencyMs = testResult.latencyMs;
+
+    const isTargetActive = !settings?.aiProvider || settings.aiProvider === target.provider;
 
     await prisma.userSettings.update({
       where: { userId },
       data: {
         aiIntegrations: integrations as any,
-        aiModel: cleanModel,
+        ...(isTargetActive ? { aiModel: cleanModel } : {}),
       },
     });
 
     res.json({
       success: true,
-      activeModel: cleanModel,
+      activeModel: isTargetActive ? cleanModel : settings?.aiModel || cleanModel,
       integrations: integrations.map(({ apiKeyEncrypted: _, ...r }) => r),
     });
   } catch (error) {
@@ -274,7 +297,7 @@ export const addModelToProvider = async (req: AuthRequest, res: Response, next: 
 
 /**
  * POST /api/ai/switch-active
- * Fast 1-click switch of active AI provider and model from anywhere in the UI.
+ * Fast 1-click switch of active AI provider and model, synchronizing per-provider credentials.
  */
 export const switchActiveProviderAndModel = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -288,22 +311,25 @@ export const switchActiveProviderAndModel = async (req: AuthRequest, res: Respon
     const settings = await prisma.userSettings.findUnique({ where: { userId } });
     const integrations: ConfirmedProviderIntegration[] = (settings?.aiIntegrations as any) || [];
 
-    const target = integrations.find(i => i.id === provider);
+    const target = integrations.find((i) => i.id === provider || i.provider === provider);
     if (target) {
       target.activeModel = model.trim();
     }
 
+    const updateData: Record<string, any> = {
+      aiProvider: provider,
+      aiModel: model.trim(),
+      aiIntegrations: integrations as any,
+      aiApiKeyEncrypted: target ? target.apiKeyEncrypted || null : null,
+      aiGatewayUrl: target ? target.gatewayUrl || null : null,
+    };
+
     await prisma.userSettings.upsert({
       where: { userId },
-      update: {
-        aiProvider: provider,
-        aiModel: model.trim(),
-        aiIntegrations: integrations as any,
-      },
+      update: updateData,
       create: {
         userId,
-        aiProvider: provider,
-        aiModel: model.trim(),
+        ...updateData,
       },
     });
 
@@ -330,7 +356,7 @@ export const deleteIntegration = async (req: AuthRequest, res: Response, next: N
     const settings = await prisma.userSettings.findUnique({ where: { userId } });
     let integrations: ConfirmedProviderIntegration[] = (settings?.aiIntegrations as any) || [];
 
-    integrations = integrations.filter(i => i.id !== id);
+    integrations = integrations.filter((i) => i.id !== id && i.provider !== id);
     const nextActive = integrations[0];
 
     await prisma.userSettings.update({
@@ -339,6 +365,8 @@ export const deleteIntegration = async (req: AuthRequest, res: Response, next: N
         aiIntegrations: integrations as any,
         aiProvider: nextActive ? nextActive.provider : 'mock',
         aiModel: nextActive ? nextActive.activeModel : 'mock-default',
+        aiApiKeyEncrypted: nextActive ? nextActive.apiKeyEncrypted || null : null,
+        aiGatewayUrl: nextActive ? nextActive.gatewayUrl || null : null,
       },
     });
 
@@ -364,16 +392,24 @@ export const deleteModel = async (req: AuthRequest, res: Response, next: NextFun
 
     const settings = await prisma.userSettings.findUnique({ where: { userId } });
     const integrations: ConfirmedProviderIntegration[] = (settings?.aiIntegrations as any) || [];
-    const target = integrations.find(i => i.id === id);
+    const target = integrations.find((i) => i.id === id || i.provider === id);
+
+    let nextActiveModel = settings?.aiModel;
 
     if (target && target.models.length > 1) {
-      target.models = target.models.filter(m => m !== model);
+      target.models = target.models.filter((m) => m !== model);
       if (target.activeModel === model) {
         target.activeModel = target.models[0];
+        if (settings?.aiProvider === target.provider) {
+          nextActiveModel = target.activeModel;
+        }
       }
       await prisma.userSettings.update({
         where: { userId },
-        data: { aiIntegrations: integrations as any },
+        data: {
+          aiIntegrations: integrations as any,
+          ...(nextActiveModel !== undefined ? { aiModel: nextActiveModel } : {}),
+        },
       });
     }
 

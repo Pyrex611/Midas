@@ -14,11 +14,19 @@ interface AuthContextType {
   loading: boolean;
   providerMode: 'clerk' | 'supabase';
   magicLinkError: string | null;
+  needsPasswordSetup: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name?: string) => Promise<{ needsConfirmation: boolean }>;
-  sendAuthChallenge: (email: string, deliveryType: 'code' | 'link', name?: string) => Promise<void>;
+  sendAuthChallenge: (
+    email: string,
+    deliveryType?: 'code' | 'link' | 'both',
+    name?: string,
+    intent?: 'signin' | 'signup' | 'reset'
+  ) => Promise<void>;
   verifyEmailOtp: (email: string, token: string) => Promise<void>;
   resetPasswordWithOtp: (email: string, otpToken: string, newPassword: string) => Promise<void>;
+  completePasswordSetup: (newPassword: string) => Promise<void>;
+  dismissPasswordSetup: () => void;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -74,11 +82,14 @@ const ClerkAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ child
         loading,
         providerMode: 'clerk',
         magicLinkError: null,
+        needsPasswordSetup: false,
         signIn: async () => { throw new Error('Use Clerk UI component'); },
         signUp: async () => { throw new Error('Use Clerk UI component'); },
         sendAuthChallenge: async () => { throw new Error('Use Clerk UI component'); },
         verifyEmailOtp: async () => { throw new Error('Use Clerk UI component'); },
         resetPasswordWithOtp: async () => { throw new Error('Use Clerk UI component'); },
+        completePasswordSetup: async () => { throw new Error('Use Clerk UI component'); },
+        dismissPasswordSetup: () => {},
         signInWithGoogle: async () => { throw new Error('Use Clerk UI component'); },
         signOut: async () => { await clerkSignOut(); },
       }}
@@ -92,6 +103,7 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [magicLinkError, setMagicLinkError] = useState<string | null>(null);
+  const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
 
   useEffect(() => {
     const interceptor = api.interceptors.request.use(async (config) => {
@@ -108,9 +120,12 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
       try {
         // 1. Redeem direct ?token_hash=... magic links cleanly
         try {
-          const linkUser = await supabaseAuth.consumeMagicLinkFromUrl();
-          if (linkUser) {
-            setUser(linkUser);
+          const linkResult = await supabaseAuth.consumeMagicLinkFromUrl();
+          if (linkResult?.user) {
+            if (linkResult.intent === 'reset') {
+              setNeedsPasswordSetup(true);
+            }
+            setUser(linkResult.user);
             return;
           }
         } catch (linkErr: any) {
@@ -144,29 +159,48 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const signIn = async (email: string, password: string) => {
     const u = await supabaseAuth.signIn(email, password);
+    setNeedsPasswordSetup(false);
     setUser(u);
   };
 
   const signUp = async (email: string, password: string, name?: string) => {
     const result = await supabaseAuth.signUp(email, password, name);
     if (!result.needsConfirmation && result.user) {
+      setNeedsPasswordSetup(false);
       setUser(result.user);
     }
     return { needsConfirmation: result.needsConfirmation };
   };
 
-  const sendAuthChallenge = async (email: string, deliveryType: 'code' | 'link', name?: string) => {
-    await supabaseAuth.sendAuthChallenge(email, deliveryType, name);
+  const sendAuthChallenge = async (
+    email: string,
+    deliveryType: 'code' | 'link' | 'both' = 'both',
+    name?: string,
+    intent: 'signin' | 'signup' | 'reset' = 'signin'
+  ) => {
+    await supabaseAuth.sendAuthChallenge(email, deliveryType, name, intent);
   };
 
   const verifyEmailOtp = async (email: string, token: string) => {
     const u = await supabaseAuth.verifyEmailOtp(email, token);
+    setNeedsPasswordSetup(false);
     setUser(u);
   };
 
   const resetPasswordWithOtp = async (email: string, otpToken: string, newPassword: string) => {
     const u = await supabaseAuth.resetPasswordWithOtp(email, otpToken, newPassword);
+    setNeedsPasswordSetup(false);
     setUser(u);
+  };
+
+  const completePasswordSetup = async (newPassword: string) => {
+    const u = await supabaseAuth.updatePassword(newPassword);
+    setUser(u);
+    setNeedsPasswordSetup(false);
+  };
+
+  const dismissPasswordSetup = () => {
+    setNeedsPasswordSetup(false);
   };
 
   const signInWithGoogle = async () => {
@@ -175,6 +209,7 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const signOut = async () => {
     await supabaseAuth.signOut();
+    setNeedsPasswordSetup(false);
     setUser(null);
   };
 
@@ -185,11 +220,14 @@ const SupabaseAuthProviderInner: React.FC<{ children: React.ReactNode }> = ({ ch
         loading,
         providerMode: 'supabase',
         magicLinkError,
+        needsPasswordSetup,
         signIn,
         signUp,
         sendAuthChallenge,
         verifyEmailOtp,
         resetPasswordWithOtp,
+        completePasswordSetup,
+        dismissPasswordSetup,
         signInWithGoogle,
         signOut,
       }}

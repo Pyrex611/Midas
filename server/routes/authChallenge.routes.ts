@@ -50,7 +50,7 @@ function checkEmailBudget(cleanEmail: string): { allowed: boolean; retryAfterSec
  */
 router.post('/send-challenge', authChallengeIpLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, deliveryType = 'code', name } = req.body || {};
+    const { email, deliveryType = 'both', name, intent = 'signin' } = req.body || {};
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
     if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
@@ -71,19 +71,29 @@ router.post('/send-challenge', authChallengeIpLimiter, async (req: Request, res:
       });
     }
 
+    const resolvedDeliveryType: 'code' | 'link' | 'both' =
+      deliveryType === 'code' || deliveryType === 'link' ? deliveryType : 'both';
+
+    const resolvedIntent: 'signin' | 'signup' | 'reset' =
+      intent === 'reset' || intent === 'signup' ? intent : 'signin';
+
     await authEmailHookService.generateAndDispatchChallenge({
       email: cleanEmail,
-      deliveryType: deliveryType === 'link' ? 'link' : 'code',
+      deliveryType: resolvedDeliveryType,
       name: typeof name === 'string' ? name.trim() : undefined,
+      intent: resolvedIntent,
     });
 
     res.status(200).json({
       success: true,
-      deliveryType: deliveryType === 'link' ? 'link' : 'code',
+      deliveryType: resolvedDeliveryType,
+      intent: resolvedIntent,
       message:
-        deliveryType === 'link'
+        resolvedDeliveryType === 'link'
           ? `Sign-in link sent to ${cleanEmail}`
-          : `6-digit verification code sent to ${cleanEmail}`,
+          : resolvedDeliveryType === 'code'
+          ? `6-digit verification code sent to ${cleanEmail}`
+          : `6-digit code & Magic Sign-In button sent to ${cleanEmail}`,
     });
   } catch (err: any) {
     logger.error({ err: err?.message }, '[AUTH-CHALLENGE] Failed to send challenge');
@@ -93,8 +103,8 @@ router.post('/send-challenge', authChallengeIpLimiter, async (req: Request, res:
 
 /**
  * POST /api/auth/register-password
- * Registers a brand-new password user via Supabase Admin API without triggering
- * Supabase's 2/hr SMTP limit, then sends the 6-digit verification code via MIDAS.
+ * Registers a brand-new password user via Supabase Admin generate_link without hitting
+ * Supabase's 2/hr SMTP limit, then sends the Sign-Up Mail (6-digit OTP + Magic Sign-In button).
  */
 router.post('/register-password', authChallengeIpLimiter, async (req: Request, res: Response) => {
   try {
@@ -131,7 +141,7 @@ router.post('/register-password', authChallengeIpLimiter, async (req: Request, r
     res.status(201).json({
       success: true,
       needsConfirmation: true,
-      message: `Account created. Enter the 6-digit code sent to ${cleanEmail}.`,
+      message: `Account created. Enter the 6-digit code or click the Magic Sign-In button sent to ${cleanEmail}.`,
     });
   } catch (err: any) {
     const status = err?.statusCode === 409 ? 409 : 400;
